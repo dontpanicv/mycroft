@@ -104,10 +104,11 @@ job that was signalled ends as `cancelled`.
 
 → `{ jobs: [status record, ...] }`, newest first. Finished jobs are included until retention removes them.
 
-### Reserved: `ui.observe`, `ui.act`
+### Desktop control: `ui.observe`, `ui.act`, `ui.screenshot`
 
-Desktop control (milestone M6). Both currently fail with `not_supported` and are not listed in `features`. See
-`src/ui/mod.rs`.
+macOS only. `hands` forwards them to the Mycroft Hands helper and lists them in `features` while it answers.
+[docs/desktop-protocol.md](../../docs/desktop-protocol.md) specifies the fields, results (`ui.screenshot` returns the
+PNG as the payload) and error codes (`not_trusted`, `not_permitted`, `stale`, `not_found`, `invalid`, `failed`).
 
 ## Errors
 
@@ -121,7 +122,7 @@ Errors use pi-env's shape `{ code, message, ... }`. Only `code` is part of the c
 | `shell_unavailable` | `shellPath` does not exist |
 | `aborted` | a `job.wait` was cancelled by the client |
 | `supervisor_unavailable` | `hands serve` could not reach or start the supervisor |
-| `not_supported` | `ui.observe`, `ui.act` |
+| `not_supported` | `ui.*` on Linux, or when no desktop helper answers |
 
 ## The supervisor
 

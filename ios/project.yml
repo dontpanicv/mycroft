@@ -76,6 +76,8 @@ targets:
             if [ -f "$HANDS/dist/hands-$t" ]; then cp "$HANDS/dist/hands-$t" "$DEST/hands-dist/"; found=1; fi
           done
           [ "$found" = 1 ] || echo "warning: no hands binaries in hands/dist (run hands/scripts/build-release.sh)"
+          DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
+          if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
     settings:
       base:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
@@ -118,6 +120,8 @@ targets:
             if [ -f "$HANDS/dist/hands-$t" ]; then cp "$HANDS/dist/hands-$t" "$DEST/hands-dist/"; found=1; fi
           done
           [ "$found" = 1 ] || echo "warning: no hands binaries in hands/dist (run hands/scripts/build-release.sh)"
+          DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
+          if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
     settings:
       base:
         ENABLE_USER_SCRIPT_SANDBOXING: NO

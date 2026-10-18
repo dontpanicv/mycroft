@@ -4,6 +4,9 @@
 #
 #   curl -fsSLk --pinnedpubkey sha256//PIN https://IP:P/S | sh
 #
+# On macOS it also fetches MycroftHands.zip, the desktop helper, when the phone serves it, and hands it to
+# `hands install --desktop-zip`. A phone that does not (its desktop SHA-256 is left unfilled) installs hands alone.
+#
 # POSIX sh: dash, bash, zsh and macOS sh. Quiet unless something fails. The work happens in main, so a script
 # cut short in transit runs nothing.
 
@@ -19,6 +22,18 @@ trap 'exit 130' HUP INT TERM
 fail() {
 	echo "mycroft: $*" >&2
 	exit 1
+}
+
+# sha256 FILE: prints the file's SHA-256 in lowercase hex.
+sha256() {
+	if command -v shasum >/dev/null 2>&1; then
+		set -- "$(shasum -a 256 "$1")"
+	elif command -v sha256sum >/dev/null 2>&1; then
+		set -- "$(sha256sum "$1")"
+	else
+		fail "neither shasum nor sha256sum is available to verify the download"
+	fi
+	echo "${1%% *}"
 }
 
 main() {
@@ -48,19 +63,38 @@ main() {
 	curl -fsSLk --pinnedpubkey "sha256//$PIN" -o "$tmp/hands" "$BASE/$name" </dev/null ||
 		fail "could not download $name from the phone"
 
-	if command -v shasum >/dev/null 2>&1; then
-		actual=$(shasum -a 256 "$tmp/hands")
-	elif command -v sha256sum >/dev/null 2>&1; then
-		actual=$(sha256sum "$tmp/hands")
-	else
-		fail "neither shasum nor sha256sum is available to verify the download"
-	fi
-	actual=${actual%% *}
+	actual=$(sha256 "$tmp/hands") || exit 1
 	[ "$actual" = "$sum" ] || fail "$name does not match its SHA-256 (got $actual); nothing was installed"
 
+	# The desktop helper, Mycroft Hands.app (macOS only). The phone fills in its SHA-256 when it serves the zip.
+	desktop=
+	if [ "$os" = darwin ]; then
+		dsum='@SHA256_desktop@'
+		case $dsum in
+		*[!0-9a-f]* | '') ;; # not filled in: this phone does not serve the desktop helper
+		*)
+			if curl -fsSLk --pinnedpubkey "sha256//$PIN" -o "$tmp/MycroftHands.zip" "$BASE/MycroftHands.zip" \
+				</dev/null 2>/dev/null; then
+				actual=$(sha256 "$tmp/MycroftHands.zip") || exit 1
+				[ "$actual" = "$dsum" ] ||
+					fail "MycroftHands.zip does not match its SHA-256 (got $actual); nothing was installed"
+				desktop=$tmp/MycroftHands.zip
+			else
+				echo "mycroft: could not download MycroftHands.zip from the phone; installing hands without desktop control" >&2
+			fi
+			;;
+		esac
+	fi
+
 	chmod 755 "$tmp/hands"
-	# Copies hands to ~/.local/bin, starts its service and pairs; prints the one line saying so.
-	"$tmp/hands" install --pair "$BASE" --pin "$PIN" </dev/null || fail "installing hands failed"
+	# Copies hands to ~/.local/bin, starts its service and pairs; prints the one line saying so. With the desktop
+	# helper, it also installs Mycroft Hands.app and prints one more line asking to approve its permissions.
+	if [ -n "$desktop" ]; then
+		"$tmp/hands" install --pair "$BASE" --pin "$PIN" --desktop-zip "$desktop" </dev/null ||
+			fail "installing hands failed"
+	else
+		"$tmp/hands" install --pair "$BASE" --pin "$PIN" </dev/null || fail "installing hands failed"
+	fi
 }
 
 main "$@"

@@ -26,21 +26,57 @@ When the user taps **Add machine**, the app:
 |---|---|
 | `GET /S` | `text/x-shellscript`: the install script, with `BASE`, `PIN` and the binaries' SHA-256 filled in |
 | `GET /S/hands-<os>-<arch>` | the binary. `os`: `darwin` or `linux`. `arch`: `arm64` or `x86_64` on darwin, `aarch64` or `x86_64` on linux (`uname -m` names) |
+| `GET /S/MycroftHands.zip` | `application/zip`: Mycroft Hands.app, the macOS desktop helper (see [§1.1](#11-the-desktop-helper-mycrofthandszip)). `404` when this build of the app has none |
 | `POST /S/pair` | JSON pairing request (below). `200` with the phone's identity. `410` once `S` has been used or has expired. `400` on bad input |
 
 Any other path, or an unknown or expired `S`, gets `404`.
 
 ### The install script
 
-The template is `hands/scripts/phone-install.sh`. The app fills in `@BASE@`, `@PIN@` and `@SHA256_<os>_<arch>@`. The script:
+The template is `hands/scripts/phone-install.sh`. The app fills in `@BASE@`, `@PIN@`, `@SHA256_<os>_<arch>@` and
+`@SHA256_desktop@`. The script:
 
 1. Picks `hands-<os>-<arch>` from `uname -s` and `uname -m`.
 2. Downloads it with the same curl flags (`-fsSLk --pinnedpubkey sha256//$PIN`) into a temp dir.
 3. Verifies its SHA-256 with `shasum -a 256` or `sha256sum`, and aborts on a mismatch.
-4. Runs `"$TMP/hands" install --pair "$BASE" --pin "$PIN"`, which copies the binary, sets up the service and pairs.
-5. Prints one line saying the machine is paired.
+4. On macOS only, if `@SHA256_desktop@` was filled in with 64 lowercase hex digits, downloads `MycroftHands.zip` with
+   the same curl flags and verifies it the same way:
+   - a mismatch aborts the whole install, and nothing is installed;
+   - a failed download (a `404`, say) prints one warning on stderr, and hands is installed without the helper;
+   - a placeholder left as is (or filled with an empty string) skips this step silently.
+5. Runs `"$TMP/hands" install --pair "$BASE" --pin "$PIN"`, plus `--desktop-zip "$TMP/MycroftHands.zip"` when step 4
+   fetched it. That copies the binary, sets up the service, installs the helper and its LaunchAgent, opens the helper
+   so macOS asks for its permissions, and pairs.
+6. Prints one line saying the machine is paired. With the helper, `install` prints a second line asking the user to
+   approve "Mycroft Hands" for Accessibility and Screen Recording, unless both are granted already.
 
 The script must be POSIX `sh`, finish in seconds, and print nothing else unless something fails.
+
+### 1.1 The desktop helper (`MycroftHands.zip`)
+
+This is the contract for the iOS app; `hands` and the script above implement the other side.
+
+- **Build.** `desktop/scripts/build.sh` produces `desktop/dist/MycroftHands.zip` (about 0.7 MB): `Mycroft Hands.app`,
+  signed, zipped with `ditto -c -k --keepParent`, so the zip's top-level entry is `Mycroft Hands.app/`. The build
+  prints the zip's SHA-256.
+- **Bundle.** The app copies that file, byte for byte, into its resources as `hands-dist/MycroftHands.zip`, next to
+  the `hands-<os>-<arch>` binaries. A missing file is a build warning, not an error, as with the binaries.
+- **Serve.** `GET /S/MycroftHands.zip` answers `200` with `Content-Type: application/zip` and exactly those bytes, under
+  the same rules as the binaries: only for the current, unexpired `S`, without using `S` up. Without the file in the
+  bundle it answers `404`.
+- **Fill.** In the script, the app replaces the exact text `@SHA256_desktop@` with the lowercase hex SHA-256 (64
+  characters) of the same bytes it serves. Without the file in the bundle, it leaves the placeholder as is (or
+  replaces it with an empty string); the script then installs hands without the helper and prints nothing about it.
+  The placeholder is separate from the `@SHA256_<os>_<arch>@` ones, so a loop over the binaries' targets does not
+  fill it.
+- **Platforms.** The script fetches the zip only on macOS, for both architectures (the app is universal). Linux
+  machines never request it.
+
+`hands install --desktop-zip` then unpacks the app to `~/Applications/Mycroft Hands.app`, replacing an installed copy
+only when `CFBundleShortVersionString` differs, after checking its bundle id and code signature. It writes and loads
+the LaunchAgent `dev.mycroft.hands-desktop` (`hands-desktop serve` with `HANDS_STATE_DIR`), and runs
+`open -n -g "~/Applications/Mycroft Hands.app" --args --request-permissions --wait 600` without waiting for it. A
+failure in any of this is one warning on stderr, and pairing goes ahead without desktop control.
 
 ### `POST /S/pair`
 
@@ -196,7 +232,7 @@ These record how `hands` 0.2.0 reads the parts the sections above leave open. Th
   - `hands install --pair` first waits up to 10 s for the service's listener.
   - If the service could not be started (a Mac with no GUI login, or no user systemd), or with `--no-service`, it falls back to a detached listener started from `~/.local/bin/hands`. That listener runs until the machine restarts, and the service's listener takes over at the next login. In that case `install` prints one warning line on stderr.
   - On Linux, with `--pair`, a failed `systemctl --user daemon-reload` or `enable --now` is not fatal for the same reason.
-- **Output.** With `--pair`, `hands install` prints only `Paired with <phoneName>. Mycroft can use this <Mac|machine> now.` on stdout, and failures on stderr. This is the "one line" of §1 step 5: the script prints nothing of its own when it succeeds.
+- **Output.** With `--pair`, `hands install` prints only `Paired with <phoneName>. Mycroft can use this <Mac|machine> now.` on stdout, and failures on stderr. This is the "one line" of §1 step 6: the script prints nothing of its own when it succeeds. With `--desktop-zip`, when it opened the helper to ask for its permissions, it prints one more line after it: `Approve "Mycroft Hands" for Accessibility and Screen Recording when macOS asks (or in System Settings > Privacy & Security), so Mycroft can use this Mac's apps.`
 
 **Listener**
 - **Process.** `supervise --listen` is the listener and the supervisor in one process.

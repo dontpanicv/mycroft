@@ -1,4 +1,4 @@
-//! pi-env compatibility of `hands serve`, and the reserved and command-line surfaces.
+//! pi-env compatibility of `hands serve`, and the command-line surfaces. Desktop control is in desktop.rs.
 
 mod common;
 
@@ -68,15 +68,6 @@ fn exec_still_dies_with_the_connection() {
     let pid: i32 = fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
     serve.disconnect();
     eventually("exec to die with its connection", || !alive(pid));
-}
-
-#[test]
-fn ui_operations_are_reserved() {
-    let state = StateDir::new();
-    let mut serve = Serve::start(&state.path);
-    for op in ["ui.observe", "ui.act"] {
-        assert_eq!(serve.error(json!({ "op": op }))["code"], "not_supported");
-    }
 }
 
 #[test]

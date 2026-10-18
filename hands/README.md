@@ -1,8 +1,8 @@
 # hands
 
-`hands` is the executing half of Mycroft. It's a small daemon for **macOS and Linux** that you install on your Macs and servers. The brain on the iPhone pairs with it and connects to its TLS listener, and uses it to work with files, run commands and jobs, and later (on macOS) to drive the desktop.
+`hands` is the executing half of Mycroft. It's a small daemon for **macOS and Linux** that you install on your Macs and servers. The brain on the iPhone pairs with it and connects to its TLS listener, and uses it to work with files, run commands and jobs, and on macOS to drive the desktop.
 
-> Status: 0.2 (milestone M5). Files, exec, PTY and `listFiles` work as in pi-env, and supervised jobs are added. The paired TLS listener replaces SSH as the default transport ([ADR 0008](../docs/decisions/0008-hands-transport-pairing.md), [docs/pairing.md](docs/pairing.md)); SSH still works. Desktop control (`ui.*`) is reserved for M6. See [ADR 0005](../docs/decisions/0005-hands-daemon.md).
+> Status: 0.2 (milestone M5). Files, exec, PTY and `listFiles` work as in pi-env, and supervised jobs are added. The paired TLS listener replaces SSH as the default transport ([ADR 0008](../docs/decisions/0008-hands-transport-pairing.md), [docs/pairing.md](docs/pairing.md)); SSH still works. On macOS, desktop control (`ui.observe`, `ui.act`, `ui.screenshot`) goes through the Mycroft Hands helper app ([../desktop](../desktop/README.md), [docs/desktop-protocol.md](../docs/desktop-protocol.md)). See [ADR 0005](../docs/decisions/0005-hands-daemon.md).
 
 `hands` is built on the pi-env daemon of [Pi](https://github.com/earendil-works/pi) (MIT). See [NOTICE](NOTICE).
 
@@ -19,6 +19,8 @@ Paste it into a terminal on the Mac or Linux machine, on the same network as the
 - pairs the machine with the phone;
 - prints `Paired with <phone>. Mycroft can use this Mac now.`
 
+On a Mac, when the phone serves `MycroftHands.zip`, the script also downloads and verifies it and passes it to `install --desktop-zip`, which installs the desktop helper and opens it so macOS asks for its permissions. `install` then prints one more line asking you to approve "Mycroft Hands" for Accessibility and Screen Recording.
+
 The command works once and expires after 10 minutes.
 
 **By hand** (development, or servers reached over SSH):
@@ -28,6 +30,11 @@ scripts/build-release.sh            # builds dist/hands-<os>-<arch> for all four
 scripts/install.sh --dry-run        # shows what would happen
 scripts/install.sh                  # picks the binary for this OS/arch, verifies it, runs `hands install`
 hands pair --with BASE --pin PIN    # pair with a phone, given the BASE and PIN of its install command
+
+# macOS desktop control (see ../desktop/README.md):
+../desktop/scripts/build.sh                                       # builds ../desktop/dist/MycroftHands.zip
+hands install --desktop-zip ../desktop/dist/MycroftHands.zip      # installs the helper, asks for its permissions
+hands desktop permissions                                         # what the helper has been granted
 ```
 
 `hands install` copies the binary to `~/.local/bin/hands` and runs `hands supervise --listen` as a user service. That process is the supervisor of jobs and the phone's listener:
@@ -40,13 +47,14 @@ Running `hands install` again converges to the same state:
 - `--uninstall` reverses the install and keeps the state dir.
 - `--no-service` skips the service.
 - `--bind ADDR` makes the listener listen on one address only, such as a Tailscale address.
+- `--desktop-zip PATH` (macOS) also installs the desktop helper from `MycroftHands.zip`; a `MycroftHands.zip` next to the `hands` binary is used without the flag. See [Desktop control](#desktop-control-macos).
 
 With `--pair`, if the service cannot start (or with `--no-service`), the listener runs detached until the machine restarts. `hands serve` still starts a supervisor on demand when none is running.
 
 ## Commands
 
 ```sh
-hands install [--pair BASE --pin PIN] [--no-service] [--bind ADDR] [--dry-run] [--uninstall]
+hands install [--pair BASE --pin PIN] [--desktop-zip PATH] [--no-service] [--bind ADDR] [--dry-run] [--uninstall]
 hands pair --with BASE --pin PIN [--bind ADDR]   # pair with a phone; starts the listener if none runs
 hands paired [--json]                 # list the paired phones
 hands unpair <name>                   # remove a paired phone (by name or public key)
@@ -54,7 +62,10 @@ hands supervise [--listen] [--bind ADDR] [--detached]
                                       # the supervisor that owns jobs; with --listen, also the phone's listener
 hands serve --stdio [--token <hex>]   # pi-env protocol 1 on stdin/stdout: over ssh, and per listener connection
 hands jobs [--json]                   # list supervised jobs (from disk if no supervisor is running)
-hands doctor                          # binary, version, OS/arch, state dir, supervisor, listener, paired phones, jobs, service
+hands desktop permissions [--request] [--wait N] [--json]
+                                      # macOS: Accessibility and Screen Recording of the desktop helper; --request asks
+hands doctor                          # binary, version, OS/arch, state dir, supervisor, listener, paired phones, jobs,
+                                      # service, and on macOS the desktop helper and its permissions
 hands version
 ```
 
@@ -77,11 +88,26 @@ The wire protocol is pi-env's protocol 1, unchanged: [docs/protocol.md](docs/pro
 | `job.wait { key, timeoutMs? }` | Waits until the job ends or the timeout passes, without killing it. Returns `timedOut`. |
 | `job.cancel { key, signal? }` | Signals the job's whole process group (default `SIGTERM`). |
 | `job.list {}` | Lists all jobs, newest first. |
-| `ui.observe`, `ui.act` | Reserved. They fail with `not_supported`. |
+| `ui.observe`, `ui.act`, `ui.screenshot` | macOS desktop control, forwarded to the desktop helper ([docs/desktop-protocol.md](../docs/desktop-protocol.md)). Listed only while the helper answers; otherwise, and on Linux, they fail with `not_supported`. `ui.screenshot` returns the PNG as the payload, with `{ width, height }`. |
 
 [docs/jobs.md](docs/jobs.md) specifies the fields, results and error codes (`EINVAL`, `not_found`, `spawn_error`, `aborted`, `supervisor_unavailable`, ...).
 
 **How jobs outlive the connection.** pi-env kills its commands when the connection drops (stdin ends, or 30 s without bytes). It has to: the brain is a phone that sleeps. Jobs belong to the supervisor instead, so `exec` keeps pi-env's behaviour and `job.*` don't die with the connection. The supervisor runs each job through a tiny runner that leads the job's process group and records the exit code in the job's directory. A job survives `serve` exiting and the supervisor restarting, and its output and exit code can be read after the job ends. Finished jobs are kept for 7 days or until there are 200 of them.
+
+## Desktop control (macOS)
+
+A process started over SSH or by the listener can't hold Accessibility or Screen Recording, so `hands` doesn't touch the desktop itself. It forwards `ui.*` requests to **Mycroft Hands.app** (bundle id `dev.mycroft.hands-desktop`, built from [../desktop](../desktop/README.md)), which runs in your GUI session and holds both permissions.
+
+`hands install --desktop-zip MycroftHands.zip` (or the phone's install):
+1. unpacks the app to `~/Applications/Mycroft Hands.app`, after checking its bundle id and signature. An installed copy is replaced only when the version differs.
+2. writes the LaunchAgent `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist`, which runs the app's `hands-desktop serve` with `HANDS_STATE_DIR`, and loads it with `launchctl bootstrap gui/<uid>`.
+3. unless both permissions are granted already, opens the app with `open -n -g … --args --request-permissions`, without waiting, and prints one line asking you to approve "Mycroft Hands". macOS shows its prompts for the app (not for your terminal), and System Settings opens at the right pane. The app waits up to 10 minutes for both grants, then restarts the helper.
+
+`--uninstall` removes the app and its LaunchAgent. The grants stay in System Settings; `tccutil reset All dev.mycroft.hands-desktop` removes them. A failure while installing the helper is a warning: `hands` itself is installed and pairs anyway.
+
+`hands desktop permissions` asks the running helper what it has been granted. `--request` opens the app to ask, and waits (default 300 s, `--wait N`) until both are granted.
+
+`hello.features` lists `ui.observe`, `ui.act` and `ui.screenshot` while the helper answers its `ping` (cached for 3 s). Each request opens its own connection to `desktop.sock`; the helper's error codes (`not_trusted`, `not_permitted`, `stale`, ...) come back as the error frame's `code`.
 
 ## Where things live
 
@@ -90,12 +116,14 @@ The wire protocol is pi-env's protocol 1, unchanged: [docs/protocol.md](docs/pro
 | binary | `~/.local/bin/hands` | `~/.local/bin/hands` |
 | state dir | `~/Library/Application Support/hands` | `$XDG_STATE_HOME/hands` or `~/.local/state/hands` |
 | service | `~/Library/LaunchAgents/dev.mycroft.hands.plist` | `~/.config/systemd/user/hands.service` |
+| desktop helper | `~/Applications/Mycroft Hands.app`, `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist` | (none) |
 
 The state dir holds:
 - the supervisor's `supervisor.sock`, `supervisor.lock` and `supervisor.log` (the listener logs there too);
 - one `jobs/<key>-<hash>/` directory per job (`job.json`, `output.log`);
 - the listener's `listener.json` (its port), `listener.lock` and `listener-cert.pem` / `listener-key.pem`;
-- `paired.json`, the paired phones' public keys.
+- `paired.json`, the paired phones' public keys;
+- on macOS, the desktop helper's `desktop.sock` and `desktop.log`.
 
 The key, the certificate, `listener.json` and `paired.json` are mode 0600. `HANDS_STATE_DIR` overrides the state dir's location, and `hands install` passes the override on to the service.
 
@@ -108,7 +136,7 @@ The key, the certificate, `listener.json` and `paired.json` are mode 0600. `HAND
 - **What is stored.** Jobs inherit `serve`'s environment, which may contain secrets, but the environment is never written to disk. `job.json` records only the command or argv, `cwd`, state and timing. Job output is stored as is in the user-only state dir, so a command that prints a secret leaves it in `output.log` until retention deletes it.
 - **Same user.** Everything runs as the user who installed `hands`, and `hands` grants nothing beyond what that user's shell can do. Treat a paired phone, or its SSH key, as shell access to the host. `hands unpair` revokes a phone for new connections.
 - **Process groups.** Each job is its own session and process group. `job.cancel` signals only that group. The supervisor sends signals only while the job's runner, the group leader, is still alive, so a reused pid is never targeted.
-- **Desktop control (M6).** On macOS, Accessibility permission will be granted to a separate LaunchAgent in the GUI session only. The SSH-side process will talk to it over another user-only Unix socket (see `src/ui/mod.rs`).
+- **Desktop control.** On macOS, Accessibility and Screen Recording are granted to Mycroft Hands.app only, never to `hands` or your terminal. `hands` talks to it over the user-only `desktop.sock`. The helper never runs commands and never reads or types secure text, and it takes a screenshot only for an explicit `ui.screenshot`.
 
 ## Development
 
@@ -119,11 +147,13 @@ cargo test        # unit tests from pi-env, plus integration tests in tests/ aga
 
 The integration tests start `hands serve` and `hands supervise --listen` with a temporary `HANDS_STATE_DIR` under `/tmp`, bind the listener to 127.0.0.1, and never touch the real state dir or install anything. Each test stops its own supervisor when it finishes.
 
+`tests/desktop.rs` runs `ui.*` through `hands serve` against a fake helper on a temporary `desktop.sock`: pass-through of observe, act and screenshot (payload), error codes, `hello.features` only while `ping` answers, `not_supported` without a helper, one connection per concurrent request, `hands desktop permissions`, and the install dry run with a stub zip. Nothing touches the real desktop.
+
 `tests/pairing.rs` runs the whole flow against a fake phone (an HTTPS server with a self-signed certificate):
 - `hands pair` pairs the machine and writes `paired.json`;
 - a WebSocket client with the phone's key authenticates, and pi-env `hello`, files and `job.*` work through the listener;
 - wrong signatures, unknown keys, other messages before `auth`, other paths and a wrong pin are all refused;
-- the install script, served and piped to `sh`, `dash`, `zsh` and `bash`, downloads, verifies and runs a stub binary, and refuses a tampered one.
+- the install script, served and piped to `sh`, `dash`, `zsh` and `bash`, downloads, verifies and runs a stub binary, and refuses a tampered one. On macOS it also fetches a stub `MycroftHands.zip` and passes it on; it refuses a tampered zip, and installs without the helper when the phone does not serve one.
 
 Release builds use `opt-level = "z"`, LTO and one codegen unit, and are stripped. `scripts/build-release.sh` builds the two macOS binaries with cargo and the two static musl Linux binaries with `cargo zigbuild`.
 
@@ -138,11 +168,10 @@ Layout:
 - `src/state.rs` contains the paths.
 - `src/install.rs` contains `hands install`.
 - `src/cli.rs` contains `hands jobs`, `paired`, `unpair` and `doctor`.
-- `src/ui/` holds the M6 stub.
+- `src/ui/mod.rs` forwards `ui.*` to the desktop helper; `src/ui/app.rs` installs the helper and asks for its permissions (`hands desktop`).
 
 The other files come from pi-env.
 
 ## Planned
 
-- Desktop control on macOS: `ui.observe` returns the AX tree with element refs, and `ui.act` presses, types, scrolls and focuses. Both go through a LaunchAgent that holds the Accessibility permission.
 - Auto-update by SHA-256, as pi-env deploys its daemon.

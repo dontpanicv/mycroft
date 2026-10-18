@@ -7,6 +7,11 @@ final class FakeBackend: DesktopBackend, @unchecked Sendable {
     struct Handle: ElementHandle, Equatable { let id: String }
 
     var isTrusted = true
+    var canRecordScreen = true
+    /// What `screenshot` returns: a scripted PNG, never a real capture.
+    var screenshotResult = Screenshot(png: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]), width: 1600, height: 1000)
+    var screenshotError: Error?
+    private(set) var screenshotWidths: [Int] = []
     var target = TargetApp(pid: 4242, name: "Notes", bundleId: "com.apple.Notes")
     var window: String? = "Shopping list"
     var elements: [SnapshotElement] = FakeBackend.notesElements()
@@ -50,6 +55,12 @@ final class FakeBackend: DesktopBackend, @unchecked Sendable {
         let value = fingerprints[min(fingerprintIndex, fingerprints.count - 1)]
         fingerprintIndex += 1
         return value
+    }
+
+    func screenshot(maxWidth: Int) throws -> Screenshot {
+        screenshotWidths.append(maxWidth)
+        if let screenshotError { throw screenshotError }
+        return screenshotResult
     }
 
     func perform(_ action: BackendAction) throws -> String {

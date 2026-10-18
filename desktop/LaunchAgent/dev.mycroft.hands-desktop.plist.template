@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  LaunchAgent for hands-desktop. Runs `hands-desktop serve` in the logged-in user's GUI (Aqua) session, where it can
-  hold the Accessibility permission. `hands` fills in the placeholders and installs it as
-  ~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist, then loads it with
+  LaunchAgent for Mycroft Hands.app, the desktop helper. Runs `hands-desktop serve` from the app in the logged-in
+  user's GUI (Aqua) session, where it can hold the Accessibility and Screen Recording permissions. `hands install`
+  fills in the placeholders (hands/src/ui/app.rs drops this comment), writes the result to
+  ~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist, and loads it with
       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist
 
   Placeholders:
-    {{HANDS_DESKTOP_BIN}}  absolute path of the hands-desktop binary
+    {{HANDS_DESKTOP_BIN}}  absolute path of the binary in the app,
+                           ~/Applications/Mycroft Hands.app/Contents/MacOS/hands-desktop
     {{HANDS_STATE_DIR}}    hands' state directory (holds desktop.sock and the log),
                            for example /Users/me/Library/Application Support/hands
 -->

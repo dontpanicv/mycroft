@@ -34,9 +34,11 @@ use std::env;
 
 const USAGE: &str = "usage: hands <command>
 
-  install [--pair <BASE> --pin <PIN>] [--no-service] [--bind <ADDR>] [--dry-run] [--uninstall]
-                                    install the binary and the service (systemd user unit / LaunchAgent) that runs
-                                    `supervise --listen`; with --pair, pair with the phone too
+  install [--pair <BASE> --pin <PIN>] [--desktop-zip <PATH>] [--no-service] [--bind <ADDR>] [--dry-run]
+          [--uninstall]             install the binary and the service (systemd user unit / LaunchAgent) that runs
+                                    `supervise --listen`; with --pair, pair with the phone too; on macOS, with
+                                    --desktop-zip (or MycroftHands.zip next to hands), also Mycroft Hands.app, the
+                                    desktop helper, and ask for its permissions
   pair --with <BASE> --pin <PIN> [--bind <ADDR>]
                                     pair with the phone (what the phone's install command runs, via install)
   paired [--json]                   list the paired phones
@@ -46,6 +48,9 @@ const USAGE: &str = "usage: hands <command>
                                     TLS WebSocket listener
   serve [--stdio] [--token <hex>]   the pi-env protocol on stdin/stdout (over ssh, and per listener connection)
   jobs [--json]                     list supervised jobs
+  desktop permissions [--request] [--wait <SECONDS>] [--json]
+                                    Accessibility and Screen Recording of Mycroft Hands (macOS); --request opens
+                                    the app so macOS asks for them, and waits until both are granted
   doctor                            report the binary, supervisor, listener, paired phones, state dir and jobs
   version                           print the version
 
@@ -131,6 +136,7 @@ fn main() {
         Some("paired") => cli::paired(rest),
         Some("unpair") => cli::unpair(rest),
         Some("jobs") => cli::jobs(rest),
+        Some("desktop") => ui::app::main(rest),
         Some("doctor") => cli::doctor(),
         Some("version" | "--version" | "-V") => {
             println!("hands {VERSION}");

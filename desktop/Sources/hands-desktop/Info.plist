@@ -5,15 +5,27 @@
 	<key>CFBundleIdentifier</key>
 	<string>dev.mycroft.hands-desktop</string>
 	<key>CFBundleName</key>
-	<string>hands-desktop</string>
+	<string>Mycroft Hands</string>
 	<key>CFBundleDisplayName</key>
+	<string>Mycroft Hands</string>
+	<key>CFBundleExecutable</key>
 	<string>hands-desktop</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>Mycroft reads the controls of the app in front and presses, types and scrolls in it when you ask it to from your iPhone.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Mycroft takes a screenshot of your main display when you ask it to look at your screen from your iPhone.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Mycroft contributors. Accessibility reading and acting ported from jev-use by Savva Bojko (MIT).</string>
 </dict>

@@ -23,6 +23,7 @@ struct RootView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape") { showSettings = true }
+                        .accessibilityIdentifier("settings")
                 }
             }
         }

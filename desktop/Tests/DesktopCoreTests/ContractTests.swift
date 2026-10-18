@@ -144,7 +144,7 @@ import Testing
     }
 
     @Test func errorCodesMatchTheSpec() {
-        #expect(ErrorCode.allCases.map(\.rawValue) == ["not_trusted", "stale", "not_found", "invalid", "failed", "not_supported"])
+        #expect(ErrorCode.allCases.map(\.rawValue) == ["not_trusted", "stale", "not_found", "invalid", "failed", "not_supported", "not_permitted"])
         for code in ErrorCode.allCases {
             let data = Wire.failure(id: .null, DesktopError(code, "m"))
             #expect((jsonObject(data)["error"] as? NSDictionary)?["code"] as? String == code.rawValue)
@@ -160,8 +160,8 @@ import Testing
     }
 
     @Test func pingResultShape() {
-        let data = Wire.success(id: .int(1), PingResult(trusted: false))
-        #expect(jsonObject(data) == jsonObject(#"{"id":1,"ok":true,"trusted":false,"version":"\#(handsDesktopVersion)"}"#))
+        let data = Wire.success(id: .int(1), PingResult(trusted: false, screenRecording: true))
+        #expect(jsonObject(data) == jsonObject(#"{"id":1,"ok":true,"trusted":false,"screenRecording":true,"version":"\#(handsDesktopVersion)"}"#))
     }
 
     @Test func slashesAndQuotesStayReadable() {

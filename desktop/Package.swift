@@ -15,8 +15,8 @@ let package = Package(
             dependencies: ["DesktopCore"],
             exclude: ["Info.plist"],
             linkerSettings: [
-                // Embeds a bundle identifier and name in the binary, so the Accessibility list and the
-                // permission dialog show "hands-desktop" under a stable identifier.
+                // Embeds the app's Info.plist in the binary too, so a bare debug build has the same bundle
+                // identifier and name ("Mycroft Hands") as the app that scripts/build.sh assembles.
                 .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
                               "-Xlinker", "\(Context.packageDirectory)/Sources/hands-desktop/Info.plist"]),
             ]

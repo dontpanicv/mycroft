@@ -37,6 +37,7 @@ struct MachinesSection: View {
             }
             .buttonStyle(.glassProminent)
             .padding(.top, 12)
+            .accessibilityIdentifier("addMachine")
         }
         .hairlineCard(padding: 12)
         .sheet(isPresented: $adding) {
@@ -99,6 +100,7 @@ struct AddMachineSheet: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .hairlineCard(padding: 12, fill: Theme.raised)
+                .accessibilityIdentifier("installCommand")
             HStack {
                 Button("Copy again", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = server.command
@@ -120,6 +122,7 @@ struct AddMachineSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             MonoLabel("Paired", color: Theme.success)
             Text(machine.name).font(.mono(26, weight: .semibold)).foregroundStyle(Theme.ink)
+                .accessibilityIdentifier("pairedName")
             Text("\(machine.displayOS) \(machine.arch) · hands \(machine.version)").font(.mono(12)).foregroundStyle(Theme.inkMuted)
             Text("Mycroft can now run commands, edit files and start long jobs there. Mention it by name in a thread.")
                 .font(.grotesk(15)).foregroundStyle(Theme.inkMuted)

@@ -71,6 +71,50 @@ final class ConversationUITests: XCTestCase {
         add(done)
     }
 
+    /// Settings → Machines → Add machine, then waits while the command (on the clipboard) is run on a computer.
+    /// The harness runs it: scripts/e2e-pair.sh reads the Simulator's pasteboard and pipes it to sh.
+    func testPairMachine() throws {
+        let settings = app.buttons["settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 30))
+        settings.tap()
+        let add = app.buttons["addMachine"]
+        for _ in 0..<6 where !add.isHittable { app.swipeUp() }
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.tap()
+        XCTAssertTrue(app.staticTexts["installCommand"].waitForExistence(timeout: 20))
+        print("INSTALL COMMAND: \(app.staticTexts["installCommand"].label)")
+        let paired = app.staticTexts["pairedName"]
+        XCTAssertTrue(paired.waitForExistence(timeout: 240), "the machine never paired")
+        attachScreenshot("paired")
+        print("PAIRED WITH: \(paired.label)")
+    }
+
+    /// Uses the paired machine: the agent runs a command there through hands.
+    func testRunOnPairedMachine() throws {
+        startThread()
+        send("Use hands_exec on the paired machine to run `uname -sm && whoami`, then tell me the output in one line.")
+        XCTAssertTrue(waitForIdle(timeout: 180))
+        attachScreenshot("remote-exec")
+        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        XCTAssertTrue(texts.contains("hands_exec"), "no hands_exec call: \(texts)")
+        XCTAssertTrue(texts.contains("Darwin"), "no uname output: \(texts)")
+    }
+
+    /// The user's scenario: one prompt, two machines, working together in one turn.
+    func testServerOnLinuxClientOnMac() throws {
+        startThread()
+        send("""
+            Start a small web server on the Linux box on port 8080 that serves a page saying hello from linux \
+            (busybox httpd is available there), then fetch it from the Mac with curl and tell me whether the two \
+            machines can talk. Stop the server when you are done.
+            """)
+        XCTAssertTrue(waitForIdle(timeout: 300), "the run did not finish")
+        attachScreenshot("two-machines")
+        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        print("TRANSCRIPT:\n\(texts)")
+        XCTAssertTrue(texts.contains("hands_job_start") || texts.contains("hands_exec"), "no hands calls")
+    }
+
     private func startThread() {
         let new = app.buttons["newThread"]
         XCTAssertTrue(new.waitForExistence(timeout: 30))

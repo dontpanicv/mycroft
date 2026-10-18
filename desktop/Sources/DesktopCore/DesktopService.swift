@@ -77,6 +77,12 @@ public final class DesktopService: @unchecked Sendable {
                 let result = try act(request)
                 detail += " changed=\(result.screenChanged)"
                 response = Wire.success(id: id, result)
+            case .screenshot:
+                let request: ScreenshotRequest
+                do { request = try decoder.decode(ScreenshotRequest.self, from: line) } catch { throw DesktopError.invalid(Wire.describe(error)) }
+                let result = try screenshot(request)
+                detail = " \(result.width)x\(result.height)"
+                response = Wire.success(id: id, result)
             }
         } catch let error as DesktopError {
             outcome = error.code.rawValue
@@ -91,7 +97,27 @@ public final class DesktopService: @unchecked Sendable {
 
     // MARK: - Ops
 
-    public func ping() -> PingResult { PingResult(trusted: backend.isTrusted) }
+    public func ping() -> PingResult { PingResult(trusted: backend.isTrusted, screenRecording: backend.canRecordScreen) }
+
+    /// Needs Screen Recording, not Accessibility. Does not touch the current observation.
+    public func screenshot(_ request: ScreenshotRequest) throws(DesktopError) -> ScreenshotResult {
+        let display = request.display?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "main"
+        guard ScreenshotRequest.displays.contains(display) else {
+            throw .invalid("`display` must be \(ScreenshotRequest.displays.joined(separator: " or ")).")
+        }
+        let maxWidth = request.maxWidth ?? ScreenshotRequest.defaultMaxWidth
+        guard (1...ScreenshotRequest.maxWidthLimit).contains(maxWidth) else {
+            throw .invalid("`maxWidth` must be between 1 and \(ScreenshotRequest.maxWidthLimit).")
+        }
+        guard backend.canRecordScreen else { throw .notPermitted }
+        let shot: Screenshot
+        do {
+            shot = try backend.screenshot(maxWidth: maxWidth)
+        } catch {
+            throw Self.desktopError(error)
+        }
+        return ScreenshotResult(png: shot.png.base64EncodedString(), width: shot.width, height: shot.height)
+    }
 
     public func observe(_ request: ObserveRequest) throws(DesktopError) -> Observation {
         lock.lock()

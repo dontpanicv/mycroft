@@ -321,69 +321,180 @@ fn a_used_setup_id_fails_pairing() {
     assert!(!state.path.join("paired.json").exists());
 }
 
+/// What the fake phone serves to the install script.
+struct Served {
+    script: String,
+    binary: Vec<u8>,
+    /// `None` answers 404 for MycroftHands.zip.
+    zip: Option<Vec<u8>>,
+}
+
+/// A stub `hands`: records its arguments, copies the `--desktop-zip` it was given, and prints the pairing line.
+const STUB: &[u8] = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STUB_OUT\"\n\
+if [ \"$6\" = --desktop-zip ]; then cp \"$7\" \"$STUB_ZIP\"; fi\necho \"Paired with Stub.\"\n";
+
+fn install_template() -> String {
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/phone-install.sh")).unwrap()
+}
+
+/// Start a phone serving `served` as setup id `s3tup234`, fill in the script's placeholders, and return the phone.
+/// `desktop_sum` of `None` leaves the desktop SHA-256 unfilled, as a phone without the desktop helper does.
+fn serve_install(binary_sum: &str, desktop_sum: Option<&str>, binary: Vec<u8>, zip: Option<Vec<u8>>) -> (FakePhone, String) {
+    let served = std::sync::Arc::new(std::sync::Mutex::new(Served { script: String::new(), binary, zip }));
+    let handler = served.clone();
+    let phone = FakePhone::start(move |request| {
+        let served = handler.lock().unwrap();
+        match (request.method.as_str(), request.path.as_str()) {
+            ("GET", "/s3tup234") => (200, "text/x-shellscript", served.script.clone().into_bytes()),
+            ("GET", "/s3tup234/MycroftHands.zip") => match &served.zip {
+                Some(zip) => (200, "application/zip", zip.clone()),
+                None => (404, "text/plain", Vec::new()),
+            },
+            ("GET", path) if path.starts_with("/s3tup234/hands-") => (200, "application/octet-stream", served.binary.clone()),
+            _ => (404, "text/plain", Vec::new()),
+        }
+    });
+    let base = phone.base("s3tup234");
+    let mut filled = install_template().replace("@BASE@", &base).replace("@PIN@", &phone.pin);
+    for target in ["darwin_arm64", "darwin_x86_64", "linux_x86_64", "linux_aarch64"] {
+        filled = filled.replace(&format!("@SHA256_{target}@"), binary_sum);
+    }
+    if let Some(sum) = desktop_sum {
+        filled = filled.replace("@SHA256_desktop@", sum);
+    }
+    for placeholder in ["@BASE@", "@PIN@", "@SHA256_darwin", "@SHA256_linux"] {
+        assert!(!filled.contains(placeholder), "{placeholder} left in {filled}");
+    }
+    assert_eq!(filled.contains("@SHA256_desktop@"), desktop_sum.is_none());
+    served.lock().unwrap().script = filled;
+    (phone, base)
+}
+
+struct ScriptRun {
+    ok: bool,
+    stdout: String,
+    stderr: String,
+    /// The stub's arguments, if it ran.
+    args: Option<String>,
+    /// The zip the stub was given, if any.
+    zip: Option<Vec<u8>>,
+}
+
+/// `curl ... | shell`, as the user pastes it, with the temp dir and the stub's outputs under `work`.
+fn run_install(phone: &FakePhone, base: &str, shell: &str, work: &Path, label: &str) -> ScriptRun {
+    let temporary = work.join(format!("tmp-{label}-{}", shell.replace('/', "")));
+    fs::create_dir_all(&temporary).unwrap();
+    let (marker, zip) = (work.join("args"), work.join("zip"));
+    let _ = fs::remove_file(&marker);
+    let _ = fs::remove_file(&zip);
+    let command = format!("curl -fsSLk --pinnedpubkey sha256//{} {base} | {shell}", phone.pin);
+    let output = Command::new("/bin/sh")
+        .args(["-c", &command])
+        .env("TMPDIR", &temporary)
+        .env("STUB_OUT", &marker)
+        .env("STUB_ZIP", &zip)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(fs::read_dir(&temporary).unwrap().count(), 0, "{shell} left its temp dir");
+    ScriptRun {
+        ok: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into(),
+        stderr: String::from_utf8_lossy(&output.stderr).into(),
+        args: fs::read_to_string(&marker).ok(),
+        zip: fs::read(&zip).ok(),
+    }
+}
+
+fn shells() -> impl Iterator<Item = &'static str> {
+    ["/bin/sh", "/bin/dash", "/bin/zsh", "/bin/bash"].into_iter().filter(|shell| Path::new(shell).exists())
+}
+
+fn have_curl() -> bool {
+    let present = Command::new("curl").arg("--version").output().is_ok();
+    if !present {
+        eprintln!("skipped: no curl");
+    }
+    present
+}
+
 /// The phone's install script, served and piped to each available shell. The binary is a stub that records its
-/// arguments, so nothing is installed.
+/// arguments, so nothing is installed. On macOS the phone also serves a stub MycroftHands.zip, which the script
+/// verifies and passes on with `--desktop-zip`.
 #[test]
 fn phone_install_script_downloads_verifies_and_runs_hands() {
-    if Command::new("curl").arg("--version").output().is_err() {
-        eprintln!("skipped: no curl");
+    if !have_curl() {
         return;
     }
     let state = StateDir::new();
     let work = state.work();
-    let stub = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STUB_OUT\"\necho \"Paired with Stub.\"\n".to_vec();
-    let template = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/phone-install.sh")).unwrap();
-    for (label, digest) in [("good", hex(&sha256(&stub))), ("tampered", hex(&sha256(b"other")))] {
-        let script = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let served = (script.clone(), stub.clone());
-        let phone = FakePhone::start(move |request| {
-            match (request.method.as_str(), request.path.as_str()) {
-                ("GET", "/s3tup234") => (200, "text/x-shellscript", served.0.lock().unwrap().clone().into_bytes()),
-                ("GET", path) if path.starts_with("/s3tup234/hands-") => (200, "application/octet-stream", served.1.clone()),
-                _ => (404, "text/plain", Vec::new()),
-            }
-        });
-        let base = phone.base("s3tup234");
-        let mut filled = template.replace("@BASE@", &base).replace("@PIN@", &phone.pin);
-        for target in ["darwin_arm64", "darwin_x86_64", "linux_x86_64", "linux_aarch64"] {
-            filled = filled.replace(&format!("@SHA256_{target}@"), &digest);
-        }
-        for placeholder in ["@BASE@", "@PIN@", "@SHA256_"] {
-            assert!(!filled.contains(placeholder), "{placeholder} left in {filled}");
-        }
-        *script.lock().unwrap() = filled;
-        for shell in ["/bin/sh", "/bin/dash", "/bin/zsh", "/bin/bash"] {
-            if !Path::new(shell).exists() {
-                continue;
-            }
-            let temporary = work.join(format!("tmp-{label}-{}", shell.replace('/', "")));
-            fs::create_dir_all(&temporary).unwrap();
-            let marker = work.join("args");
-            let _ = fs::remove_file(&marker);
-            let command = format!("curl -fsSLk --pinnedpubkey sha256//{} {base} | {shell}", phone.pin);
-            let output = Command::new("/bin/sh")
-                .args(["-c", &command])
-                .env("TMPDIR", &temporary)
-                .env("STUB_OUT", &marker)
-                .stdin(Stdio::null())
-                .output()
-                .unwrap();
-            let (stdout, stderr) = (
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
+    let zip = b"PK\x03\x04 stub of MycroftHands.zip".to_vec();
+    let zip_sum = hex(&sha256(&zip));
+    let darwin = cfg!(target_os = "macos");
+    for (label, digest) in [("good", hex(&sha256(STUB))), ("tampered", hex(&sha256(b"other")))] {
+        let (phone, base) = serve_install(&digest, Some(&zip_sum), STUB.to_vec(), Some(zip.clone()));
+        for shell in shells() {
+            let run = run_install(&phone, &base, shell, &work, label);
             if label == "good" {
-                assert!(output.status.success(), "{shell}: {stderr}");
-                assert_eq!(stdout, "Paired with Stub.\n", "{shell}");
-                assert_eq!(stderr, "", "{shell}");
-                let args = fs::read_to_string(&marker).unwrap();
-                assert_eq!(args, format!("install\n--pair\n{base}\n--pin\n{}\n", phone.pin), "{shell}");
+                assert!(run.ok, "{shell}: {}", run.stderr);
+                assert_eq!(run.stdout, "Paired with Stub.\n", "{shell}");
+                assert_eq!(run.stderr, "", "{shell}");
+                let args = run.args.unwrap();
+                let pair = format!("install\n--pair\n{base}\n--pin\n{}\n", phone.pin);
+                if darwin {
+                    let rest = args.strip_prefix(&pair).unwrap_or_else(|| panic!("{shell}: {args}"));
+                    assert!(rest.starts_with("--desktop-zip\n") && rest.ends_with("/MycroftHands.zip\n"), "{shell}: {args}");
+                    assert_eq!(run.zip.as_deref(), Some(&zip[..]), "{shell}");
+                } else {
+                    assert_eq!(args, pair, "{shell}");
+                }
             } else {
-                assert!(!output.status.success(), "{shell} ran a tampered binary");
-                assert!(stderr.contains("does not match its SHA-256"), "{shell}: {stderr}");
-                assert!(!marker.exists(), "{shell} ran the stub");
+                assert!(!run.ok, "{shell} ran a tampered binary");
+                assert!(run.stderr.contains("does not match its SHA-256"), "{shell}: {}", run.stderr);
+                assert!(run.args.is_none(), "{shell} ran the stub");
             }
-            assert_eq!(fs::read_dir(&temporary).unwrap().count(), 0, "{shell} left its temp dir");
         }
+    }
+}
+
+/// The desktop helper's paths on macOS: a tampered zip stops everything, and a phone that does not serve the zip
+/// (unfilled SHA-256, or a 404) still installs hands.
+#[test]
+fn phone_install_script_desktop_helper_paths() {
+    if !have_curl() || !cfg!(target_os = "macos") {
+        return;
+    }
+    let state = StateDir::new();
+    let work = state.work();
+    let zip = b"PK\x03\x04 stub of MycroftHands.zip".to_vec();
+    let binary_sum = hex(&sha256(STUB));
+    let without_desktop = |run: &ScriptRun, phone: &FakePhone, base: &str, shell: &str| {
+        assert!(run.ok, "{shell}: {}", run.stderr);
+        assert_eq!(run.stdout, "Paired with Stub.\n", "{shell}");
+        assert_eq!(run.args.as_deref(), Some(&*format!("install\n--pair\n{base}\n--pin\n{}\n", phone.pin)), "{shell}");
+        assert!(run.zip.is_none(), "{shell}");
+    };
+
+    let (phone, base) = serve_install(&binary_sum, Some(&hex(&sha256(b"other"))), STUB.to_vec(), Some(zip.clone()));
+    for shell in shells() {
+        let run = run_install(&phone, &base, shell, &work, "tampered-zip");
+        assert!(!run.ok, "{shell} accepted a tampered zip");
+        assert!(run.stderr.contains("MycroftHands.zip does not match its SHA-256"), "{shell}: {}", run.stderr);
+        assert!(run.args.is_none(), "{shell} ran the stub");
+    }
+
+    let (phone, base) = serve_install(&binary_sum, None, STUB.to_vec(), Some(zip.clone()));
+    for shell in shells() {
+        let run = run_install(&phone, &base, shell, &work, "unfilled");
+        without_desktop(&run, &phone, &base, shell);
+        assert_eq!(run.stderr, "", "{shell}");
+    }
+    assert!(!phone.received().iter().any(|request| request.path.ends_with("MycroftHands.zip")));
+
+    let (phone, base) = serve_install(&binary_sum, Some(&hex(&sha256(&zip))), STUB.to_vec(), None);
+    for shell in shells() {
+        let run = run_install(&phone, &base, shell, &work, "missing");
+        without_desktop(&run, &phone, &base, shell);
+        assert!(run.stderr.contains("installing hands without desktop control"), "{shell}: {}", run.stderr);
     }
 }

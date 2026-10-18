@@ -171,6 +171,23 @@ impl Serve {
         }
     }
 
+    /// The replies to all of `ids`, in whatever order they arrive.
+    pub fn replies(&mut self, ids: &[u32]) -> std::collections::HashMap<u32, Result<(Value, Vec<u8>), Value>> {
+        let mut replies = std::collections::HashMap::new();
+        while replies.len() < ids.len() {
+            let (kind, id, json, payload) = read_frame(self.stdout.as_mut().unwrap()).expect("serve ended");
+            if !ids.contains(&id) {
+                continue;
+            }
+            match kind {
+                RESULT => replies.insert(id, Ok((json, payload))),
+                ERROR => replies.insert(id, Err(json)),
+                _ => None,
+            };
+        }
+        replies
+    }
+
     pub fn request(&mut self, json: Value) -> Result<(Value, Vec<u8>), Value> {
         let id = self.send(json);
         self.reply(id)

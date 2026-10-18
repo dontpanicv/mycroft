@@ -19,6 +19,12 @@ public final class AXBackend: DesktopBackend {
 
     public var isTrusted: Bool { AXIsProcessTrusted() }
 
+    public var canRecordScreen: Bool { ScreenCapture.isPermitted }
+
+    public func screenshot(maxWidth: Int) throws -> Screenshot {
+        try ScreenCapture.captureMainDisplay(maxWidth: maxWidth)
+    }
+
     /// Shows macOS's own Accessibility prompt for this process. Only the user can grant it.
     public static func requestTrust() -> Bool {
         // "AXTrustedCheckOptionPrompt" is the value of kAXTrustedCheckOptionPrompt.

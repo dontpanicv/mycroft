@@ -2,7 +2,9 @@ import Foundation
 
 // The JSON contract of docs/desktop-protocol.md: what `hands` sends over desktop.sock and what comes back.
 
-public let handsDesktopVersion = "0.1.0"
+public let handsDesktopVersion = "0.2.0"
+/// The bundle identifier of Mycroft Hands.app. TCC keys both permissions to it (and to the signing team).
+public let handsDesktopBundleId = "dev.mycroft.hands-desktop"
 
 // MARK: - Errors
 
@@ -13,6 +15,8 @@ public enum ErrorCode: String, Codable, Sendable, CaseIterable {
     case invalid
     case failed
     case notSupported = "not_supported"
+    /// Screen Recording is not granted (ui.screenshot).
+    case notPermitted = "not_permitted"
 }
 
 public struct DesktopError: Error, Codable, Equatable, Sendable, CustomStringConvertible {
@@ -45,10 +49,15 @@ public struct DesktopError: Error, Codable, Equatable, Sendable, CustomStringCon
     public static func stale(_ message: String) -> DesktopError { DesktopError(.stale, message) }
     public static func notFound(_ message: String) -> DesktopError { DesktopError(.notFound, message) }
 
-    public static let notTrustedMessage = "hands-desktop does not have Accessibility permission. Open System Settings > "
-        + "Privacy & Security > Accessibility and turn on hands-desktop (or run `hands-desktop request-permission` "
-        + "in the logged-in session), then try again."
+    public static let notTrustedMessage = "Mycroft Hands does not have Accessibility permission. Open System Settings > "
+        + "Privacy & Security > Accessibility and turn on Mycroft Hands (or run `hands desktop permissions --request` "
+        + "on the Mac), then try again."
     public static let notTrusted = DesktopError(.notTrusted, notTrustedMessage)
+
+    public static let notPermittedMessage = "Mycroft Hands does not have Screen Recording permission. Open System "
+        + "Settings > Privacy & Security > Screen & System Audio Recording and turn on Mycroft Hands (or run "
+        + "`hands desktop permissions --request` on the Mac), then try again."
+    public static let notPermitted = DesktopError(.notPermitted, notPermittedMessage)
 }
 
 // MARK: - Requests
@@ -57,6 +66,7 @@ public struct DesktopError: Error, Codable, Equatable, Sendable, CustomStringCon
 public enum RequestOp: String, Sendable, CaseIterable {
     case observe = "ui.observe"
     case act = "ui.act"
+    case screenshot = "ui.screenshot"
     case ping
 }
 
@@ -73,6 +83,22 @@ public struct ObserveRequest: Codable, Equatable, Sendable {
 
     public static let defaultMaxElements = 150
     public static let maxElementsLimit = 1000
+}
+
+public struct ScreenshotRequest: Codable, Equatable, Sendable {
+    /// Only `main` (the display with the menu bar) is supported.
+    public var display: String?
+    /// The image is scaled down to at most this many pixels wide, keeping the aspect ratio. Defaults to 1600.
+    public var maxWidth: Int?
+
+    public init(display: String? = nil, maxWidth: Int? = nil) {
+        self.display = display
+        self.maxWidth = maxWidth
+    }
+
+    public static let defaultMaxWidth = 1600
+    public static let maxWidthLimit = 8192
+    public static let displays = ["main"]
 }
 
 public enum ActOperation: String, Codable, Sendable, CaseIterable {
@@ -242,12 +268,27 @@ public struct ActResult: Codable, Equatable, Sendable {
     }
 }
 
+/// `ui.screenshot` on the socket: the PNG travels base64-encoded. `hands` turns it into the frame's raw payload.
+public struct ScreenshotResult: Codable, Equatable, Sendable {
+    public var png: String
+    public var width: Int
+    public var height: Int
+
+    public init(png: String, width: Int, height: Int) {
+        self.png = png
+        self.width = width
+        self.height = height
+    }
+}
+
 public struct PingResult: Codable, Equatable, Sendable {
     public var trusted: Bool
+    public var screenRecording: Bool
     public var version: String
 
-    public init(trusted: Bool, version: String = handsDesktopVersion) {
+    public init(trusted: Bool, screenRecording: Bool, version: String = handsDesktopVersion) {
         self.trusted = trusted
+        self.screenRecording = screenRecording
         self.version = version
     }
 }

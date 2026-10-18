@@ -70,6 +70,20 @@ nonisolated enum DesktopTools {
             }
 
             Tool(
+                "ui_screenshot",
+                description: "See the screen of a paired Mac: returns a screenshot of its main display. Use it when the accessibility tree from ui_observe is not enough (canvas apps, images, layout questions) or to check a result visually.",
+                parameters: .object(["machine": .string("Machine name")]),
+                replay: .safe
+            ) { (args: ObserveArguments, call) -> ToolResult in
+                let machine = try await HandsTools.resolve(args.machine, call)
+                let reply = try await HandsPool.shared.with(machine) { try await $0.request("ui.screenshot", ["maxWidth": 1600]) }
+                guard !reply.payload.isEmpty else { throw ToolError("\(machine.name) returned no screenshot") }
+                let size = "\(reply.int("width") ?? 0)×\(reply.int("height") ?? 0)"
+                return ToolResult(output: [.text("Screenshot of \(machine.name)'s main display (\(size))."),
+                                           .image(ImageContent(data: reply.payload, mimeType: "image/png"))])
+            }
+
+            Tool(
                 "ui_act",
                 description: "Perform one user-interface operation on a paired Mac, using refs from the latest ui_observe. Operations: OPEN_APP{app}, QUIT_APP{app}, OPEN_URL{url}, OPEN_FOLDER{path}, PRESS{ref}, SELECT{ref}, CLICK{ref}, FOCUS{ref}, TYPE_TEXT{text, ref?}, PRESS_KEY{key, modifiers?, times?}, SCROLL{direction, times?}, MENU{menu}.",
                 parameters: .object([

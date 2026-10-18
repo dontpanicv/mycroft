@@ -94,10 +94,29 @@ public enum FingerprintScope: Equatable, Sendable {
     case app(TargetApp)
 }
 
-/// Everything that touches Accessibility, AppKit or the event system. `AXBackend` is the real one; tests use a fake.
+/// A captured image of a display, already scaled and encoded.
+public struct Screenshot: Equatable, Sendable {
+    public var png: Data
+    public var width: Int
+    public var height: Int
+
+    public init(png: Data, width: Int, height: Int) {
+        self.png = png
+        self.width = width
+        self.height = height
+    }
+}
+
+/// Everything that touches Accessibility, AppKit, ScreenCaptureKit or the event system. `AXBackend` is the real one;
+/// tests use a fake.
 public protocol DesktopBackend: AnyObject {
     /// AXIsProcessTrusted().
     var isTrusted: Bool { get }
+    /// CGPreflightScreenCaptureAccess(): whether Screen Recording is granted.
+    var canRecordScreen: Bool { get }
+    /// Captures the main display as PNG, scaled down to at most `maxWidth` pixels wide. Called only when
+    /// `canRecordScreen` is true.
+    func screenshot(maxWidth: Int) throws -> Screenshot
     /// Reads `app` (a bundle id or name; nil means the frontmost app). Throws `not_found` for an unknown app.
     func observe(app: String?, maxElements: Int) throws -> Snapshot
     func fingerprint(_ scope: FingerprintScope) -> ScreenFingerprint
