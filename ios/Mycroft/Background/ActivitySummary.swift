@@ -35,6 +35,8 @@ nonisolated enum ActivitySummary {
             return Step(headline: "Editing \(file(string("path")))\(on)", machine: machine, kind: .file)
         case "hands_list", "ls":
             return Step(headline: "Looking through \(file(string("path")))\(on)", machine: machine, kind: .read)
+        case "desktop_do":
+            return Step(headline: "\(machine ?? "Mac"): \(string("goal") ?? "using apps")", machine: machine, kind: .desktop)
         case "ui_observe":
             return Step(headline: "Looking at \(string("app") ?? "the screen")\(on)", machine: machine, kind: .desktop)
         case "ui_act":

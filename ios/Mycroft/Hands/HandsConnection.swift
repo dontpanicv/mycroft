@@ -146,7 +146,7 @@ actor HandsConnection {
     // MARK: Frames
 
     /// Sends a request and waits for its result. Errors from the daemon throw ``RemoteError``.
-    func request(_ op: String, _ fields: [String: Any] = [:], payload: Data = Data()) async throws -> Reply {
+    func request(_ op: String, _ fields: sending [String: Any] = [:], payload: Data = Data()) async throws -> Reply {
         guard !isClosed else { throw RemoteError(code: "unknown", message: "connection closed", lost: true) }
         let id = nextID
         nextID &+= 1
