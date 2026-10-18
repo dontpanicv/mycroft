@@ -1,0 +1,25 @@
+[package]
+name = "hands"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Mycroft's hands: a pi-env compatible execution daemon with supervised jobs, for macOS and Linux"
+license = "MIT"
+repository = "https://github.com/kurkavojtech/mycroft"
+publish = false
+
+[[bin]]
+name = "hands"
+path = "src/main.rs"
+
+[dependencies]
+encoding_rs = "=0.8.42"
+ignore = "=0.4.33"
+notify = "=8.2.0"
+serde_json = "=1.0.151"
+libc = "=0.2.190"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
