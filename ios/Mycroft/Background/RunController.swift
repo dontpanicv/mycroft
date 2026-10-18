@@ -1,10 +1,13 @@
 import BackgroundTasks
 import Foundation
+import UIKit
 import os
 
 /// Keeps the agent working after the user leaves the app.
 ///
-/// When a run starts in the foreground, Mycroft asks iOS for a continued-processing task. While any thread is busy
+/// When the user leaves the app while a run is going, Mycroft asks iOS for a continued-processing task (which shows
+/// the system's progress banner). It is not requested while the app is open — the user is watching the run there —
+/// and it is completed as soon as the user comes back. While any thread is busy
 /// the task reports progress on every durable commit (iOS cancels tasks that stop reporting — about 58 s in the
 /// spike) and completes once everything is idle. If iOS ends the task anyway, nothing is lost: Pi Durable resumes
 /// the run on the next launch. Measured on iOS 27.2: runs of 10+ minutes in the background.
@@ -37,25 +40,47 @@ final class RunController {
         self.app = app
     }
 
-    /// Called when the user starts work in the foreground. Continued processing can only be requested from there.
-    func runStarted(thread title: String) {
-        guard task == nil, !requested else { return }
+    /// The user is leaving the app (scene going inactive). If something is running, ask iOS to keep it going.
+    /// Continued processing can only be requested while the app is still in the foreground, so this happens now.
+    func appLeavingForeground() async {
+        guard task == nil, !requested, RunMonitor.shared.isTracking else { return }
         requested = true
-        let request = BGContinuedProcessingTaskRequest(identifier: Self.identifier, title: "Mycroft is working", subtitle: title)
+        // Bridge the moments until iOS starts the continued-processing task.
+        bridge = UIApplication.shared.beginBackgroundTask(withName: "Mycroft run") { [weak self] in self?.endBridge() }
+        let request = BGContinuedProcessingTaskRequest(identifier: Self.identifier, title: "Mycroft is working",
+                                                       subtitle: RunMonitor.shared.headline?.text ?? "Working")
         request.strategy = .fail
-        Task {
-            do {
-                try await BGTaskScheduler.shared.submitTaskRequest(request)
-            } catch {
-                // The Simulator has no continued processing (BGTaskScheduler error 1). Work still runs in the foreground.
-                requested = false
-                log.notice("continued processing unavailable: \(error)")
-            }
+        do {
+            try await BGTaskScheduler.shared.submitTaskRequest(request)
+            Journal.note("bg_submitted")
+        } catch {
+            // The Simulator has no continued processing (BGTaskScheduler error 1).
+            requested = false
+            endBridge()
+            log.notice("continued processing unavailable: \(error)")
+            Journal.note("bg_failed", ["error": "\(error)"])
         }
+    }
+
+    /// The user is back: they can watch the run in the app, so the system banner goes away. Work continues.
+    func appBecameActive() {
+        endBridge()
+        if task != nil { finish(success: true, reason: "foreground") }
+        requested = false
+    }
+
+    private var bridge: UIBackgroundTaskIdentifier = .invalid
+
+    private func endBridge() {
+        guard bridge != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bridge)
+        bridge = .invalid
     }
 
     private func accept(_ task: BGContinuedProcessingTask) {
         self.task = task
+        endBridge()
+        Journal.note("bg_accepted")
         task.progress.totalUnitCount = 1000
         // iOS calls this from its own queue; build it outside the main actor (see AudioTap).
         task.expirationHandler = AudioTap.completion { [weak self] in
@@ -97,6 +122,7 @@ final class RunController {
 
     private func finish(success: Bool, reason: String) {
         log.info("continued processing finished (\(reason))")
+        Journal.note("bg_finished", ["reason": reason])
         progressWatcher?.cancel()
         progressWatcher = nil
         if let task {

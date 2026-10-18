@@ -167,8 +167,9 @@ final class AppModel {
             list.items[index].updatedAt = .now
             if let title { list.items[index].title = title }
         }
-        RunController.shared.runStarted(thread: title ?? thread.title)
-        RunMonitor.shared.kick()
+        var current = thread
+        if let title { current.title = title }
+        RunMonitor.shared.runSubmitted(current)
     }
 
     /// The thread live voice works in, created on first use.
@@ -230,9 +231,15 @@ final class AppModel {
         guard let harness else { return [] }
         var snapshots: [RunSnapshot] = []
         for thread in threads.prefix(12) {
-            guard let conversation = try? await harness.conversation(thread.id),
-                let live = try? await conversation.liveState(), live.run != nil
-            else { continue }
+            guard let conversation = try? await harness.conversation(thread.id) else { continue }
+            let live: LiveState
+            do {
+                live = try await conversation.liveState()
+            } catch {
+                Journal.note("live_state_failed", ["thread": "\(thread.id.rawValue)", "error": "\(error)"])
+                continue
+            }
+            guard live.run != nil else { continue }
             let recent = (try? await conversation.entries(limit: 6).items) ?? []
             let messages = recent.reversed().compactMap(\.assistantMessage) + [live.generation?.message].compactMap { $0 }
             let calls = messages.flatMap { message in
