@@ -50,8 +50,18 @@ nonisolated enum HandsTools {
                 guard !list.items.isEmpty else {
                     return "No machines are paired yet. If the user needs a shell, files or desktop control, tell them to add a machine in Settings → Machines."
                 }
-                let lines = list.items.map { "- \($0.name): \($0.displayOS) \($0.arch)" }
-                return "Machines paired with hands (pass the name as `machine`):\n" + lines.joined(separator: "\n")
+                let lines = list.items.map { machine in
+                    let reach = machine.hosts.joined(separator: ", ")
+                    return "- \(machine.name): \(machine.displayOS) \(machine.arch); reachable as \(reach)"
+                }
+                return """
+                    Machines paired with hands. Every hands_* tool takes `machine`; use the exact name below.
+                    \(lines.joined(separator: "\n"))
+                    - The user may say "the Mac", "the Linux box" or "the server": pick the machine that matches; ask only if two match.
+                    - You can use several machines in one turn. Calls in the same step run at the same time, so start independent work on different machines together.
+                    - For something that must keep running while you do other things (a server, a watcher, a build), use hands_job_start, and stop it with hands_job_cancel when you are done.
+                    - When one machine has to reach another, use the other machine's address from this list, not localhost.
+                    """
             }
 
             Tool("hands_machines", description: "List the paired machines and whether each one is reachable right now.", replay: .safe) {

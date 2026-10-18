@@ -51,4 +51,5 @@ nonisolated struct KeychainError: LocalizedError {
 /// Names of the secrets Mycroft keeps.
 nonisolated enum Secret {
     static let jev = "jev.apiKey"
+    static let openAI = "openai.apiKey"
 }

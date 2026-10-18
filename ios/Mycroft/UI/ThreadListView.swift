@@ -4,6 +4,7 @@ struct ThreadListView: View {
     @Environment(AppModel.self) private var app
     @Binding var path: [ThreadMeta]
     @State private var creating = false
+    @State private var talking = false
 
     var body: some View {
         ScrollView {
@@ -57,6 +58,19 @@ struct ThreadListView: View {
             .accessibilityIdentifier("newThread")
             .padding(Theme.gutter)
         }
+        .overlay(alignment: .bottomLeading) {
+            Button {
+                talking = true
+            } label: {
+                Image(systemName: "waveform").font(.system(size: 20, weight: .semibold)).frame(width: 60, height: 60)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .padding(Theme.gutter)
+            .accessibilityLabel("Talk to Mycroft")
+            .accessibilityIdentifier("voice")
+        }
+        .fullScreenCover(isPresented: $talking) { VoiceView() }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {

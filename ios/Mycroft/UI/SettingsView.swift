@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var jevKey = ""
     @State private var jevSaved = false
+    @State private var openAIKey = ""
 
     var body: some View {
         NavigationStack {
@@ -13,6 +14,26 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     section("Model") {
                         SignInPrompt()
+                    }
+                    section("Live voice · GPT-Live") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Live voice uses OpenAI's GPT-Live, which needs a platform API key (the ChatGPT subscription doesn't cover it). The key stays in this iPhone's keychain.")
+                                .font(.grotesk(14)).foregroundStyle(Theme.inkMuted)
+                            HStack {
+                                SecureField(app.hasOpenAIKey ? "Key saved — paste to replace" : "Paste OpenAI API key", text: $openAIKey)
+                                    .font(.mono(13))
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                Button(openAIKey.isEmpty && app.hasOpenAIKey ? "Remove" : "Save") {
+                                    try? app.saveOpenAIKey(openAIKey)
+                                    openAIKey = ""
+                                }
+                                .buttonStyle(.glass)
+                                .disabled(openAIKey.isEmpty && !app.hasOpenAIKey)
+                            }
+                            Tag(text: app.hasOpenAIKey ? "Key saved" : "No key", color: app.hasOpenAIKey ? Theme.success : Theme.inkMuted)
+                        }
+                        .hairlineCard()
                     }
                     section("Desktop control · Jev") {
                         VStack(alignment: .leading, spacing: 10) {

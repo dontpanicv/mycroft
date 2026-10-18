@@ -243,12 +243,18 @@ actor HandsConnection {
 actor HandsPool {
     static let shared = HandsPool()
     private var connections: [String: HandsConnection] = [:]
+    /// Connections being opened, so parallel tool calls to one machine share a single connection.
+    private var opening: [String: Task<HandsConnection, Error>] = [:]
 
     func connection(to machine: Machine) async throws -> HandsConnection {
         if let existing = connections[machine.id], await !existing.isClosed, await existing.machine == machine {
             return existing
         }
-        let fresh = try await HandsConnection.open(machine, key: PhoneIdentity.key())
+        if let pending = opening[machine.id] { return try await pending.value }
+        let task = Task { try await HandsConnection.open(machine, key: PhoneIdentity.key()) }
+        opening[machine.id] = task
+        defer { opening[machine.id] = nil }
+        let fresh = try await task.value
         connections[machine.id] = fresh
         return fresh
     }

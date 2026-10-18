@@ -52,6 +52,7 @@ final class AppModel {
         protectDocuments()
         notices += await DevImport.run(models: models)
         hasJevKey = Keychain.read(Secret.jev) != nil
+        hasOpenAIKey = Keychain.read(Secret.openAI) != nil
         do {
             guard let bundled = Bundle.main.url(forResource: "generation-0", withExtension: nil) else {
                 throw StartError.missingGeneration0
@@ -79,7 +80,8 @@ final class AppModel {
         do {
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension()])
+                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension()],
+                settings: Self.settings)
         } catch {
             let state = await generations.state
             guard state.active != state.lastGood else { throw error }
@@ -87,9 +89,13 @@ final class AppModel {
             notices.append("Generation \(failed) failed to load (\(error.localizedDescription)); running the last good one.")
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension()])
+                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension()],
+                settings: Self.settings)
         }
     }
+
+    /// Tool calls of one step run in parallel, so work on several machines happens at the same time.
+    nonisolated static let settings = Settings(toolExecution: .parallel)
 
     private func selfExtension() -> Extension {
         SelfTools.makeExtension(store: generations) { [weak self] _ in
@@ -151,9 +157,9 @@ final class AppModel {
         return meta
     }
 
-    func send(_ text: String, to thread: ThreadMeta, steer: Bool = false) async throws {
+    func send(_ text: String, to thread: ThreadMeta, steer: Bool = false, requestId: String? = nil) async throws {
         guard let harness, let conversation = try await harness.conversation(thread.id) else { throw StartError.notReady }
-        _ = try await conversation.submit(text, whenBusy: steer ? .steer : .followUp)
+        _ = try await conversation.submit(text, whenBusy: steer ? .steer : .followUp, requestId: requestId)
         let title = thread.title == ThreadMeta.untitled ? Threads.title(from: text) : nil
         try await harness.update(Threads.document) { list in
             guard let index = list.items.firstIndex(where: { $0.id == thread.id }) else { return }
@@ -162,6 +168,42 @@ final class AppModel {
         }
         RunController.shared.runStarted(thread: title ?? thread.title)
         RunMonitor.shared.kick()
+    }
+
+    /// The thread live voice works in, created on first use.
+    func voiceThread() async throws -> ThreadMeta {
+        if let existing = threads.first(where: { $0.title == Self.voiceTitle }) { return existing }
+        var thread = try await newThread()
+        thread.title = Self.voiceTitle
+        let id = thread.id
+        try await harness?.update(Threads.document) { list in
+            if let index = list.items.firstIndex(where: { $0.id == id }) { list.items[index].title = Self.voiceTitle }
+        }
+        return thread
+    }
+
+    nonisolated static let voiceTitle = "Voice"
+
+    func isBusy(_ thread: ThreadMeta) async -> Bool {
+        ((try? await harness?.conversation(thread.id)?.liveState())?.run) != nil
+    }
+
+    /// What the newest turn did so far, as activity headlines, oldest first.
+    func recentSteps(_ thread: ThreadMeta) async -> [String] {
+        guard let conversation = try? await harness?.conversation(thread.id),
+            let entries = try? await conversation.entries(limit: 24).items
+        else { return [] }
+        var calls: [ToolCall] = []
+        for entry in entries {
+            if entry.kind == .user { break }
+            for case .toolCall(let call) in entry.assistantMessage?.content ?? [] { calls.insert(call, at: 0) }
+        }
+        return calls.map { ActivitySummary.describe(tool: $0.name, arguments: $0.arguments).headline }
+    }
+
+    func lastAnswer(_ thread: ThreadMeta) async -> String? {
+        let entries = (try? await harness?.conversation(thread.id)?.entries(limit: 6).items) ?? []
+        return entries.first(where: { $0.kind == .assistant })?.assistantMessage?.content.compactMap(\.text).joined(separator: "\n")
     }
 
     func stop(_ thread: ThreadMeta) async throws {
@@ -259,6 +301,16 @@ final class AppModel {
     func signOut() async {
         try? await models.logout(from: Provider.codex)
         signIn = .signedOut
+    }
+
+    // MARK: Keys
+
+    private(set) var hasOpenAIKey = Keychain.read(Secret.openAI) != nil
+
+    func saveOpenAIKey(_ key: String) throws {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { Keychain.delete(Secret.openAI) } else { try Keychain.write(trimmed, for: Secret.openAI) }
+        hasOpenAIKey = !trimmed.isEmpty
     }
 
     // MARK: Jev

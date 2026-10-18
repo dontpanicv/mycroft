@@ -6,7 +6,8 @@
 # - ~/.codex/auth.json (your ChatGPT sign-in from Codex) is copied into the app and moved into its keychain on launch.
 #   Both apps then hold the same refresh token; whichever refreshes first logs the other out. Fine for a Simulator,
 #   use the in-app device-code sign-in on your iPhone.
-# - The Jev key is read from the macOS keychain (service mycroft.jev, account jev) and moved into the app's keychain.
+# - The Jev key (service mycroft.jev, account jev) and OpenAI key for live voice (service mycroft.openai, account
+#   openai) are read from the macOS keychain and moved into the app's keychain.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,6 +27,10 @@ mkdir -p "$DATA/Documents/import"
 if [[ -f "$HOME/.codex/auth.json" && "${SKIP_CODEX_AUTH:-0}" != 1 ]]; then
   install -m 600 "$HOME/.codex/auth.json" "$DATA/Documents/import/codex-auth.json"
   echo "handed over ~/.codex/auth.json"
+fi
+if security find-generic-password -s mycroft.openai -a openai >/dev/null 2>&1; then
+  (umask 077; security find-generic-password -s mycroft.openai -a openai -w > "$DATA/Documents/import/openai.key")
+  echo "handed over the OpenAI API key"
 fi
 if security find-generic-password -s mycroft.jev -a jev >/dev/null 2>&1; then
   (umask 077; security find-generic-password -s mycroft.jev -a jev -w > "$DATA/Documents/import/jev.key")
