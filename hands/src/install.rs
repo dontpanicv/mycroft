@@ -194,6 +194,12 @@ fn copy_binary(from: &Path, to: &Path) -> std::io::Result<&'static str> {
     if fs::canonicalize(from).ok() == fs::canonicalize(to).ok() {
         return Ok("already in place");
     }
+    // Never replace a newer hands with an older one (an outdated phone app serving an old binary, say).
+    if let Some(installed) = installed_version(to) {
+        if newer(&installed, env!("CARGO_PKG_VERSION")) {
+            return Ok("kept the newer hands that is already installed");
+        }
+    }
     let bytes = fs::read(from)?;
     if fs::read(to).is_ok_and(|current| current == bytes) {
         return Ok("unchanged");
@@ -205,6 +211,40 @@ fn copy_binary(from: &Path, to: &Path) -> std::io::Result<&'static str> {
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o755))?;
     fs::rename(&temporary, to)?;
     Ok("copied")
+}
+
+/// The version an installed `hands` reports (`hands version` prints "hands X.Y.Z").
+fn installed_version(binary: &Path) -> Option<String> {
+    let output = std::process::Command::new(binary).arg("version").output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split_whitespace().nth(1).map(str::to_owned)
+}
+
+/// Whether version `a` is newer than `b` (numeric dotted versions; missing parts count as 0).
+fn newer(a: &str, b: &str) -> bool {
+    let parse = |v: &str| v.split('.').map(|part| part.trim().parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    let (a, b) = (parse(a), parse(b));
+    for index in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(index).copied().unwrap_or(0), b.get(index).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::newer;
+
+    #[test]
+    fn compares_versions() {
+        assert!(newer("0.3.0", "0.2.0"));
+        assert!(newer("0.10.0", "0.9.9"));
+        assert!(!newer("0.2.0", "0.2.0"));
+        assert!(!newer("0.2.0", "0.3.0"));
+        assert!(newer("1.0", "0.99.1"));
+    }
 }
 
 fn home() -> PathBuf {

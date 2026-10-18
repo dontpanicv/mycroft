@@ -98,7 +98,7 @@ final class InstallServer {
                 if let request = HTTPRequest(parsing: buffer) {
                     let source = Self.sourceAddress(of: connection)
                     let response = await self.handle(request, from: source)
-                    connection.send(content: response.serialized(), completion: .contentProcessed { _ in connection.cancel() })
+                    Self.respond(response.serialized(), on: connection, queue: self.queue)
                 } else if complete || error != nil || buffer.count > 1_000_000 {
                     connection.cancel()
                 } else {
@@ -187,6 +187,17 @@ final class InstallServer {
             script = script.replacingOccurrences(of: "@SHA256_desktop@", with: data.sha256Hex)
         }
         return script
+    }
+
+    /// Sends the whole response, then closes gracefully. `.finalMessage` closes our side (TLS close_notify, FIN) only
+    /// after every byte is sent; cancelling right after `contentProcessed` instead tore the connection down while a
+    /// large body was still in flight over Wi-Fi, and curl reported "transfer closed with N bytes remaining".
+    nonisolated static func respond(_ data: Data, on connection: NWConnection, queue: DispatchQueue) {
+        connection.send(content: data, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
+            // Release the connection once the client has closed its side too, or after a generous timeout.
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, _, _ in connection.cancel() }
+            queue.asyncAfter(deadline: .now() + 60) { connection.cancel() }
+        })
     }
 
     nonisolated static func sourceAddress(of connection: NWConnection) -> String? {

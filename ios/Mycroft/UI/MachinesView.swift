@@ -4,10 +4,13 @@ import SwiftUI
 struct MachinesSection: View {
     @Environment(AppModel.self) private var app
     @State private var adding = false
+    /// Machine name → nil while checking, "online", or why it can't be reached.
+    @State private var status: [String: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(app.machines) { machine in
+                VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(machine.name).font(.mono(14, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -15,7 +18,15 @@ struct MachinesSection: View {
                             .font(.mono(10.5)).foregroundStyle(Theme.inkFaint)
                     }
                     Spacer()
-                    Tag(text: "hands \(machine.version)")
+                    switch status[machine.name] {
+                    case "online": Tag(text: "Online", color: Theme.success)
+                    case nil: ProgressView().controlSize(.mini).tint(Theme.accentSoft)
+                    default: Tag(text: "Offline", color: Theme.danger)
+                    }
+                }
+                if let problem = status[machine.name], problem != "online" {
+                    Text(problem).font(.mono(10.5)).foregroundStyle(Theme.danger).textSelection(.enabled)
+                }
                 }
                 .padding(.vertical, 10)
                 .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
@@ -43,6 +54,25 @@ struct MachinesSection: View {
         .sheet(isPresented: $adding) {
             AddMachineSheet()
         }
+        .task(id: app.machines) { await check() }
+    }
+
+    /// Connects to every paired machine and shows whether it answers.
+    private func check() async {
+        status = [:]
+        await withTaskGroup(of: (String, String).self) { group in
+            for machine in app.machines {
+                group.addTask {
+                    do {
+                        _ = try await HandsPool.shared.connection(to: machine)
+                        return (machine.name, "online")
+                    } catch {
+                        return (machine.name, error.localizedDescription)
+                    }
+                }
+            }
+            for await (name, result) in group { status[name] = result }
+        }
     }
 }
 
@@ -52,6 +82,7 @@ struct AddMachineSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var server = InstallServer()
     @State private var copied = false
+    @State private var localNetwork: LocalNetworkPermission.Status?
 
     var body: some View {
         NavigationStack {
@@ -80,6 +111,8 @@ struct AddMachineSheet: View {
             }
         }
         .task {
+            // Ask iOS for local-network access first: until it is granted, the computer's download is refused.
+            localNetwork = await LocalNetworkPermission.request(wait: 4)
             server.start { machine in try await app.addMachine(machine) }
         }
         .onChange(of: server.command) {
@@ -92,6 +125,10 @@ struct AddMachineSheet: View {
 
     private var waiting: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if localNetwork == .denied {
+                Text("iOS is blocking Mycroft from your local network, so the computer can't reach this phone. Turn on Settings → Privacy & Security → Local Network → Mycroft, then come back.")
+                    .font(.grotesk(14)).foregroundStyle(Theme.danger).hairlineCard(padding: 10)
+            }
             step("01", "Open Terminal on your Mac or Linux machine.", "It must be on the same Wi-Fi as this iPhone.")
             step("02", "Paste and press Return.", copied ? "The command is on your clipboard. With Universal Clipboard, just paste on the Mac." : "")
             Text(server.command)

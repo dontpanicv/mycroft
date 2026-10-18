@@ -42,20 +42,58 @@ actor HandsConnection {
         self.connection = connection
     }
 
-    /// Connects to the first reachable address of the machine and authenticates.
+    /// Tries every address of the machine at once and keeps the first that authenticates. If none does, the error
+    /// lists what happened at each address (a dead VPN address must not hide why the LAN one failed).
     static func open(_ machine: Machine, key: Curve25519.Signing.PrivateKey, timeout: Duration = .seconds(6)) async throws -> HandsConnection {
-        var lastError: Error = RemoteError(code: "unreachable", message: "\(machine.name) has no address")
-        for host in machine.hosts {
-            do {
-                let connection = try await HandsConnection.connect(host: host, machine: machine, timeout: timeout)
-                let hands = HandsConnection(machine: machine, connection: connection)
-                try await hands.handshake(key: key, timeout: timeout)
-                return hands
-            } catch {
-                lastError = error
+        let hosts = machine.hosts
+        guard !hosts.isEmpty else { throw RemoteError(code: "unreachable", message: "\(machine.name) has no address") }
+        return try await withThrowingTaskGroup(of: (String, Result<HandsConnection, Error>).self) { group in
+            for host in hosts {
+                group.addTask {
+                    do {
+                        let connection = try await HandsConnection.connect(host: host, machine: machine, timeout: timeout)
+                        let hands = HandsConnection(machine: machine, connection: connection)
+                        do {
+                            try await hands.handshake(key: key, timeout: timeout)
+                        } catch {
+                            await hands.close()
+                            throw error
+                        }
+                        return (host, .success(hands))
+                    } catch {
+                        return (host, .failure(error))
+                    }
+                }
             }
+            var winner: HandsConnection?
+            var failures: [String] = []
+            for try await (host, result) in group {
+                switch result {
+                case .success(let hands):
+                    if winner == nil {
+                        winner = hands
+                        group.cancelAll()
+                    } else {
+                        await hands.close()
+                    }
+                case .failure(let error):
+                    failures.append("\(host): \(describe(error))")
+                }
+            }
+            if let winner { return winner }
+            if failures.contains(where: { $0.contains(localNetworkDenied) }) {
+                throw RemoteError(code: "local_network", message: "\(localNetworkDenied). Turn it on in Settings → Privacy & Security → Local Network → Mycroft.")
+            }
+            throw RemoteError(code: "unreachable", message: failures.joined(separator: "; "))
         }
-        throw lastError
+    }
+
+    static let localNetworkDenied = "iOS is blocking Mycroft from the local network"
+
+    private static func describe(_ error: Error) -> String {
+        if let remote = error as? RemoteError { return remote.message }
+        if error is CancellationError { return "cancelled" }
+        return error.localizedDescription
     }
 
     private static func connect(host: String, machine: Machine, timeout: Duration) async throws -> NWConnection {
@@ -82,6 +120,8 @@ actor HandsConnection {
                     connection.stateUpdateHandler = { state in
                         let resume: Result<Void, Error>? = switch state {
                         case .ready: .success(())
+                        case .waiting where connection.currentPath?.unsatisfiedReason == .localNetworkDenied:
+                            .failure(RemoteError(code: "local_network", message: HandsConnection.localNetworkDenied))
                         case .failed(let error), .waiting(let error): .failure(error)
                         case .cancelled: .failure(CancellationError())
                         default: nil
@@ -98,7 +138,11 @@ actor HandsConnection {
             }
             defer { group.cancelAll() }
             do {
-                try await group.next()
+                try await withTaskCancellationHandler {
+                    try await group.next()
+                } onCancel: {
+                    connection.cancel()  // a faster address won; stop this attempt now
+                }
             } catch {
                 connection.cancel()
                 throw error

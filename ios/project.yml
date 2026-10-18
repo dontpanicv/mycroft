@@ -76,6 +76,15 @@ targets:
             if [ -f "$HANDS/dist/hands-$t" ]; then cp "$HANDS/dist/hands-$t" "$DEST/hands-dist/"; found=1; fi
           done
           [ "$found" = 1 ] || echo "warning: no hands binaries in hands/dist (run hands/scripts/build-release.sh)"
+          # Refuse to ship stale binaries: the bundled hands must be the version in hands/Cargo.toml.
+          want="$(sed -n 's/^version = "\(.*\)"/\1/p' "$HANDS/Cargo.toml" | head -1)"
+          if [ "$found" = 1 ] && [ "$(uname -m)" = arm64 ] && [ -f "$HANDS/dist/hands-darwin-arm64" ]; then
+            have="$("$HANDS/dist/hands-darwin-arm64" version | awk '{print $2}')"
+            if [ "$have" != "$want" ]; then
+              echo "error: hands/dist has hands $have but hands/Cargo.toml is $want. Run hands/scripts/build-release.sh."
+              exit 1
+            fi
+          fi
           DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
           if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
     settings:
@@ -120,6 +129,15 @@ targets:
             if [ -f "$HANDS/dist/hands-$t" ]; then cp "$HANDS/dist/hands-$t" "$DEST/hands-dist/"; found=1; fi
           done
           [ "$found" = 1 ] || echo "warning: no hands binaries in hands/dist (run hands/scripts/build-release.sh)"
+          # Refuse to ship stale binaries: the bundled hands must be the version in hands/Cargo.toml.
+          want="$(sed -n 's/^version = "\(.*\)"/\1/p' "$HANDS/Cargo.toml" | head -1)"
+          if [ "$found" = 1 ] && [ "$(uname -m)" = arm64 ] && [ -f "$HANDS/dist/hands-darwin-arm64" ]; then
+            have="$("$HANDS/dist/hands-darwin-arm64" version | awk '{print $2}')"
+            if [ "$have" != "$want" ]; then
+              echo "error: hands/dist has hands $have but hands/Cargo.toml is $want. Run hands/scripts/build-release.sh."
+              exit 1
+            fi
+          fi
           DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
           if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
     settings:

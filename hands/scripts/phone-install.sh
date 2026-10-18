@@ -60,7 +60,7 @@ main() {
 	name=hands-$os-$arch
 
 	tmp=$(mktemp -d 2>/dev/null || mktemp -d -t mycroft) || fail "cannot create a temporary directory"
-	curl -fsSLk --pinnedpubkey "sha256//$PIN" -o "$tmp/hands" "$BASE/$name" </dev/null ||
+	curl -fsSLk --retry 3 --retry-all-errors --pinnedpubkey "sha256//$PIN" -o "$tmp/hands" "$BASE/$name" </dev/null ||
 		fail "could not download $name from the phone"
 
 	actual=$(sha256 "$tmp/hands") || exit 1
@@ -73,7 +73,7 @@ main() {
 		case $dsum in
 		*[!0-9a-f]* | '') ;; # not filled in: this phone does not serve the desktop helper
 		*)
-			if curl -fsSLk --pinnedpubkey "sha256//$PIN" -o "$tmp/MycroftHands.zip" "$BASE/MycroftHands.zip" \
+			if curl -fsSLk --retry 3 --retry-all-errors --pinnedpubkey "sha256//$PIN" -o "$tmp/MycroftHands.zip" "$BASE/MycroftHands.zip" \
 				</dev/null 2>/dev/null; then
 				actual=$(sha256 "$tmp/MycroftHands.zip") || exit 1
 				[ "$actual" = "$dsum" ] ||
