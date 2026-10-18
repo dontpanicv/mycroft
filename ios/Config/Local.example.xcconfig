@@ -1,0 +1,3 @@
+// Copy to Local.xcconfig (gitignored) for device builds.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+MYCROFT_BUNDLE_ID = dev.yourname.mycroft

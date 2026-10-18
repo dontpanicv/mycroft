@@ -1,0 +1,88 @@
+name: Mycroft
+options:
+  bundleIdPrefix: dev.mycroft
+  deploymentTarget:
+    iOS: '27.0'
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+packages:
+  PiDurableKit:
+    url: https://github.com/finnvoor/PiDurableKit
+    revision: 1305a72ffe5ea29a9f5e7d576a7cf9334189c1ef
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  Mycroft:
+    type: application
+    platform: iOS
+    sources:
+      - path: Mycroft
+      - path: ../agent/generation-0
+        buildPhase: resources
+        type: folder
+        name: generation-0
+    dependencies:
+      - package: PiDurableKit
+    info:
+      path: Mycroft/Info.plist
+      properties:
+        CFBundleDisplayName: Mycroft
+        CFBundleShortVersionString: '0.1.0'
+        CFBundleVersion: '1'
+        UILaunchScreen:
+          UIColorName: Canvas
+        UIApplicationSupportsIndirectInputEvents: true
+        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [processing, audio]
+        BGTaskSchedulerPermittedIdentifiers: ['$(PRODUCT_BUNDLE_IDENTIFIER).run']
+        UIAppFonts: [JetBrainsMono.ttf, SchibstedGrotesk.ttf]
+        NSMicrophoneUsageDescription: Mycroft listens while live voice is on.
+        NSLocalNetworkUsageDescription: Mycroft connects to your machines running hands on this network.
+        NSSupportsLiveActivities: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MYCROFT_BUNDLE_ID)
+        TARGETED_DEVICE_FAMILY: '1'
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+  MycroftUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [MycroftUITests]
+    dependencies:
+      - target: Mycroft
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Mycroft
+        SWIFT_VERSION: '5.0'
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+  MycroftTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [MycroftTests]
+    dependencies:
+      - target: Mycroft
+      - package: PiDurableKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Mycroft.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mycroft
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  Mycroft:
+    build:
+      targets:
+        Mycroft: all
+        MycroftTests: [test]
+        MycroftUITests: [test]
+    test:
+      targets: [MycroftTests, MycroftUITests]

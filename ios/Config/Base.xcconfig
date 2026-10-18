@@ -1,0 +1,5 @@
+// Shared build settings. Personal values (signing team, bundle id) go in Local.xcconfig, which is gitignored.
+// Copy Local.example.xcconfig to Local.xcconfig and fill it in to build for a device.
+MYCROFT_BUNDLE_ID = dev.mycroft.app
+DEVELOPMENT_TEAM =
+#include? "Local.xcconfig"

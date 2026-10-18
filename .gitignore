@@ -29,3 +29,6 @@ secrets/
 # spike logs
 spikes/**/results/
 spikes/**/*.log
+
+# personal Xcode signing
+ios/Config/Local.xcconfig

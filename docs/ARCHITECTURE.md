@@ -59,6 +59,8 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 
 ## 4. Self-modification
 
+As built (see ADR 0004): the agent rewrites `extension.js`, and `self_activate` installs it into the running harness. The steps below are the original plan; the TypeScript step was dropped because the agent writes plain JavaScript.
+
 1. The agent's source lives in `Documents/agent/generations/<n>/`. Generation 0 is copied from the app bundle on first launch.
 2. Self-edit tools (`self.read`, `self.edit`, `self.test`, `self.activate`) let the agent change a **new** generation, never the running one.
 3. `self.activate` loads the candidate in a scratch `JSContext` and runs its self-test. On success the host atomically flips `active`, checkpoints, swaps the main context and resumes the Harness. Pi Durable rebinds extensions by name, and the turn that made the edit continues.

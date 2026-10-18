@@ -1,6 +1,6 @@
 # 0002 · The agent runs in JavaScriptCore, the shell in SwiftUI
 
-**Status:** accepted
+**Status:** accepted, implemented with [PiDurableKit](https://github.com/finnvoor/PiDurableKit) (CC0). It already bridges `fetch`/SSE, SQLite, timers, crypto, the keychain and OAuth sign-ins to Swift.
 
 Pi Durable runs in an in-process `JSContext`. The thread, chat and voice UI is native SwiftUI.
 
