@@ -116,9 +116,9 @@ final class Transcriber {
         if let analyzerFormat, analyzerFormat != inputFormat {
             converter = AVAudioConverter(from: inputFormat, to: analyzerFormat)
         }
-        node.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        node.installTap(onBus: 0, bufferSize: 4096, format: inputFormat, block: AudioTap.block { [weak self] buffer in
             self?.captured(buffer)
-        }
+        })
         engine.prepare()
         try engine.start()
     }
@@ -253,6 +253,18 @@ nonisolated enum SpeechModel {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+/// Audio taps run on a real-time audio queue. A closure written inside main-actor code would inherit main-actor
+/// isolation and trap there ("dispatch_assert_queue"), so tap blocks are made here, outside any actor.
+nonisolated enum AudioTap {
+    static func block(_ handle: @escaping @Sendable (AVAudioPCMBuffer) -> Void) -> AVAudioNodeTapBlock {
+        { buffer, _ in handle(buffer) }
+    }
+
+    static func completion(_ handle: @escaping @Sendable () -> Void) -> AVAudioNodeCompletionHandler {
+        { handle() }
     }
 }
 

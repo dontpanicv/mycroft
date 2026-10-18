@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import PiDurableKit
 import os
+import UIKit
 
 /// The app's brain: one Pi Durable harness over one SQLite file, the agent's generations, and the thread list.
 @Observable
@@ -275,9 +276,14 @@ final class AppModel {
     }
 
     /// ChatGPT sign-in with a device code: show the code, the user approves it at auth.openai.com.
-    func signInWithChatGPT(open: @escaping @Sendable (URL) -> Void) async {
+    ///
+    /// The page is opened by the user from the code screen, inside the app (``SafariSheet``): if Mycroft went to the
+    /// background, iOS would suspend it and pi-ai's polling for the approval would be cancelled.
+    func signInWithChatGPT() async {
         let interaction = LoginInteraction(
-            presentSignInPage: { url in open(url) },
+            // PiDurableKit asks to show the verification page as soon as the code exists. Don't: the user needs to
+            // see the code first. Wait instead; the sign-in cancels this when it finishes.
+            presentSignInPage: { _ in try await Task.sleep(for: .seconds(20 * 60)) },
             prompt: { prompt in
                 if case .select(_, let options) = prompt, let device = options.first(where: { $0.id == "device_code" }) {
                     return device.id
@@ -288,13 +294,19 @@ final class AppModel {
                 guard case .deviceCode(let code, let url) = event else { return }
                 Task { @MainActor in self?.signIn = .waitingForCode(code: code, url: url) }
             })
+        // A little background time in case the user switches apps while approving.
+        let background = UIApplication.shared.beginBackgroundTask(withName: "ChatGPT sign-in")
+        defer { UIApplication.shared.endBackgroundTask(background) }
         do {
             try await models.login(to: Provider.codex, interaction: interaction, agentName: "Mycroft")
             signIn = .signedIn
         } catch is CancellationError {
             await refreshSignIn()
         } catch {
-            signIn = .failed(error.localizedDescription)
+            let text = error.localizedDescription
+            signIn = .failed(text.localizedCaseInsensitiveContains("cancel")
+                ? "Sign-in was interrupted because Mycroft left the screen. Try again and approve the code in the page that opens inside Mycroft."
+                : text)
         }
     }
 

@@ -57,7 +57,8 @@ final class RunController {
     private func accept(_ task: BGContinuedProcessingTask) {
         self.task = task
         task.progress.totalUnitCount = 1000
-        task.expirationHandler = { [weak self] in
+        // iOS calls this from its own queue; build it outside the main actor (see AudioTap).
+        task.expirationHandler = AudioTap.completion { [weak self] in
             Task { @MainActor in self?.finish(success: false, reason: "expired") }
         }
         progressWatcher = Task { [weak self] in await self?.drive(task) }

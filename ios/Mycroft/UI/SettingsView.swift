@@ -92,8 +92,8 @@ struct SettingsView: View {
 /// ChatGPT subscription sign-in with a device code.
 struct SignInPrompt: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.openURL) private var openURL
     @State private var working = false
+    @State private var page: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -108,11 +108,21 @@ struct SignInPrompt: View {
                     Button("Sign out") { Task { await app.signOut() } }.buttonStyle(.glass)
                 }
             case .waitingForCode(let code, let url):
-                Text("Enter this code at auth.openai.com").font(.grotesk(14)).foregroundStyle(Theme.inkMuted)
+                Text("Your sign-in code").font(.grotesk(14)).foregroundStyle(Theme.inkMuted)
                 Text(code).font(.mono(30, weight: .bold)).tracking(4).foregroundStyle(Theme.accentSoft).textSelection(.enabled)
-                HStack {
-                    Button("Copy code", systemImage: "doc.on.doc") { UIPasteboard.general.string = code }.buttonStyle(.glass)
-                    Button("Open page", systemImage: "arrow.up.right") { openURL(url) }.buttonStyle(.glassProminent)
+                    .accessibilityIdentifier("deviceCode")
+                Button {
+                    UIPasteboard.general.string = code
+                    page = url
+                } label: {
+                    MonoLabel("Copy code & open sign-in", color: .white, size: 12).frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent)
+                Text("Paste the code on the page, approve, then close the page. Or enter it at \(url.host() ?? "auth.openai.com")\(url.path()) on any other device. Keep Mycroft open until it says you're signed in.")
+                    .font(.grotesk(13)).foregroundStyle(Theme.inkFaint)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).tint(Theme.accentSoft)
+                    MonoLabel("Waiting for approval", size: 10)
                 }
             case .failed(let message):
                 Text(message).font(.mono(12)).foregroundStyle(Theme.danger)
@@ -124,13 +134,19 @@ struct SignInPrompt: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .hairlineCard()
+        .sheet(item: $page) { url in
+            SafariSheet(url: url).ignoresSafeArea()
+        }
+        .onChange(of: app.signIn) {
+            if app.signIn == .signedIn { page = nil }
+        }
     }
 
     private var signInButton: some View {
         Button {
             working = true
             Task {
-                await app.signInWithChatGPT { url in Task { @MainActor in openURL(url) } }
+                await app.signInWithChatGPT()
                 working = false
             }
         } label: {

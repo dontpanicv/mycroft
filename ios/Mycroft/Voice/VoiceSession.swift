@@ -124,9 +124,9 @@ final class VoiceSession: VoiceEngine {
         converter = AVAudioConverter(from: inputFormat, to: wireFormat)
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: playFormat)
-        input.installTap(onBus: 0, bufferSize: 2400, format: inputFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 2400, format: inputFormat, block: AudioTap.block { [weak self] buffer in
             self?.captured(buffer)
-        }
+        })
         try engine.start()
         player.play()
     }
@@ -174,12 +174,12 @@ final class VoiceSession: VoiceEngine {
             for index in 0..<Int(frames) { out[index] = Float(Int16(littleEndian: samples[index])) / 32768 }
         }
         speaking = true
-        player.scheduleBuffer(buffer) { [weak self] in
+        player.scheduleBuffer(buffer, completionHandler: AudioTap.completion { [weak self] in
             Task { @MainActor in
                 guard let self, !self.player.isPlaying || self.engine.isRunning else { return }
                 self.speaking = false
             }
-        }
+        })
     }
 
     // MARK: Events
