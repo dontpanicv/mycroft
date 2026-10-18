@@ -39,9 +39,7 @@ struct SettingsView: View {
                         GenerationsList()
                     }
                     section("Machines") {
-                        Text("Pair a Mac or Linux server running `hands` to give Mycroft a shell, long jobs and desktop control. Coming in milestone M5.")
-                            .font(.grotesk(14)).foregroundStyle(Theme.inkMuted)
-                            .hairlineCard()
+                        MachinesSection()
                     }
                     section("About") {
                         NavigationLink("Open source notices") { Notices() }

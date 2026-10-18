@@ -26,6 +26,10 @@
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_mycroft-hands._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Mycroft connects to your machines running hands on this network.</string>
 	<key>NSMicrophoneUsageDescription</key>

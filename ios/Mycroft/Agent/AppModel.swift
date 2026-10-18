@@ -26,6 +26,7 @@ final class AppModel {
     private(set) var signIn: SignIn = .unknown
     private(set) var generation = GenerationStore.State()
     private(set) var hasJevKey = Keychain.read(Secret.jev) != nil
+    private(set) var machines: [Machine] = []
     var notices: [String] = []
 
     let models = Models(credentials: .keychain(service: "dev.mycroft.credentials"))
@@ -78,7 +79,7 @@ final class AppModel {
         do {
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension()])
+                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension()])
         } catch {
             let state = await generations.state
             guard state.active != state.lastGood else { throw error }
@@ -86,7 +87,7 @@ final class AppModel {
             notices.append("Generation \(failed) failed to load (\(error.localizedDescription)); running the last good one.")
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension()])
+                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension()])
         }
     }
 
@@ -104,6 +105,15 @@ final class AppModel {
                 }
             } catch {
                 self?.log.error("thread list stream ended: \(error)")
+            }
+        })
+        watchers.append(Task { [weak self] in
+            do {
+                for try await list in harness.values(of: Machines.document) {
+                    self?.machines = list.items.sorted { $0.pairedAt > $1.pairedAt }
+                }
+            } catch {
+                self?.log.error("machine list stream ended: \(error)")
             }
         })
         // A generation that has run for a while without crashing becomes the one to fall back to.
@@ -196,6 +206,23 @@ final class AppModel {
     func lastStopReason(_ thread: ConversationID) async -> StopReason? {
         let entries = (try? await harness?.conversation(thread)?.entries(limit: 4).items) ?? []
         return entries.first(where: { $0.kind == .assistant })?.assistantMessage?.stopReason
+    }
+
+    // MARK: Machines
+
+    /// Stores a machine that just paired; a machine with the same name is replaced.
+    func addMachine(_ machine: Machine) async throws {
+        guard let harness else { throw StartError.notReady }
+        try await harness.update(Machines.document) { list in
+            list.items.removeAll { $0.name.caseInsensitiveCompare(machine.name) == .orderedSame }
+            list.items.append(machine)
+        }
+        await HandsPool.shared.forget(machine)
+    }
+
+    func removeMachine(_ machine: Machine) async throws {
+        try await harness?.update(Machines.document) { list in list.items.removeAll { $0.name == machine.name } }
+        await HandsPool.shared.forget(machine)
     }
 
     // MARK: Sign-in

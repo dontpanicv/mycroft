@@ -1,0 +1,269 @@
+import CryptoKit
+import Foundation
+import Network
+import os
+
+/// One authenticated connection to a paired machine's `hands` listener (hands/docs/pairing.md §2).
+///
+/// WebSocket over TLS with the machine's certificate pinned, then the hello/auth/ready handshake, then pi-env frames
+/// (hands/docs/protocol.md), one per binary message. Requests are matched to replies by id.
+actor HandsConnection {
+    struct Reply: @unchecked Sendable {
+        let json: [String: Any]
+        let payload: Data
+
+        subscript(key: String) -> Any? { json[key] }
+        func string(_ key: String) -> String? { json[key] as? String }
+        func int(_ key: String) -> Int? { (json[key] as? NSNumber)?.intValue }
+        func bool(_ key: String) -> Bool { (json[key] as? Bool) ?? false }
+    }
+
+    struct RemoteError: LocalizedError {
+        let code: String
+        let message: String
+        var lost = false
+        var errorDescription: String? { "\(code): \(message)" }
+    }
+
+    let machine: Machine
+    /// What the daemon reported in `hello`: home, os, arch, version, features.
+    private(set) var info: Reply?
+    private(set) var isClosed = false
+
+    private let connection: NWConnection
+    private let queue = DispatchQueue(label: "dev.mycroft.hands")
+    private var nextID: UInt32 = 1
+    private var pending: [UInt32: CheckedContinuation<Reply, Error>] = [:]
+    private var pinger: Task<Void, Never>?
+    private let log = Logger(subsystem: "dev.mycroft", category: "hands")
+
+    private init(machine: Machine, connection: NWConnection) {
+        self.machine = machine
+        self.connection = connection
+    }
+
+    /// Connects to the first reachable address of the machine and authenticates.
+    static func open(_ machine: Machine, key: Curve25519.Signing.PrivateKey, timeout: Duration = .seconds(6)) async throws -> HandsConnection {
+        var lastError: Error = RemoteError(code: "unreachable", message: "\(machine.name) has no address")
+        for host in machine.hosts {
+            do {
+                let connection = try await HandsConnection.connect(host: host, machine: machine, timeout: timeout)
+                let hands = HandsConnection(machine: machine, connection: connection)
+                try await hands.handshake(key: key, timeout: timeout)
+                return hands
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+
+    private static func connect(host: String, machine: Machine, timeout: Duration) async throws -> NWConnection {
+        let tls = NWProtocolTLS.Options()
+        let expected = machine.certSha256
+        sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, trust, complete in
+            let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
+            let leaf = (SecTrustCopyCertificateChain(secTrust) as? [SecCertificate])?.first
+            let hash = leaf.map { (SecCertificateCopyData($0) as Data).sha256Hex }
+            complete(hash == expected)
+        }, DispatchQueue(label: "dev.mycroft.hands.tls"))
+        let parameters = NWParameters(tls: tls)
+        let websocket = NWProtocolWebSocket.Options()
+        websocket.autoReplyPing = true
+        websocket.maximumMessageSize = HandsProtocol.maxFrame + 16
+        parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
+        let url = URL(string: "wss://\(host.contains(":") ? "[\(host)]" : host):\(machine.port)/v1")!
+        let connection = NWConnection(to: .url(url), using: parameters)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    let once = OSAllocatedUnfairLock(initialState: false)
+                    connection.stateUpdateHandler = { state in
+                        let resume: Result<Void, Error>? = switch state {
+                        case .ready: .success(())
+                        case .failed(let error), .waiting(let error): .failure(error)
+                        case .cancelled: .failure(CancellationError())
+                        default: nil
+                        }
+                        guard let resume, once.withLock({ done in defer { done = true }; return !done }) else { return }
+                        continuation.resume(with: resume)
+                    }
+                    connection.start(queue: DispatchQueue(label: "dev.mycroft.hands.connect"))
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw RemoteError(code: "timeout", message: "\(host) did not answer")
+            }
+            defer { group.cancelAll() }
+            do {
+                try await group.next()
+            } catch {
+                connection.cancel()
+                throw error
+            }
+        }
+        return connection
+    }
+
+    // MARK: Handshake
+
+    private func handshake(key: Curve25519.Signing.PrivateKey, timeout: Duration) async throws {
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .failed = state { Task { await self?.close(lost: true) } }
+            if case .cancelled = state { Task { await self?.close(lost: true) } }
+        }
+        let hello = try await receiveText()
+        guard hello["type"] as? String == "hello", let nonce = hello["nonce"] as? String else {
+            throw RemoteError(code: "handshake", message: "unexpected greeting")
+        }
+        let signature = try PhoneIdentity.authSignature(certSha256: machine.certSha256, nonce: nonce, key: key)
+        try await sendText(["type": "auth", "publicKey": key.publicKey.rawRepresentation.base64EncodedString(), "signature": signature])
+        let answer = try await receiveText()
+        guard answer["type"] as? String == "ready" else {
+            throw RemoteError(code: answer["code"] as? String ?? "unauthorized", message: "\(machine.name) refused this phone")
+        }
+        startReading()
+        pinger = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                await self?.ping()
+            }
+        }
+        info = try await request("hello", ["protocol": HandsProtocol.version])
+    }
+
+    private func receiveText() async throws -> [String: Any] {
+        let (data, _) = try await receiveMessage()
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    private func sendText(_ object: [String: Any]) async throws {
+        try await send(try JSONSerialization.data(withJSONObject: object), opcode: .text)
+    }
+
+    // MARK: Frames
+
+    /// Sends a request and waits for its result. Errors from the daemon throw ``RemoteError``.
+    func request(_ op: String, _ fields: [String: Any] = [:], payload: Data = Data()) async throws -> Reply {
+        guard !isClosed else { throw RemoteError(code: "unknown", message: "connection closed", lost: true) }
+        let id = nextID
+        nextID &+= 1
+        var json = fields
+        json["op"] = op
+        let frame = try HandsProtocol.Frame(type: .request, id: id, json: json, payload: payload).encoded()
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[id] = continuation
+            Task {
+                do {
+                    try await self.send(frame, opcode: .binary)
+                } catch {
+                    self.fail(id, error)
+                }
+            }
+        }
+    }
+
+    private func fail(_ id: UInt32, _ error: Error) {
+        pending.removeValue(forKey: id)?.resume(throwing: error)
+    }
+
+    private func ping() async {
+        guard !isClosed, let frame = try? HandsProtocol.Frame(type: .ping, id: 0).encoded() else { return }
+        try? await send(frame, opcode: .binary)
+    }
+
+    private func startReading() {
+        Task { [weak self] in
+            while let self, await !self.isClosed {
+                do {
+                    let (data, _) = try await self.receiveMessage()
+                    await self.dispatch(data)
+                } catch {
+                    await self.close(lost: true)
+                    return
+                }
+            }
+        }
+    }
+
+    private func dispatch(_ data: Data) {
+        var reader = HandsProtocol.Reader(synced: true)
+        guard let frames = try? reader.feed(data) else { return }
+        for frame in frames {
+            switch frame.type {
+            case .result:
+                pending.removeValue(forKey: frame.id)?.resume(returning: Reply(json: frame.json, payload: frame.payload))
+            case .error:
+                let error = RemoteError(code: frame.json["code"] as? String ?? "unknown", message: frame.json["message"] as? String ?? "")
+                pending.removeValue(forKey: frame.id)?.resume(throwing: error)
+            default:
+                break  // pings and events (exec output) are not used: Mycroft runs commands as jobs.
+            }
+        }
+    }
+
+    func close(lost: Bool = false) {
+        guard !isClosed else { return }
+        isClosed = true
+        pinger?.cancel()
+        connection.cancel()
+        for (_, continuation) in pending {
+            continuation.resume(throwing: RemoteError(code: "unknown", message: "connection to \(machine.name) lost", lost: true))
+        }
+        pending.removeAll()
+    }
+
+    // MARK: WebSocket I/O
+
+    private func send(_ data: Data, opcode: NWProtocolWebSocket.Opcode) async throws {
+        let metadata = NWProtocolWebSocket.Metadata(opcode: opcode)
+        let context = NWConnection.ContentContext(identifier: "frame", metadata: [metadata])
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            })
+        }
+    }
+
+    private func receiveMessage() async throws -> (Data, NWProtocolWebSocket.Opcode) {
+        try await withCheckedThrowingContinuation { continuation in
+            connection.receiveMessage { data, context, _, error in
+                if let error { return continuation.resume(throwing: error) }
+                let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+                if metadata?.opcode == .close { return continuation.resume(throwing: RemoteError(code: "closed", message: "closed", lost: true)) }
+                continuation.resume(returning: (data ?? Data(), metadata?.opcode ?? .binary))
+            }
+        }
+    }
+}
+
+/// One live connection per machine, reopened on demand after the phone slept or the network changed.
+actor HandsPool {
+    static let shared = HandsPool()
+    private var connections: [String: HandsConnection] = [:]
+
+    func connection(to machine: Machine) async throws -> HandsConnection {
+        if let existing = connections[machine.id], await !existing.isClosed, await existing.machine == machine {
+            return existing
+        }
+        let fresh = try await HandsConnection.open(machine, key: PhoneIdentity.key())
+        connections[machine.id] = fresh
+        return fresh
+    }
+
+    /// Runs `body`, reconnecting once if the connection turned out to be stale.
+    func with<T: Sendable>(_ machine: Machine, _ body: @Sendable (HandsConnection) async throws -> T) async throws -> T {
+        do {
+            return try await body(try await connection(to: machine))
+        } catch let error as HandsConnection.RemoteError where error.lost {
+            connections[machine.id] = nil
+            return try await body(try await connection(to: machine))
+        }
+    }
+
+    func forget(_ machine: Machine) async {
+        await connections.removeValue(forKey: machine.id)?.close()
+    }
+}
