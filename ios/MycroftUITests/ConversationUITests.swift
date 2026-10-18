@@ -115,6 +115,20 @@ final class ConversationUITests: XCTestCase {
         XCTAssertTrue(texts.contains("hands_job_start") || texts.contains("hands_exec"), "no hands calls")
     }
 
+    /// Desktop control on a paired Mac through hands → Mycroft Hands, with Jev choosing each step.
+    func testDesktopNotes() throws {
+        startThread()
+        send("""
+            On my Mac, use desktop_do to open Notes and create a new note that says hello from Mycroft. \
+            Then take a ui_screenshot of the Mac and tell me in one sentence what you see.
+            """)
+        XCTAssertTrue(waitForIdle(timeout: 420), "the run did not finish")
+        attachScreenshot("desktop-notes")
+        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        print("TRANSCRIPT:\n\(texts)")
+        XCTAssertTrue(texts.contains("desktop_do"), "no desktop_do call")
+    }
+
     private func startThread() {
         let new = app.buttons["newThread"]
         XCTAssertTrue(new.waitForExistence(timeout: 30))
