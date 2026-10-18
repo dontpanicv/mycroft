@@ -63,6 +63,13 @@ struct InstallServerProbeTests {
     }
 }
 
+@Suite("Identity probe")
+struct IdentityProbeTests {
+    @Test func printPhoneKey() throws {
+        print("PHONE KEY: \(try PhoneIdentity.publicKeyBase64())")
+    }
+}
+
 nonisolated private final class Once: @unchecked Sendable {
     private var done = false
     private let lock = NSLock()

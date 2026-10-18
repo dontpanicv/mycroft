@@ -18,10 +18,11 @@ struct RunActivityWidget: Widget {
                 .activitySystemActionForegroundColor(Theme.accentSoft)
         } dynamicIsland: { context in
             let state = context.state
+            let tint = state.accent.flatMap(Color.init(hex:)) ?? Theme.accentSoft
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        Glyph()
+                        Glyph(tint: tint)
                         PhaseLabel(state: state)
                     }
                     .padding(.leading, 4)
@@ -44,20 +45,20 @@ struct RunActivityWidget: Widget {
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                Glyph()
+                Glyph(tint: tint)
             } compactTrailing: {
                 if state.isFinished {
                     Image(systemName: state.phase == .done ? "checkmark" : "xmark")
                         .foregroundStyle(state.phase == .done ? Theme.success : Theme.danger)
                 } else if let machine = state.machine {
-                    Text(machine.prefix(6).uppercased()).font(.mono(11, weight: .semibold)).foregroundStyle(Theme.accentSoft)
+                    Text(machine.prefix(6).uppercased()).font(.mono(11, weight: .semibold)).foregroundStyle(tint)
                 } else {
-                    Text(String(format: "%02d", state.step)).font(.mono(12, weight: .semibold)).foregroundStyle(Theme.accentSoft)
+                    Text(String(format: "%02d", state.step)).font(.mono(12, weight: .semibold)).foregroundStyle(tint)
                 }
             } minimal: {
-                Glyph()
+                Glyph(tint: tint)
             }
-            .keylineTint(Theme.accent)
+            .keylineTint(tint)
         }
     }
 }
@@ -70,7 +71,7 @@ private struct LockScreenRun: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 HStack(spacing: 6) {
-                    Glyph()
+                    Glyph(tint: state.accent.flatMap(Color.init(hex:)) ?? Theme.accentSoft)
                     PhaseLabel(state: state)
                 }
                 Spacer()
@@ -94,10 +95,12 @@ private struct LockScreenRun: View {
 }
 
 private struct Glyph: View {
+    var tint: Color = Theme.accentSoft
+
     var body: some View {
         Text("my")
             .font(.mono(13, weight: .bold))
-            .foregroundStyle(Theme.accentSoft)
+            .foregroundStyle(tint)
     }
 }
 

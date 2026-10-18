@@ -1,4 +1,5 @@
 import PiDurableKit
+import SwiftUI
 import Testing
 
 @testable import Mycroft
@@ -41,5 +42,22 @@ struct ActivitySummaryTests {
         let steps = ["self_status", "self_read", "now", "self_read"].map { ActivitySummary.describe(tool: $0, arguments: [:]) }
         #expect(ActivitySummary.closing(steps) == "4 steps on the phone")
         #expect(ActivitySummary.closing([]) == "Answered")
+    }
+}
+
+@Suite("Appearance")
+struct AppearanceTests {
+    @Test func validatesColours() throws {
+        let ok = try Appearance.validate(Data(##"{"accent": "#1F6F3A", "accentSoft": "#7FD99A"}"##.utf8))
+        #expect(ok.accent == "#1F6F3A")
+        #expect(throws: AppearanceError.self) { try Appearance.validate(Data(#"{"accent": "dark green"}"#.utf8)) }
+        #expect(throws: AppearanceError.self) { try Appearance.validate(Data(##"{"accent": "#12345"}"##.utf8)) }
+    }
+
+    @Test func parsesHex() {
+        let rgba = Color.components(hex: "#1F6F3A")
+        #expect(rgba?.0 == Double(0x1F) / 255 && rgba?.3 == 1)
+        #expect(Color.components(hex: "#1F6F3A80")?.3 == Double(0x80) / 255)
+        #expect(Color.components(hex: "1F6F3A") == nil)
     }
 }

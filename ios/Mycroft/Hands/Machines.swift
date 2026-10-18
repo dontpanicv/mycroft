@@ -51,13 +51,20 @@ nonisolated enum Machines {
 nonisolated enum PhoneIdentity {
     private static let account = "hands.ed25519"
 
+    /// The phone's identity. Paired machines know only this key, so it must never change by accident: a new key is
+    /// made only when the keychain says there is none, never when it merely fails to answer, and never overwrites.
     static func key() throws -> Curve25519.Signing.PrivateKey {
-        if let stored = Keychain.read(account), let raw = Data(base64Encoded: stored) {
+        switch Keychain.lookup(account) {
+        case .found(let stored):
+            guard let raw = Data(base64Encoded: stored) else { throw KeychainError(status: errSecDecode) }
             return try Curve25519.Signing.PrivateKey(rawRepresentation: raw)
+        case .failed(let status):
+            throw KeychainError(status: status)
+        case .notFound:
+            let key = Curve25519.Signing.PrivateKey()
+            if try Keychain.addIfMissing(key.rawRepresentation.base64EncodedString(), for: account) { return key }
+            return try Self.key()  // another caller created it first
         }
-        let key = Curve25519.Signing.PrivateKey()
-        try Keychain.write(key.rawRepresentation.base64EncodedString(), for: account)
-        return key
     }
 
     static func publicKeyBase64() throws -> String {

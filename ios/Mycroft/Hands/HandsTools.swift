@@ -99,7 +99,13 @@ nonisolated enum HandsTools {
                     var fields: [String: Any] = ["key": key, "command": args.command]
                     if let cwd = args.cwd { fields["cwd"] = try await absolute(cwd, hands) }
                     _ = try await hands.request("job.start", fields)
-                    return try await follow(key, on: hands, machine: machine, timeout: args.timeout_s ?? 600, call: call)
+                    do {
+                        return try await follow(key, on: hands, machine: machine, timeout: args.timeout_s ?? 600, call: call)
+                    } catch is CancellationError {
+                        // The user stopped the run: stop the command on the machine too (its whole process group).
+                        await Task.detached { _ = try? await hands.request("job.cancel", ["key": key]) }.value
+                        throw CancellationError()
+                    }
                 }
             }
 
@@ -250,6 +256,7 @@ nonisolated enum HandsTools {
         var offset = 0
         var tail = Data()
         while true {
+            try Task.checkCancellation()
             let chunk = try await hands.request("job.output", ["key": key, "offset": offset, "maxBytes": 256 * 1024])
             if !chunk.payload.isEmpty {
                 call.output(String(decoding: chunk.payload, as: UTF8.self))

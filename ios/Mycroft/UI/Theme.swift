@@ -1,18 +1,95 @@
 import SwiftUI
 
 /// Design tokens: grep.ai's console for content, Liquid Glass for controls. See docs/DESIGN.md.
+///
+/// The colours come from ``Appearance``, which Mycroft can change itself (appearance.json in its generation), so
+/// views read them live.
 enum Theme {
-    static let canvas = Color(red: 0x0B / 255, green: 0x0B / 255, blue: 0x0D / 255)
-    static let raised = Color(red: 0x14 / 255, green: 0x14 / 255, blue: 0x18 / 255)
-    static let ink = Color(red: 0xF4 / 255, green: 0xF4 / 255, blue: 0xF5 / 255)
-    static let inkMuted = Color(red: 0xAA / 255, green: 0xAA / 255, blue: 0xB4 / 255)
+    static var canvas: Color { Appearance.shared.color(\.canvas) }
+    static var raised: Color { Appearance.shared.color(\.raised) }
+    static var ink: Color { Appearance.shared.color(\.ink) }
+    static var inkMuted: Color { Appearance.shared.color(\.inkMuted) }
     static let inkFaint = Color.white.opacity(0.38)
     static let hairline = Color.white.opacity(0.11)
-    static let accent = Color(red: 0x51 / 255, green: 0x47 / 255, blue: 0xEF / 255)
-    static let accentSoft = Color(red: 0x9D / 255, green: 0x93 / 255, blue: 0xFF / 255)
-    static let success = Color(red: 0x4A / 255, green: 0xDE / 255, blue: 0x80 / 255)
-    static let danger = Color(red: 0xF8 / 255, green: 0x71 / 255, blue: 0x71 / 255)
+    static var accent: Color { Appearance.shared.color(\.accent) }
+    static var accentSoft: Color { Appearance.shared.color(\.accentSoft) }
+    static var success: Color { Appearance.shared.color(\.success) }
+    static var danger: Color { Appearance.shared.color(\.danger) }
     static let gutter: CGFloat = 20
+}
+
+/// Mycroft's colours, which the agent can rewrite in `appearance.json` of its generation (agent/generation-0).
+@Observable
+final class Appearance {
+    static let shared = Appearance()
+
+    nonisolated struct Values: Codable, Equatable, Sendable {
+        var accent: String?
+        var accentSoft: String?
+        var canvas: String?
+        var raised: String?
+        var ink: String?
+        var inkMuted: String?
+        var success: String?
+        var danger: String?
+    }
+
+    nonisolated static let defaults = Values(
+        accent: "#5147EF", accentSoft: "#9D93FF", canvas: "#0B0B0D", raised: "#141418", ink: "#F4F4F5",
+        inkMuted: "#AAAAB4", success: "#4ADE80", danger: "#F87171")
+
+    private(set) var values = Appearance.defaults
+
+    func apply(_ new: Values) {
+        let merged = Values(
+            accent: new.accent ?? Self.defaults.accent, accentSoft: new.accentSoft ?? Self.defaults.accentSoft,
+            canvas: new.canvas ?? Self.defaults.canvas, raised: new.raised ?? Self.defaults.raised,
+            ink: new.ink ?? Self.defaults.ink, inkMuted: new.inkMuted ?? Self.defaults.inkMuted,
+            success: new.success ?? Self.defaults.success, danger: new.danger ?? Self.defaults.danger)
+        if merged != values { values = merged }
+    }
+
+    func color(_ key: KeyPath<Values, String?>) -> Color {
+        values[keyPath: key].flatMap(Color.init(hex:)) ?? Self.defaults[keyPath: key].flatMap(Color.init(hex:)) ?? .white
+    }
+
+    /// Parses appearance.json and checks every colour, so a bad edit can't reach the UI.
+    nonisolated static func validate(_ data: Data) throws -> Values {
+        let values = try JSONDecoder().decode(Values.self, from: data)
+        let colours: [(String, String?)] = [
+            ("accent", values.accent), ("accentSoft", values.accentSoft), ("canvas", values.canvas), ("raised", values.raised),
+            ("ink", values.ink), ("inkMuted", values.inkMuted), ("success", values.success), ("danger", values.danger),
+        ]
+        for (name, value) in colours {
+            if let value, Color.components(hex: value) == nil {
+                throw AppearanceError(message: "\(name) is \"\(value)\"; colours are \"#RRGGBB\" hex strings")
+            }
+        }
+        return values
+    }
+}
+
+nonisolated struct AppearanceError: LocalizedError {
+    let message: String
+    var errorDescription: String? { "appearance.json: \(message)" }
+}
+
+extension Color {
+    /// `#RRGGBB` or `#RRGGBBAA`.
+    nonisolated init?(hex: String) {
+        guard let (r, g, b, a) = Color.components(hex: hex) else { return nil }
+        self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
+    }
+
+    nonisolated static func components(hex: String) -> (Double, Double, Double, Double)? {
+        var text = hex.trimmingCharacters(in: .whitespaces)
+        guard text.hasPrefix("#") else { return nil }
+        text.removeFirst()
+        guard text.count == 6 || text.count == 8, let value = UInt64(text, radix: 16) else { return nil }
+        let rgba = text.count == 6 ? (value << 8) | 0xFF : value
+        return (Double((rgba >> 24) & 0xFF) / 255, Double((rgba >> 16) & 0xFF) / 255, Double((rgba >> 8) & 0xFF) / 255,
+                Double(rgba & 0xFF) / 255)
+    }
 }
 
 extension Font {

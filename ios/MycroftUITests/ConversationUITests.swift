@@ -129,6 +129,33 @@ final class ConversationUITests: XCTestCase {
         XCTAssertTrue(texts.contains("desktop_do"), "no desktop_do call")
     }
 
+    /// Stop during a long command on a paired machine ends the run within seconds.
+    func testStopMidTool() throws {
+        startThread()
+        send("Use hands_exec on my Mac to run exactly this command: sleep 90 && echo mycroft-stop-test")
+        let stop = app.buttons["stop"]
+        XCTAssertTrue(app.staticTexts["hands_exec"].waitForExistence(timeout: 90), "the command never started")
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        let pressed = Date()
+        stop.tap()
+        let idle = app.staticTexts["status.idle"]
+        XCTAssertTrue(idle.waitForExistence(timeout: 20), "the run did not stop")
+        print("STOPPED AFTER \(String(format: "%.1f", Date().timeIntervalSince(pressed))) s")
+        attachScreenshot("stopped")
+    }
+
+    /// The user's phrasing: Mycroft must understand it is about itself and change its own appearance.
+    func testChangeOwnColour() throws {
+        startThread()
+        send("modify main color of mycroft to dark green")
+        XCTAssertTrue(waitForIdle(timeout: 240), "the run did not finish")
+        attachScreenshot("green")
+        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        print("TRANSCRIPT:\n\(texts)")
+        XCTAssertTrue(texts.contains("self_activate"), "Mycroft did not change itself")
+    }
+
     private func startThread() {
         let new = app.buttons["newThread"]
         XCTAssertTrue(new.waitForExistence(timeout: 30))

@@ -197,15 +197,38 @@ actor HandsConnection {
         var json = fields
         json["op"] = op
         let frame = try HandsProtocol.Frame(type: .request, id: id, json: json, payload: payload).encoded()
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
-            Task {
-                do {
-                    try await self.send(frame, opcode: .binary)
-                } catch {
-                    self.fail(id, error)
+        // Stopping a run cancels the tool's task: end the wait at once and tell hands to cancel the request.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if cancelled.remove(id) != nil {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                pending[id] = continuation
+                Task {
+                    do {
+                        try await self.send(frame, opcode: .binary)
+                    } catch {
+                        self.fail(id, error)
+                    }
                 }
             }
+        } onCancel: {
+            Task { await self.cancelRequest(id) }
+        }
+    }
+
+    /// Requests cancelled before their continuation was registered.
+    private var cancelled: Set<UInt32> = []
+
+    private func cancelRequest(_ id: UInt32) async {
+        guard let continuation = pending.removeValue(forKey: id) else {
+            cancelled.insert(id)
+            return
+        }
+        continuation.resume(throwing: CancellationError())
+        if let frame = try? HandsProtocol.Frame(type: .cancel, id: id).encoded() {
+            try? await send(frame, opcode: .binary)
         }
     }
 

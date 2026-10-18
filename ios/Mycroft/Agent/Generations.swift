@@ -32,6 +32,8 @@ actor GenerationStore {
 
     let root: URL
     private(set) var state = State()
+    /// The app's bundled generation 0: defaults for files an older generation doesn't have (appearance.json).
+    private var bundled: URL?
     private let fm = FileManager.default
 
     init(root: URL = URL.documentsDirectory.appending(path: "agent", directoryHint: .isDirectory)) {
@@ -51,6 +53,7 @@ actor GenerationStore {
 
     /// Installs generation 0 from the app bundle the first time.
     func bootstrap(bundled: URL) throws {
+        self.bundled = bundled
         guard !fm.fileExists(atPath: folder(0).path) else { return }
         try fm.createDirectory(at: generations, withIntermediateDirectories: true)
         try fm.copyItem(at: bundled, to: folder(0))
@@ -126,13 +129,28 @@ actor GenerationStore {
         }
         let base = fm.fileExists(atPath: draft.path) ? draft : folder(state.active)
         let url = base.appending(path: clean)
+        if !fm.fileExists(atPath: url.path), let fallback = bundled?.appending(path: clean), fm.fileExists(atPath: fallback.path) {
+            return try String(contentsOf: fallback, encoding: .utf8)  // e.g. appearance.json in an older generation
+        }
         guard fm.fileExists(atPath: url.path) else { throw SelfError.notFound(clean) }
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    /// The active generation's appearance.json, or the app's default.
+    func appearance() -> Data? {
+        let own = folder(state.active).appending(path: "appearance.json")
+        if let data = try? Data(contentsOf: own) { return data }
+        return bundled.flatMap { try? Data(contentsOf: $0.appending(path: "appearance.json")) }
+    }
+
+    /// A file of the draft, if the draft has one.
+    func draftFile(_ name: String) -> Data? {
+        try? Data(contentsOf: draft.appending(path: name))
+    }
+
     func list() throws -> [String] {
         let base = fm.fileExists(atPath: draft.path) ? draft : folder(state.active)
-        let own = (try? fm.contentsOfDirectory(atPath: base.path)) ?? []
+        let own = Array(Set(((try? fm.contentsOfDirectory(atPath: base.path)) ?? []) + ["appearance.json"]))
         let docs = (try? fm.subpathsOfDirectory(atPath: PiDurable.documentation.appending(path: "pi-durable").path)) ?? []
         return own.sorted() + docs.filter { $0.hasSuffix(".md") || $0.hasSuffix(".d.ts") }.sorted().map { "docs/pi-durable/" + $0 }
     }

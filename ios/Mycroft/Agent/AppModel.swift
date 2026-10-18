@@ -64,7 +64,7 @@ final class AppModel {
             }
             let harness = try await openHarness()
             self.harness = harness
-            generation = await generations.state
+            await refreshGeneration()
             phase = .ready
             watch(harness)
             await refreshSignIn()
@@ -134,6 +134,9 @@ final class AppModel {
 
     func refreshGeneration() async {
         generation = await generations.state
+        if let data = await generations.appearance(), let values = try? Appearance.validate(data) {
+            Appearance.shared.apply(values)
+        }
     }
 
     /// Documents keep working while the phone is locked: the database and agent code are readable after first unlock.

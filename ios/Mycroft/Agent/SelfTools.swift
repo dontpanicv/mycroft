@@ -13,6 +13,20 @@ nonisolated enum SelfTools {
 
     static func makeExtension(store: GenerationStore, onActivate: @escaping @Sendable (Int) async -> Void) -> Extension {
         Extension("mycroft.self") {
+            // Native, so it holds for every generation, including ones written before appearance.json existed.
+            PromptSection("self", tag: false, text: """
+                You are Mycroft, and Mycroft is this app. When the user talks about Mycroft — its look or colours, its \
+                tone, what it does or knows, its tools — they mean you. Change yourself with the self_* tools: self_read \
+                the file, self_write the complete new content, self_diff, then self_activate with a short note. The change \
+                is live at once; say what changed and that "roll back" undoes it. Don't explain how they could do it.
+                - Colours and look: appearance.json. `accent` is the main colour (buttons, highlights, progress, the \
+                Dynamic Island glyph); `accentSoft` is a lighter tint of it for highlighted text on the dark background. \
+                Also canvas, raised, ink, inkMuted, success, danger. Values are "#RRGGBB"; keep text readable on canvas.
+                - Behaviour, tone, prompt sections and JavaScript tools: extension.js.
+                - Screen layouts, fonts, voice, the hands connection and the Live Activity layout are native Swift and \
+                fixed in this build: say so and offer what you can change instead.
+                """)
+
             Tool(
                 "self_read",
                 description: "Read one of your own files (extension.js, SELF.md, or pi-durable docs under docs/pi-durable/). Without a path, list the readable files.",
@@ -47,6 +61,13 @@ nonisolated enum SelfTools {
                 parameters: .object(["note": .string("What you changed and why, one sentence")])
             ) { (args: ActivateArguments, call) -> ToolResult in
                 let (candidate, next) = try await store.draftExtension()
+                if let appearance = await store.draftFile("appearance.json") {
+                    do {
+                        _ = try Appearance.validate(appearance)
+                    } catch {
+                        return ToolResult(output: [.text("Generation \(next) not activated: \(error.localizedDescription)")], isError: true)
+                    }
+                }
                 do {
                     try await call.harness.install(candidate)
                 } catch {

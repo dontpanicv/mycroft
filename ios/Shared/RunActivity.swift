@@ -22,6 +22,8 @@ nonisolated struct RunActivityAttributes: ActivityAttributes {
         var endedAt: Date?
         /// The previous few headlines, newest first, for the expanded island.
         var recent: [String] = []
+        /// Mycroft's current accent tint ("#RRGGBB"), so the island follows appearance.json.
+        var accent: String?
 
         var isFinished: Bool { phase == .done || phase == .failed || phase == .stopped }
     }

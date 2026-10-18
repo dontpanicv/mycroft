@@ -93,6 +93,7 @@ final class RunMonitor {
         }
         let running = snapshot.live.tools.first { $0.status != .done }
         var next = track.state
+        next.accent = Appearance.shared.values.accentSoft
         next.step = track.steps.count
         next.generation = generation
         if let running, let call = snapshot.calls.first(where: { $0.id == running.callId }) {

@@ -123,6 +123,7 @@ nonisolated enum DesktopTools {
             let observation = Observation(try await hands.request("ui.observe").json)
             let (state, operations, heads) = cycleInput(goal: goal, words: words, observation: observation, recent: recent)
             let decision = try await JevClient.cycle(state: state, operations: operations, heads: heads, apiKey: apiKey)
+            try Task.checkCancellation()
             guard let operation = decision.choice("operation") else { throw ToolError("Jev gave no operation") }
 
             switch operation.id {
