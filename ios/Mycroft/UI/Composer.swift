@@ -10,6 +10,10 @@ struct Composer: View {
     let send: () -> Void
     let stop: () -> Void
 
+    @State private var transcriber = Transcriber()
+    @State private var dictating = false
+    @State private var before = ""
+
     private var empty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
@@ -19,6 +23,7 @@ struct Composer: View {
                     Tag(text: model?.modelId ?? "default model", color: Theme.inkMuted)
                     Tag(text: "Phone", color: Theme.inkMuted)
                     if busy { Tag(text: empty ? "Running" : "Steer", color: Theme.accentSoft) }
+                    if dictating { Tag(text: "On-device dictation", color: Theme.accentSoft) }
                 }
                 .padding(.leading, 6)
                 HStack(alignment: .bottom, spacing: 10) {
@@ -30,7 +35,16 @@ struct Composer: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
-                    if busy && empty {
+                    Button(action: toggleDictation) {
+                        Image(systemName: dictating ? "waveform" : "mic").font(.system(size: 16, weight: .semibold))
+                            .symbolEffect(.variableColor.iterative, isActive: dictating)
+                            .frame(width: 40, height: 46)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .accessibilityLabel(dictating ? "Stop dictation" : "Dictate")
+                    .accessibilityIdentifier("dictate")
+                    if busy && empty && !dictating {
                         Button(action: stop) {
                             Image(systemName: "stop.fill").font(.system(size: 15, weight: .bold)).frame(width: 46, height: 46)
                         }
@@ -53,5 +67,27 @@ struct Composer: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+        .onChange(of: transcriber.text) {
+            guard dictating else { return }
+            text = before.isEmpty ? transcriber.text : before + " " + transcriber.text
+        }
+        .onChange(of: transcriber.state) {
+            if case .failed(let message) = transcriber.state {
+                dictating = false
+                text = before.isEmpty ? message : before
+            }
+        }
+    }
+
+    /// Tap to talk, tap again to stop: the words land in the field to edit and send.
+    private func toggleDictation() {
+        if dictating {
+            dictating = false
+            Task { await transcriber.stop() }
+        } else {
+            before = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            dictating = true
+            Task { await transcriber.start() }
+        }
     }
 }

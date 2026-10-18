@@ -4,12 +4,17 @@ import SwiftUI
 struct VoiceView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @State private var voice = VoiceSession()
+    @State private var voice: any VoiceEngine
+
+    /// GPT-Live when an OpenAI key is saved; otherwise on-device transcription and speech.
+    init(live: Bool) {
+        _voice = State(initialValue: live ? VoiceSession() : OnDeviceVoice())
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                MonoLabel(status, color: statusColor, size: 11)
+                MonoLabel(voice.statusText, color: statusColor, size: 11)
                 Spacer()
                 Button("Close", systemImage: "xmark") { end() }
                     .labelStyle(.iconOnly)
@@ -20,7 +25,7 @@ struct VoiceView: View {
             .padding(.top, 8)
 
             Spacer(minLength: 20)
-            Orb(level: voice.level, speaking: voice.speaking, live: voice.state == .live)
+            Orb(level: voice.level, speaking: voice.speaking, live: voice.isLive)
                 .frame(width: 180, height: 180)
                 .onTapGesture { end() }
             Spacer(minLength: 20)
@@ -28,7 +33,7 @@ struct VoiceView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        if case .failed(let message) = voice.state {
+                        if let message = voice.failure {
                             Text(message).font(.mono(12)).foregroundStyle(Theme.danger).hairlineCard(padding: 10)
                         }
                         ForEach(Array(voice.lines.enumerated()), id: \.element.id) { index, line in
@@ -55,18 +60,9 @@ struct VoiceView: View {
         dismiss()
     }
 
-    private var status: String {
-        switch voice.state {
-        case .idle: "Off"
-        case .connecting: "Connecting"
-        case .live: voice.speaking ? "Mycroft is talking" : "Listening"
-        case .failed: "Voice unavailable"
-        }
-    }
-
     private var statusColor: Color {
-        if case .failed = voice.state { return Theme.danger }
-        return voice.state == .live ? Theme.accentSoft : Theme.inkMuted
+        if voice.failure != nil { return Theme.danger }
+        return voice.isLive ? Theme.accentSoft : Theme.inkMuted
     }
 
     private func stepNumber(_ index: Int) -> Int {
@@ -75,7 +71,7 @@ struct VoiceView: View {
 }
 
 private struct LineView: View {
-    let line: VoiceSession.Line
+    let line: VoiceLine
     let number: Int
 
     var body: some View {

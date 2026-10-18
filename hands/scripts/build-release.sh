@@ -1,16 +1,30 @@
 #!/bin/sh
-# Build release binaries of hands into dist/ as hands-<os>-<arch> (the names install.sh looks for), with
-# SHA256SUMS. Builds what this machine can and says how to get the rest. Publishes nothing.
+# Build the release binaries of hands into dist/ as hands-<os>-<arch>, the names the phone serves and install.sh
+# looks for, with SHA256SUMS. Publishes nothing.
 #
-#   macOS hosts: darwin-arm64 and darwin-x86_64, for each rustup target that is installed.
-#   Linux (static, musl): linux-x86_64 and linux-aarch64, with `cargo zigbuild` or `cross` if either is installed.
+#   darwin-arm64, darwin-x86_64     cargo build, on macOS (they need the macOS SDK)
+#   linux-x86_64, linux-aarch64     static musl binaries, with cargo zigbuild (or cross)
+#
+# Usage: build-release.sh [--partial]
+#   --partial   build what this machine can and list the rest, instead of failing when a target can't be built
+#
+# Setup on a Mac:
+#   rustup target add aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+#   brew install zig && cargo install --locked cargo-zigbuild
 set -eu
 
 cd "$(dirname "$0")/.."
+partial=false
+case "${1:-}" in
+--partial) partial=true ;;
+"") ;;
+*) echo "usage: build-release.sh [--partial]" >&2; exit 2 ;;
+esac
+
 dist=dist
 mkdir -p "$dist"
+rm -f "$dist"/hands-* "$dist/SHA256SUMS"
 installed=$(rustup target list --installed 2>/dev/null || true)
-built=0
 missing=""
 
 has_target() {
@@ -20,8 +34,6 @@ has_target() {
 place() { # target name
 	cp "target/$1/release/hands" "$dist/hands-$2"
 	chmod 755 "$dist/hands-$2"
-	echo "built $dist/hands-$2"
-	built=$((built + 1))
 }
 
 if [ "$(uname -s)" = Darwin ]; then
@@ -37,7 +49,8 @@ if [ "$(uname -s)" = Darwin ]; then
 		fi
 	done
 else
-	echo "not on macOS: skipping darwin builds (they need the macOS SDK)"
+	missing="$missing
+  darwin-arm64, darwin-x86_64: build on macOS (they need the macOS SDK)"
 fi
 
 for pair in x86_64-unknown-linux-musl:linux-x86_64 aarch64-unknown-linux-musl:linux-aarch64; do
@@ -49,17 +62,20 @@ for pair in x86_64-unknown-linux-musl:linux-x86_64 aarch64-unknown-linux-musl:li
 	elif command -v cross >/dev/null 2>&1; then
 		cross build --release --locked --target "$target"
 		place "$target" "$name"
-	elif [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "${target%%-*}" ] && has_target "$target"; then
-		cargo build --release --locked --target "$target"
-		place "$target" "$name"
 	else
 		missing="$missing
-  $name: install zig and cargo-zigbuild (brew install zig && cargo install --locked cargo-zigbuild),
-         then rustup target add $target; or install cross (cargo install cross) with Docker running"
+  $name: brew install zig && cargo install --locked cargo-zigbuild && rustup target add $target
+         (or install cross with Docker running)"
 	fi
 done
 
-if [ "$built" -gt 0 ]; then
+if [ -n "$missing" ] && [ "$partial" = false ]; then
+	echo "build-release.sh: cannot build:$missing" >&2
+	echo "(--partial builds the rest)" >&2
+	exit 1
+fi
+
+if ls "$dist"/hands-* >/dev/null 2>&1; then
 	(
 		cd "$dist"
 		if command -v sha256sum >/dev/null 2>&1; then
@@ -68,6 +84,10 @@ if [ "$built" -gt 0 ]; then
 			shasum -a 256 hands-* >SHA256SUMS
 		fi
 	)
+	echo "built into $dist/:"
+	for file in "$dist"/hands-*; do
+		printf '  %-22s %9s bytes\n' "$(basename "$file")" "$(wc -c <"$file" | tr -d ' ')"
+	done
 	echo "wrote $dist/SHA256SUMS"
 fi
 if [ -n "$missing" ]; then

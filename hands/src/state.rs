@@ -1,4 +1,5 @@
-//! Where hands keeps its state: the supervisor's socket, lock and log, and one directory per job (docs/jobs.md).
+//! Where hands keeps its state: the supervisor's socket, lock and log, one directory per job (docs/jobs.md), and the
+//! listener's port, certificate and paired phones (docs/pairing.md).
 //!
 //! `HANDS_STATE_DIR` overrides the location (tests use it). Otherwise it is `~/Library/Application Support/hands` on
 //! macOS and `$XDG_STATE_HOME/hands` or `~/.local/state/hands` on Linux. The directory is user-only (0700).
@@ -35,6 +36,21 @@ pub fn jobs_dir() -> PathBuf {
 
 pub fn log() -> PathBuf {
     dir().join("supervisor.log")
+}
+
+/// `{ "port": N }`: the listener's port, chosen once.
+pub fn listener_json() -> PathBuf {
+    dir().join("listener.json")
+}
+
+/// Held by the running listener, which writes its pid into it.
+pub fn listener_lock() -> PathBuf {
+    dir().join("listener.lock")
+}
+
+/// The phones allowed to connect: `[{ name, publicKey, pairedAt }]`.
+pub fn paired_json() -> PathBuf {
+    dir().join("paired.json")
 }
 
 /// Create the state and jobs directories if missing, and make the state directory user-only.

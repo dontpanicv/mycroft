@@ -73,3 +73,27 @@ struct DesktopToolsTests {
         #expect(operations.keys.contains(operation.id))
     }
 }
+
+@Suite("On-device speech")
+struct TranscriberTests {
+    /// Runs Apple's on-device speech model on a clip made with `say` (downloads the model on first run).
+    /// Device only: the Simulator has no on-device speech models ("Model not available").
+    @Test(.enabled(if: !isSimulator, "the Simulator has no on-device speech models"), .timeLimit(.minutes(5)))
+    func transcribesAClip() async throws {
+        let url = try #require(Bundle(for: BundleToken.self).url(forResource: "speech", withExtension: "wav"))
+        let text = try await Transcriber.transcribe(file: url).lowercased()
+        print("transcribed: \(text)")
+        #expect(text.contains("server"))
+        #expect(text.contains("mac"))
+    }
+}
+
+private final class BundleToken {}
+
+nonisolated private var isSimulator: Bool {
+    #if targetEnvironment(simulator)
+        true
+    #else
+        false
+    #endif
+}

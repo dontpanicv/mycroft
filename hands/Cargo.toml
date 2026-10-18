@@ -1,6 +1,6 @@
 [package]
 name = "hands"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Mycroft's hands: a pi-env compatible execution daemon with supervised jobs, for macOS and Linux"
@@ -18,8 +18,23 @@ ignore = "=0.4.33"
 notify = "=8.2.0"
 serde_json = "=1.0.151"
 libc = "=0.2.190"
+# The listener and pairing (docs/pairing.md): TLS 1.3 with ring as the only crypto provider (no C toolchain beyond
+# ring's own, so musl cross builds stay simple), a self-signed certificate, and WebSocket framing.
+base64 = "=0.22.1"
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+ring = "=0.17.14"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
+
+# Bonjour on Linux (macOS uses the system's dns_sd).
+[target.'cfg(target_os = "linux")'.dependencies]
+mdns-sd = { version = "=0.21.5", default-features = false }
 
 [profile.release]
+# Small binaries: the phone app embeds all four and serves them over Wi-Fi. "z" costs about 5% on listFiles.
+# panic stays "unwind": a panic in one connection's thread must not take down the listener and the other
+# connections (panic = "abort" would save another ~13%).
+opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true

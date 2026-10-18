@@ -70,7 +70,7 @@ struct ThreadListView: View {
             .accessibilityLabel("Talk to Mycroft")
             .accessibilityIdentifier("voice")
         }
-        .fullScreenCover(isPresented: $talking) { VoiceView() }
+        .fullScreenCover(isPresented: $talking) { VoiceView(live: app.hasOpenAIKey) }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {

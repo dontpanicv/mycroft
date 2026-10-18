@@ -105,7 +105,9 @@ fn version_and_usage() {
 fn install_dry_run_changes_nothing() {
     let state = StateDir::new();
     let home = state.work();
-    for args in [&["install", "--dry-run"][..], &["install", "--dry-run", "--uninstall"][..]] {
+    let pin = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    let pair = ["install", "--dry-run", "--pair", "https://127.0.0.1:9/abcd2345", "--pin", pin];
+    for args in [&["install", "--dry-run"][..], &["install", "--dry-run", "--uninstall"][..], &pair[..]] {
         let output = Command::new(HANDS)
             .args(args)
             .env("HOME", &home)
@@ -117,6 +119,15 @@ fn install_dry_run_changes_nothing() {
         let text = String::from_utf8(output.stdout).unwrap();
         assert!(text.lines().all(|line| line.starts_with("would ") || line.starts_with("    | ")), "{text}");
         assert!(text.contains(".local/bin/hands"), "{text}");
+        if args.contains(&"--uninstall") {
+            continue;
+        }
+        // The service runs the listener.
+        assert!(text.contains("supervise") && text.contains("--listen"), "{text}");
+        if args.contains(&"--pair") {
+            assert!(text.contains("would start the listener if the service has not, and pair"), "{text}");
+        }
     }
+    assert!(!state.path.join("paired.json").exists());
     assert_eq!(fs::read_dir(&home).unwrap().count(), 0, "dry run wrote into HOME");
 }

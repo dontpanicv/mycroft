@@ -13,24 +13,30 @@ import os
 ///
 /// Audio and the WebSocket live here in Swift, so the agent's JavaScript can reload itself mid-conversation.
 @Observable
-final class VoiceSession {
+final class VoiceSession: VoiceEngine {
     enum State: Equatable {
         case idle, connecting, live
         case failed(String)
     }
 
-    struct Line: Identifiable, Hashable {
-        enum Speaker { case user, mycroft, step }
-        let id = UUID()
-        let speaker: Speaker
-        var text: String
-    }
+    typealias Line = VoiceLine
 
     private(set) var state: State = .idle
     private(set) var lines: [Line] = []
     /// Microphone level 0…1 for the orb.
     private(set) var level: Double = 0
     private(set) var speaking = false
+
+    var isLive: Bool { state == .live }
+    var failure: String? { if case .failed(let message) = state { message } else { nil } }
+    var statusText: String {
+        switch state {
+        case .idle: "Off"
+        case .connecting: "Connecting"
+        case .live: speaking ? "Mycroft is talking" : "Listening · GPT-Live"
+        case .failed: "Voice unavailable"
+        }
+    }
 
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private let engine = AVAudioEngine()
@@ -223,7 +229,7 @@ final class VoiceSession {
         }
     }
 
-    private func append(_ delta: String, as speaker: Line.Speaker) {
+    private func append(_ delta: String, as speaker: VoiceLine.Speaker) {
         if speaker != .step, let last = lines.indices.last, lines[last].speaker == speaker {
             lines[last].text += delta
         } else {

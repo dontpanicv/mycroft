@@ -1,0 +1,33 @@
+hands-desktop
+Part of Mycroft (https://github.com/kurkavojtech/mycroft), MIT License, see ../LICENSE.
+
+hands-desktop ports the Accessibility reading and acting of jev-use (https://github.com/savka777/jev-use) by Savva
+Bojko, from Sources/JevDesktop/Desktop.swift. The ported code is in Sources/DesktopCore/AX/ (AXSupport.swift,
+AXTree.swift, AXActions.swift and AXBackend.swift): reading the AX tree and building elements with roles, labels,
+values, places and verbs; choosing operations; pressing, selecting, clicking, focusing, typing with unicode key events,
+keys, scrolling and menus; opening apps, folders and URLs; and the before/after screen fingerprint. It was changed to
+produce the JSON contract of docs/desktop-protocol.md (refs, places and operations instead of Jev candidates), to
+report the protocol's error codes, to press menus by path, to scroll a screen at a time, and to refuse secure input.
+jev-use's voice, speech, hotkey, Jev and planner parts are not used. jev-use is used under the following license:
+
+MIT License
+
+Copyright (c) 2026 Savva Bojko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

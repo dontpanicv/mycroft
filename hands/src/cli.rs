@@ -1,7 +1,7 @@
-//! The human-facing subcommands: `hands jobs` and `hands doctor`.
+//! The human-facing subcommands: `hands jobs`, `hands paired`, `hands unpair` and `hands doctor`.
 
 use crate::serve::{PROTOCOL, VERSION, now_ms};
-use crate::{install, jobs, state, supervisor};
+use crate::{install, jobs, listener, pairing, state, supervisor};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
@@ -86,6 +86,62 @@ pub fn jobs(args: &[String]) -> i32 {
     0
 }
 
+/// `hands paired [--json]`: the phones that may connect to the listener.
+pub fn paired(args: &[String]) -> i32 {
+    let as_json = match args {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => {
+            eprintln!("usage: hands paired [--json]");
+            return 2;
+        }
+    };
+    let phones = pairing::load();
+    if as_json {
+        println!("{}", json!({ "phones": phones }));
+        return 0;
+    }
+    if phones.is_empty() {
+        println!("no paired phones; pair with the command from Mycroft's Add machine");
+        return 0;
+    }
+    let now = now_ms();
+    println!("{:<28} {:>10}  PUBLIC KEY", "NAME", "PAIRED");
+    for phone in &phones {
+        let paired = phone["pairedAt"].as_u64().unwrap_or(now);
+        println!(
+            "{:<28} {:>10}  {}",
+            phone["name"].as_str().unwrap_or("?"),
+            format!("{} ago", duration(now.saturating_sub(paired))),
+            phone["publicKey"].as_str().unwrap_or("?"),
+        );
+    }
+    0
+}
+
+/// `hands unpair <name>`: remove the phones with this name (or this public key).
+pub fn unpair(args: &[String]) -> i32 {
+    let [name] = args else {
+        eprintln!("usage: hands unpair <name>");
+        return 2;
+    };
+    match pairing::remove(name) {
+        Ok(0) => {
+            eprintln!("hands unpair: no paired phone named {name}; see `hands paired`");
+            1
+        }
+        Ok(count) => {
+            let what = if count == 1 { "phone".to_string() } else { format!("{count} phones") };
+            println!("unpaired {what} named {name}; connections already open stay until they end");
+            0
+        }
+        Err(error) => {
+            eprintln!("hands unpair: {error}");
+            1
+        }
+    }
+}
+
 fn present(path: &Path) -> String {
     let mark = if path.exists() { "present" } else { "missing" };
     format!("{} ({mark})", path.display())
@@ -141,6 +197,31 @@ pub fn doctor() -> i32 {
             row("jobs", format!("{} on disk ({running} marked running)", jobs.len()));
         }
     }
+    let listening = listener::running();
+    let port = std::fs::read(state::listener_json())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| value["port"].as_u64());
+    row(
+        "listener",
+        match (listening, port) {
+            (Some(pid), Some(port)) => format!("running, pid {pid}, port {port}"),
+            (Some(pid), None) => format!("running, pid {pid}"),
+            (None, _) => "not running (the service runs `hands supervise --listen`)".into(),
+        },
+    );
+    let cert = state::dir().join("listener-cert.pem");
+    if let Ok(der) = rustls::pki_types::pem::PemObject::from_pem_file(&cert)
+        .map(|der: rustls::pki_types::CertificateDer| der)
+    {
+        row("certificate", format!("sha256 {}", crate::tls::hex(&crate::tls::sha256(&der))));
+    }
+    let phones = pairing::load();
+    let names: Vec<&str> = phones.iter().filter_map(|phone| phone["name"].as_str()).collect();
+    row(
+        "paired",
+        if names.is_empty() { "no phones".into() } else { names.join(", ") },
+    );
     row("installed", present(&install::binary_path()));
     row("service", present(&install::service_path()));
     if cfg!(target_os = "linux") {

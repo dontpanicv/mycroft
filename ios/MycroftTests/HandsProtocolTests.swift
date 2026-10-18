@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -48,5 +49,20 @@ struct HandsProtocolTests {
 
     @Test func authMessageMatchesTheSpec() {
         #expect(PhoneIdentity.authMessage(certSha256: "ab", nonce: "bm9uY2U=") == "mycroft-auth:ab:bm9uY2U=")
+    }
+
+    /// hands/docs/pairing.md §4: the phone's handshake signature must verify with hands' vectors.
+    @Test func handshakeMatchesHandsTestVectors() throws {
+        let seed = Data((0..<32).map { index in UInt8(strtoul(String(Array("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")[index * 2...index * 2 + 1]), nil, 16)) })
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+        #expect(key.publicKey.rawRepresentation.base64EncodedString() == "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=")
+        let certSha256 = (0..<32).map { String(format: "%02x", $0) }.joined()
+        let nonce = Data(0x20...0x3f).base64EncodedString()
+        #expect(nonce == "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=")
+        let message = Data(PhoneIdentity.authMessage(certSha256: certSha256, nonce: nonce).utf8)
+        let vector = try #require(Data(base64Encoded: "qKa3C0FH/CS/urmfJt5xfB2h0Tsk4YQrtxDZg6nxzkTrv5ZBl2ILTqyAMZZr3eSg/o1LivawmAeBjzDQsUxPDg=="))
+        #expect(key.publicKey.isValidSignature(vector, for: message))
+        let ours = try #require(Data(base64Encoded: try PhoneIdentity.authSignature(certSha256: certSha256, nonce: nonce, key: key)))
+        #expect(key.publicKey.isValidSignature(ours, for: message))
     }
 }

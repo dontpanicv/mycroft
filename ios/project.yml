@@ -55,7 +55,8 @@ targets:
         UIBackgroundModes: [processing, audio]
         BGTaskSchedulerPermittedIdentifiers: ['$(PRODUCT_BUNDLE_IDENTIFIER).run']
         UIAppFonts: [JetBrainsMono.ttf, SchibstedGrotesk.ttf]
-        NSMicrophoneUsageDescription: Mycroft listens while live voice is on.
+        NSMicrophoneUsageDescription: Mycroft listens while you dictate or talk to it.
+        NSSpeechRecognitionUsageDescription: Mycroft turns your speech into text on this iPhone.
         NSLocalNetworkUsageDescription: Mycroft connects to your machines running hands on this network.
         NSSupportsLiveActivities: true
         NSBonjourServices: [_mycroft-hands._tcp]
@@ -139,7 +140,11 @@ targets:
   MycroftTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [MycroftTests]
+    sources:
+      - path: MycroftTests
+        excludes: [Fixtures/**]
+      - path: MycroftTests/Fixtures
+        buildPhase: resources
     dependencies:
       - target: Mycroft
       - package: PiDurableKit

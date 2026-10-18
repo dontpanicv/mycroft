@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod phone;
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
