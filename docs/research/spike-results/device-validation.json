@@ -1,0 +1,24 @@
+{
+  "validated_on": "2026-10-18",
+  "device": {"model": "iPhone 17 Pro Max", "os": "27.2", "os_build": "24B5110a"},
+  "xcode": {"version": "27.1", "build": "27A9275"},
+  "configuration": "Release",
+  "checks": [
+    {"evidence": "device-continued-10m-events.jsonl", "pid": 5234, "passed": true, "checks": ["local reload and changed behavior", "600 steps", "background work_completed", "background continued_completed", "reportsProgress=true"]},
+    {"evidence": "device-long-intent-10m-events.jsonl", "pid": 5078, "passed": true, "checks": ["local reload and changed behavior", "600 steps", "background work_completed", "background intent_completed", "reportsProgress=true"]},
+    {"evidence": "device-no-progress-valid-events.jsonl", "pid": 5214, "passed": true, "checks": ["local reload and changed behavior", "reportsProgress=false", "no work completion", "intent_cancelled reason unknown"]},
+    {"evidence": "device-partial-events.jsonl", "pid": 4946, "protected_data_unavailable_ticks": 53, "first_step": 46, "last_step": 98, "span_seconds": 53.642, "completion_observed": false},
+    {"evidence": "device-partial-events.jsonl", "old_pid": 5012, "new_pid": 5015, "passed": true, "checks": ["new process restored step 8 generation 2", "completed step 12", "verify-recovery.py"]}
+  ],
+  "caveats": [
+    "The 600-step runs reloaded at step 5 while foregrounded, then continued in the background.",
+    "Neither 600-step run reported protected data unavailable.",
+    "No-progress cancellation was a single observed run with an unknown reason, not a proven fixed timeout.",
+    "The initial device XCTest failure was a locked-device foreground activation failure, not evidence of workload cancellation.",
+    "The first no-progress UI-toggle attempt actually reported progress=true and is excluded.",
+    "Physical Shortcuts-catalog invocation was not validated because the app was absent from the tested catalog.",
+    "The extra background-reload test failed before any test case began: lost testmanagerd connection. Retry could not find the device destination; CoreDevice listed the phone as unavailable.",
+    "Maximum lifetime, 24/7 availability, and real model or network workloads were not tested."
+  ],
+  "quality_delta": {"status": "unavailable", "reason": "No Git HEAD or pre-change ripwire baseline exists in this scratch project."}
+}

@@ -1,0 +1,39 @@
+{
+  "continued_submissions": [
+    {
+      "strategy": "fail",
+      "uptime": 25724.093773208337,
+      "pid": 5234
+    }
+  ],
+  "intent_events": [],
+  "work_runs": [
+    {
+      "mode": "continued",
+      "pid": 5234,
+      "requested_steps": 600,
+      "reports_progress": true,
+      "resume": false,
+      "start": 25724.114023541668,
+      "reloads": [
+        {
+          "appState": 0,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 5234,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 25729.220263958334,
+          "wall": 1792262716.3860931
+        }
+      ],
+      "completed": true,
+      "observed_ticks": 600,
+      "background_ticks": 589,
+      "last_step": 600,
+      "last_generation": 2,
+      "observed_seconds": 615.926,
+      "max_tick_gap_seconds": 1.072
+    }
+  ]
+}

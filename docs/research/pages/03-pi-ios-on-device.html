@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { color-scheme: light dark; }
+* {box-sizing:border-box} html,body {background:transparent;margin:0}
+body {font:14px/1.5 var(--font-sans,system-ui);color:var(--foreground,#242424)}
+p {margin:0 0 12px} .muted {color:var(--muted-foreground,#777)} .caption {font-size:12px}
+button {font:inherit;color:inherit;background:transparent;border:1px solid var(--border,#aaa);border-radius:var(--radius,8px);padding:8px 12px;cursor:pointer}
+button[aria-pressed="true"] {background:var(--primary,#303030);color:var(--primary-foreground,#fff);border-color:transparent}
+.controls {display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}
+.host {border:1px solid var(--border,#aaa);border-radius:var(--radius,10px);padding:18px;background:var(--card,transparent)}
+.top {display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:space-between;align-items:center}
+.pill {font-size:12px;border:1px solid var(--border,#aaa);border-radius:20px;padding:4px 9px}
+.host p {margin:7px 0 0}
+.runtime {margin-top:17px;padding:18px;border:2px solid var(--chart-1,#7f83dd);border-radius:var(--radius,10px)}
+.runtime strong {font-size:17px}
+.data {display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:0}
+.connector {text-align:center;padding:10px 0;font-size:12px;color:var(--muted-foreground,#777)}
+.box {border:1px solid var(--border,#aaa);border-radius:var(--radius,10px);padding:16px;height:calc(100% - 38px)}
+code {font:12px/1.5 var(--font-mono,monospace);overflow-wrap:anywhere}
+.detail {margin-top:16px;padding-left:13px;border-left:3px solid var(--chart-1,#7f83dd);min-height:86px}
+.detail strong {display:block;margin-bottom:4px}.detail p {margin:0}
+.notes {margin:14px 0 0;font-size:12px}.notes a {color:inherit;text-decoration:underline;text-underline-offset:3px}
+@media(max-width:430px){.data{grid-template-columns:1fr;gap:4px}.host{padding:16px}.detail{min-height:110px}}
+</style></head><body>
+<p><strong>The agent’s code and state stay on the iPhone.</strong><br><span class="muted">Proposed architecture. The controls illustrate lifecycle changes; this is not an iOS runtime test.</span></p>
+<div class="controls" aria-label="Inspect lifecycle">
+<button type="button" aria-pressed="true" data-stage="0">1 · Running</button>
+<button type="button" aria-pressed="false" data-stage="1">2 · Self-edit</button>
+<button type="button" aria-pressed="false" data-stage="2">3 · Reload</button>
+<button type="button" aria-pressed="false" data-stage="3">If iOS stops it</button>
+</div>
+<div class="host">
+<div class="top"><strong>Signed native host</strong><span class="pill" id="grant">Background task active</span></div>
+<p class="muted">Owns the iOS task, progress, cancellation, JavaScript lifecycle, file access, network bridge and database access.</p>
+<div class="runtime" aria-live="polite">
+<div class="caption muted">REPLACEABLE JAVASCRIPTCORE RUNTIME</div>
+<strong id="runtime">Agent v1 is executing</strong>
+<p id="logic">Agent loop · tools · prompts · application logic</p>
+<p class="caption muted">The native host stays alive when this JavaScript context is replaced.</p>
+</div>
+<div class="data">
+<div><div class="connector">↓ writes source · loads source ↑</div><div class="box"><strong>Editable application files</strong><p><code>Application Support/app/</code></p><p id="code">Runnable JavaScript v1</p><span class="caption muted">Include the harness here if its own implementation must also be editable. Keep a known-working version.</span></div></div>
+<div><div class="connector">↓ checkpoints · restores ↑</div><div class="box"><strong>Persistent state</strong><p><code>Application Support/state.sqlite</code></p><p id="state">Conversation, task records, tool results</p><span class="caption muted">Restore logical work at checkpoints. JavaScript heaps and call stacks are not preserved.</span></div></div>
+</div>
+</div>
+<div class="detail" aria-live="polite"><strong id="title">Start an agent session</strong><p id="detail">A user action requests continued background execution. When iOS grants it, the native host runs the agent. Leaving the app does not itself tear down this runtime.</p></div>
+<p class="notes">The UI can use editable HTML/CSS/JS in a WKWebView; background agent execution belongs to the native-owned JavaScriptCore runtime. In this design, model inference may use an API, while code edits, reloads and state restoration happen locally.</p>
+<p class="notes muted">Existing building blocks: <a href="https://github.com/finnvoor/PiDurableKit/blob/1305a72ffe5ea29a9f5e7d576a7cf9334189c1ef/README.md#javascript-extensions" target="_blank" rel="noopener">PiDurableKit supports agent-written JS extensions</a>. Full self-replacement requires adapting its <a href="https://github.com/finnvoor/PiDurableKit/blob/1305a72ffe5ea29a9f5e7d576a7cf9334189c1ef/Sources/PiDurableKit/Runtime/Runtime.swift#L314" target="_blank" rel="noopener">currently bundled-source loader</a> and adding safe lifecycle management.</p>
+<script>
+const stages = [
+{grant:"Background task active",runtime:"Agent v1 is executing",logic:"Agent loop · tools · prompts · application logic",code:"Runnable JavaScript v1",state:"Conversation, task records, tool results",title:"Start an agent session",detail:"A user action requests continued background execution. When iOS grants it, the native host runs the agent. Leaving the app does not itself tear down this runtime."},
+{grant:"Same background task",runtime:"Agent v1 writes its successor",logic:"The running agent edits the source that will execute next.",code:"Runnable JavaScript v2 staged locally",state:"Checkpoint + requested code version",title:"Commit the handover before reloading",detail:"Write and validate the new source, persist the handover, and let the current tool finish. The native supervisor then reaches a safe boundary and releases the old runtime and its resources."},
+{grant:"Same background task",runtime:"Agent v2 resumes the goal",logic:"New executable code, continuing the existing conversation.",code:"Runnable JavaScript v2 activated",state:"Same database; compatible task definitions restored",title:"Replace the JavaScript context inside the same app",detail:"The host loads the edited files into a fresh runtime, installs definitions before resuming work, and continues from durable checkpoints. The app process and its native background-task owner stay in place."},
+{grant:"Execution grant ended",runtime:"Agent paused at its last checkpoint",logic:"Persisted state remains; JavaScript gets no guaranteed CPU time.",code:"Last activated version remains on disk",state:"Last committed checkpoint survives",title:"Persistence cannot grant execution time",detail:"If iOS expires the task or terminates the process, the agent cannot promise uninterrupted work. It resumes when execution becomes available again. Do not assume an expired task automatically restarts."}
+];
+document.querySelectorAll("button").forEach(button=>button.addEventListener("click",()=>{
+ const selected=Number(button.dataset.stage);
+ document.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",String(b===button)));
+ const s=stages[selected]; Object.keys(s).forEach(key=>document.getElementById(key).textContent=s[key]);
+}));
+console.log("Lifecycle diagram initialized; 4 explanatory states.");
+</script>
+</body></html>

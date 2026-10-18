@@ -1,0 +1,47 @@
+name: BackgroundSpike
+options:
+  bundleIdPrefix: dev.local.agent
+  deploymentTarget:
+    iOS: '27.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  BackgroundSpike:
+    type: application
+    platform: iOS
+    sources: [App]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Agent Background Spike
+        UILaunchScreen: {}
+        UIBackgroundModes: [processing]
+        BGTaskSchedulerPermittedIdentifiers: [dev.local.agent.BackgroundSpike.work]
+        NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLName: spike
+            CFBundleURLSchemes: [agentspike]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.local.agent.BackgroundSpike
+        TARGETED_DEVICE_FAMILY: '1,2'
+  BackgroundSpikeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: BackgroundSpike
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: BackgroundSpike
+schemes:
+  BackgroundSpike:
+    build:
+      targets:
+        BackgroundSpike: all
+        BackgroundSpikeUITests: [test]
+    test:
+      targets: [BackgroundSpikeUITests]

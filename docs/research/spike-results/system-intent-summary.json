@@ -1,0 +1,116 @@
+{
+  "continued_submissions": [
+    {
+      "strategy": "fail",
+      "uptime": 55958.77141954167,
+      "pid": 18652,
+      "error": "BGTaskScheduler is not available on this platform.",
+      "domain": "BGTaskSchedulerErrorDomain",
+      "code": 1,
+      "response_ms": 5.45
+    },
+    {
+      "strategy": "queue",
+      "uptime": 56021.121366708336,
+      "pid": 18859,
+      "error": "BGTaskScheduler is not available on this platform.",
+      "domain": "BGTaskSchedulerErrorDomain",
+      "code": 1,
+      "response_ms": 5.81
+    }
+  ],
+  "intent_events": [
+    {
+      "appState": 0,
+      "event": "intent_entered",
+      "pid": 19057,
+      "protectedDataAvailable": true,
+      "reportsProgress": true,
+      "seconds": 120,
+      "uptime": 56107.38665541667,
+      "wall": 1792231067.134303
+    },
+    {
+      "appState": 0,
+      "code": 2004,
+      "description": "LNPerformActionErrorCodeUnsupportedValueType",
+      "domain": "LNContextErrorDomain",
+      "event": "intent_error",
+      "pid": 19057,
+      "protectedDataAvailable": true,
+      "uptime": 56107.39433150001,
+      "userInfo": "[\"NSLocalizedDescription\": \"LNPerformActionErrorCodeUnsupportedValueType\"]",
+      "wall": 1792231067.1419802
+    },
+    {
+      "appState": 2,
+      "event": "intent_entered",
+      "pid": 20331,
+      "protectedDataAvailable": true,
+      "reportsProgress": true,
+      "seconds": 120,
+      "uptime": 56360.77235704167,
+      "wall": 1792231320.520987
+    },
+    {
+      "appState": 2,
+      "event": "intent_completed",
+      "pid": 20331,
+      "protectedDataAvailable": true,
+      "uptime": 56487.45956633334,
+      "wall": 1792231447.208688
+    }
+  ],
+  "work_runs": [
+    {
+      "mode": "unprotected_control",
+      "pid": 19013,
+      "requested_steps": 12,
+      "start": 56083.371161625,
+      "reloads": [
+        {
+          "appState": 0,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 19013,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56088.696210125,
+          "wall": 1792231048.44379
+        }
+      ],
+      "completed": true,
+      "observed_ticks": 12,
+      "background_ticks": 0,
+      "last_step": 12,
+      "last_generation": 2,
+      "observed_seconds": 12.561,
+      "max_tick_gap_seconds": 1.07
+    },
+    {
+      "mode": "long_running_intent",
+      "pid": 20331,
+      "requested_steps": 120,
+      "start": 56360.77784279167,
+      "reloads": [
+        {
+          "appState": 2,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 20331,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56365.97948679167,
+          "wall": 1792231325.728138
+        }
+      ],
+      "completed": true,
+      "observed_ticks": 120,
+      "background_ticks": 120,
+      "last_step": 120,
+      "last_generation": 2,
+      "observed_seconds": 126.679,
+      "max_tick_gap_seconds": 1.072
+    }
+  ]
+}

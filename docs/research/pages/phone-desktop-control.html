@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phone brain, desktop hands: Pi environments and Jev</title>
+<style>
+html,body{background:transparent;color:var(--foreground,CanvasText);color-scheme:light dark}body{margin:0;font-family:var(--font-sans,system-ui);font-size:var(--font-size-base,14px);line-height:1.5}*{box-sizing:border-box}h1,h2,h3,p{margin:0 0 10px}h1{font-size:1.5em;font-weight:500}h2{font-size:1.13em;font-weight:500}h3,strong{font-weight:500}small,.meta{font-size:.88em;color:var(--muted-foreground,GrayText)}small{display:block}code,pre{font-family:var(--font-mono,monospace);font-size:.92em;overflow-wrap:anywhere}pre{white-space:pre-wrap;margin:8px 0}a{color:inherit;text-underline-offset:3px}button{font:inherit;color:inherit;cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid var(--ring,Highlight);outline-offset:3px}.boundary{border:1px solid color-mix(in srgb,var(--foreground,CanvasText) 35%,transparent);padding:16px;min-width:0}.label{font-size:.86em;color:var(--muted-foreground,GrayText);margin-bottom:9px}.inference{border-bottom:1px solid var(--border,GrayText);padding:8px 0 12px;margin-top:18px}.row{display:flex;flex-wrap:wrap;gap:6px 18px}.connector{text-align:center;color:var(--muted-foreground,GrayText);font-size:.88em;padding:9px 0}.phone{margin:0}.runtime{border:1px dashed color-mix(in srgb,var(--foreground,CanvasText) 35%,transparent);padding:12px;margin-top:10px;background:color-mix(in srgb,var(--chart-1,Highlight) 7%,transparent)}.adapter{margin-top:10px}.machines{display:grid;grid-template-columns:1fr 1fr;gap:14px}.machines p{margin:8px 0}.service{border-top:1px solid var(--border,GrayText);padding-top:10px;margin-top:10px}.snapshot{margin-top:22px}.controls{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.controls button{padding:8px 12px;border:1px solid var(--border,GrayText);border-radius:var(--radius,7px);background:transparent}.controls button[aria-pressed=true]{background:var(--primary,CanvasText);color:var(--primary-foreground,Canvas)}.example{display:grid;grid-template-columns:1fr 1fr;gap:16px}.example>div{min-width:0;border-top:1px solid var(--border,GrayText);padding-top:12px}.stage-note{margin-top:14px}.stages{min-height:50px}.notes{border-top:1px solid var(--border,GrayText);padding-top:10px;margin-top:18px}.notes summary{cursor:pointer}.notes p{margin-top:10px}.sources{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:.88em;margin-top:16px}.local-link{font-size:.88em}.meta{margin:6px 0 0}@media(max-width:520px){.machines,.example{grid-template-columns:1fr}.controls button{flex:1 1 40%}.stages{min-height:0}}@media(pointer:coarse){button,summary{min-height:44px}}
+</style>
+</head>
+<body>
+<main id="phone-desktop">
+<h1>Phone owns the agent. Desktops expose tools.</h1>
+<p>One durable conversation can target <code>mac:work</code> or <code>linux:dev</code>. Planning, self-editing, model requests, and the next-action loop stay in the iPhone app.</p>
+<p class="meta">Proposed integration, not an implemented or tested remote-control system.</p>
+
+<div class="inference"><div class="label">MODEL SERVICES · Outside the phone, unless separately self-hosted</div><div class="row"><span><strong>Large LLM</strong> → plans, writes content/code, handles unfamiliar situations</span><span><strong>Jev</strong> → chooses among supplied action/target options</span></div></div>
+<div class="connector">↑ state + questions / prompts &nbsp; HTTPS &nbsp; ↓ decisions / generated content</div>
+<section class="boundary phone" aria-label="iPhone agent host">
+<div class="label">iPHONE APP PROCESS · The brain and control loop</div>
+<strong>Native iOS host + editable JavaScript agent</strong>
+<div class="runtime"><strong>Observe → select next action → dispatch → verify → checkpoint</strong><small>Pi Durable conversation state · local source versions · explicit continuation state</small></div>
+<p class="adapter"><strong>Tool adapters</strong><br><code>ExecutionEnv</code>: files + commands<br><code>DesktopTools</code>: observe / act / verify</p>
+<small>DesktopTools is a proposed interface alongside the stock environment. Native Swift supplies the iOS transport; Node's SSH process wrapper is not directly usable on iPhone.</small>
+</section>
+<div class="connector">↓ requests with environment + state IDs &nbsp; SSH / authenticated RPC &nbsp; ↑ observations + receipts</div>
+<div class="machines">
+<section class="boundary" aria-label="Mac execution environment">
+ <div class="label">MAC · Logged-in user session</div>
+ <h2>pi-env + a desktop helper</h2>
+ <p><code>pi-env</code> → files, commands, terminal</p>
+ <div class="service"><strong>Desktop helper → macOS Accessibility</strong><small>Read controls · AXPress / AXValue · keyboard/mouse when needed · capture fallback</small></div>
+ <p>Local code validates targets, executes, and reports the result. It does not run the planning loop.</p>
+ <small>A bridge can invoke a small CLI through pi-env; that CLI talks to the already-running GUI helper over a local socket.</small>
+</section>
+<section class="boundary" aria-label="Linux execution environment">
+ <div class="label">LINUX · Remote user / workspace</div>
+ <h2>pi-env for shell and files</h2>
+ <p>SSH reaches the environment; build tools, git, and processes run here.</p>
+ <div class="service"><strong>Optional GUI adapter</strong><small>AT-SPI for accessible controls · display/session-specific capture and input</small></div>
+ <p>A Linux desktop also needs access to its graphical session. SSH alone provides command execution.</p>
+ <small>X11 and Wayland need different input/capture paths; support is backend-specific.</small>
+</section>
+</div>
+
+<section class="snapshot">
+<h2>What one next-action decision looks like</h2>
+<p class="meta">Illustrative protocol and screen state; no live model or desktop is called. An accessibility tree describes UI elements. It is not itself the agent's decision tree.</p>
+<div class="controls" aria-label="Step through a desktop action">
+<button data-stage="0" aria-pressed="true">1 · Observe</button><button data-stage="1" aria-pressed="false">2 · Select</button><button data-stage="2" aria-pressed="false">3 · Act</button><button data-stage="3" aria-pressed="false">4 · Verify</button>
+</div>
+<div class="example">
+ <div><div class="label" id="left-label"></div><pre id="left-code"></pre></div>
+ <div><div class="label" id="right-label"></div><pre id="right-code"></pre></div>
+</div>
+<div class="stage-note" aria-live="polite"><h2 id="stage-title"></h2><p class="stages" id="stage-description"></p></div>
+</section>
+
+<details class="notes"><summary>Boundaries that matter for this design</summary>
+<p><strong>GUI authority lives on the Mac.</strong> The native helper needs Accessibility permission. Images need the separate screen-capture permission. An SSH login does not itself grant either. Keep the helper in the intended logged-in desktop session; an unlocked interactive desktop is the baseline for full input control.</p>
+<p><strong>Element refs belong to an observation.</strong> Bind actions to environment, desktop/window identity, state ID, and target ref. Re-observe changed state and serialize shared keyboard/mouse use. A successfully delivered event is not proof that the application did the intended thing.</p>
+<p><strong>Phone suspension pauses the brain.</strong> Remote hands cannot keep the iPhone's JS loop alive. After reconnecting, inspect pending action receipts and fresh UI state before choosing another action. A durable log is not an exactly-once guarantee for desktop side effects.</p>
+<p><strong>Stock pi-env has connection-bound command lifetime.</strong> In the reviewed protocol revision, loss of stdin or 30 seconds without incoming data kills daemon-owned command groups. Persistent desktop execution/receipts require an independently hosted helper; a background shell command is not sufficient.</p>
+<p><strong>Accessibility is incomplete in some apps.</strong> Prefer APIs/CLI for structured work, then AX controls, then browser DOM or screenshots/input for surfaces with missing semantics. Jev selects from candidates; it does not generate an email or implement an unknown tool. Ask the planner for that content or behavior.</p>
+</details>
+<div class="sources">
+<a href="https://github.com/earendil-works/pi/blob/8efd314fa3d3232ce197d8d7a6a5660530b9d83e/packages/env/README.md" target="_blank" rel="noreferrer">Pi environment contract</a>
+<a href="https://github.com/injaneity/pi-computer-use/blob/main/docs/content/docs/explanation/architecture.mdx" target="_blank" rel="noreferrer">Desktop helper architecture</a>
+<a href="https://docs.typesafe.ai/primitives/choice" target="_blank" rel="noreferrer">Jev typed choices</a>
+<a href="https://github.com/earendil-works/pi/blob/8efd314fa3d3232ce197d8d7a6a5660530b9d83e/packages/env/docs/protocol.md#liveness" target="_blank" rel="noreferrer">pi-env disconnect behavior</a>
+</div>
+</main>
+<script>
+(() => {
+ const root = document.getElementById('phone-desktop');
+ const stages = [
+ ['MAC → PHONE · UI snapshot','env: mac:work\nstateId: notes-42\nwindow: Notes\n\n@e7 button "New Note"\n@e8 search field "Search"','PHONE · Current subgoal','Create a new blank note.\n\nThe planner has supplied\nthe goal; the helper only\nreports what is present.','Read the current UI','The Mac walks its Accessibility tree and returns a compact description. Swift delivers it to the JavaScript agent. No screenshot is needed when the controls have useful AX semantics.'],
+ ['PHONE → JEV · Defined choices','State: goal + notes-42\n\npress_new: press @e7\nfocus_search: focus @e8\nwait: observe again\nblocked: cannot proceed','JEV → PHONE · Typed answer','choice: "press_new"\nprobabilities: { … }\nconfidence: <model value>\n\nNo invented tool call.','Choose among actions your code supplied','The phone asks Jev for a narrow decision and receives a choice plus probabilities/confidence. The application maps that choice to a predefined action. It can escalate an uncertain result to the larger LLM.'],
+ ['PHONE → MAC · Action request','env: mac:work\nstateId: notes-42\nactionId: a-17\noperation: press\ntarget: @e7','MAC · Grounding + delivery','Check desktop/window.\nCheck target freshness.\nResolve @e7 to AX object.\nPerform AXPress.\nRecord delivery outcome.','Execute on the desktop','The helper uses the Mac’s OS APIs. The phone never receives an AXUIElement pointer; it sends a state-scoped reference. These messages are a proposed adapter format, not the stock pi-env wire schema.'],
+ ['MAC → PHONE · New observation','stateId: notes-43\n\n+ @e9 text area "Note"\n+ value: ""\n+ focused: true\n\nreceipt: a-17','PHONE · Verify + continue','Observed: blank note\neditor is present.\n\nCommit result to local log.\nChoose the next subgoal\nor report completion.','Verify the effect, then decide again','The next observation is the evidence. If delivery or effect is uncertain, observe again instead of replaying the click blindly. The phone remains the owner of the loop and durable conversation.']
+ ];
+ root.querySelectorAll('[data-stage]').forEach(button => button.addEventListener('click', () => {
+  const i=Number(button.dataset.stage), s=stages[i];
+  root.querySelectorAll('[data-stage]').forEach(el=>el.setAttribute('aria-pressed',String(el===button)));
+  ['left-label','left-code','right-label','right-code','stage-title','stage-description'].forEach((id,n)=>root.querySelector('#'+id).textContent=s[n]);
+ }));
+ root.querySelector('[data-stage="0"]').click();
+})();
+</script>
+</body>
+</html>

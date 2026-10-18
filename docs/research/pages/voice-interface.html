@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AirPods voice interface for a phone-hosted Pi Durable agent</title>
+<style>
+html,body{background:transparent;color:var(--foreground,CanvasText);color-scheme:light dark}body{margin:0;font-family:var(--font-sans,system-ui);font-size:var(--font-size-base,14px);line-height:1.5}*{box-sizing:border-box}h1,h2,h3,p{margin:0 0 10px}h1{font-size:1.5em;font-weight:500}h2{font-size:1.13em;font-weight:500}h3,strong{font-weight:500}small,.meta{font-size:.88em;color:var(--muted-foreground,GrayText)}small{display:block}code{font-family:var(--font-mono,monospace);font-size:.92em;overflow-wrap:anywhere}a{color:inherit;text-underline-offset:3px}.intro{max-width:65ch}.airpods{margin-top:18px;padding:10px 0;border-bottom:1px solid var(--border,GrayText)}.arrow{text-align:center;padding:10px 0;color:var(--muted-foreground,GrayText);font-size:.88em}.zones{display:grid;grid-template-columns:minmax(0,1.18fr) 28px minmax(0,.88fr);align-items:start}.boundary{border:1px solid color-mix(in srgb,var(--foreground,CanvasText) 35%,transparent);padding:16px;min-width:0}.label{font-size:.86em;color:var(--muted-foreground,GrayText);margin-bottom:10px}.label strong{color:var(--foreground,CanvasText)}.native{margin:12px 0;padding-bottom:12px;border-bottom:1px solid var(--border,GrayText)}.agent{padding:12px;border:1px dashed color-mix(in srgb,var(--foreground,CanvasText) 35%,transparent);background:color-mix(in srgb,var(--chart-1,Highlight) 7%,transparent)}.bridge{font-size:.88em;color:var(--muted-foreground,GrayText);padding:8px 0}.link{padding-top:45px;text-align:center;font-size:1.5em}.cloud h2{margin-top:12px}.cloud .divide{border-top:1px solid var(--border,GrayText);padding-top:12px;margin-top:12px}.tools{margin-top:12px;padding-top:10px;border-top:1px solid var(--border,GrayText)}.example{margin-top:22px}.exchange{display:grid;grid-template-columns:100px 1fr;gap:6px 16px;margin-top:12px}.exchange dt{color:var(--muted-foreground,GrayText)}.exchange dd{margin:0}.exchange .work{padding-left:10px;border-left:2px solid var(--border,GrayText)}.controls{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.controls button{font:inherit;color:inherit;background:transparent;border:1px solid var(--border,GrayText);border-radius:var(--radius,7px);padding:8px 12px;cursor:pointer}.controls button[aria-pressed=true]{background:var(--primary,CanvasText);color:var(--primary-foreground,Canvas)}button:focus-visible,a:focus-visible{outline:2px solid var(--ring,Highlight);outline-offset:3px}.effect{display:grid;grid-template-columns:1fr 1fr;gap:16px;border-top:1px solid var(--border,GrayText);padding-top:12px}.effect strong{display:block;margin-bottom:5px}.effect p{margin:0}.explain{margin-top:12px}.notes{border-top:1px solid var(--border,GrayText);margin-top:18px;padding-top:10px}.notes summary{cursor:pointer}.notes p{margin-top:12px}.sources{display:flex;gap:8px 16px;flex-wrap:wrap;margin-top:16px;font-size:.88em}@media(max-width:520px){.zones{grid-template-columns:1fr}.link{padding:8px 0}.link span{display:inline-block;transform:rotate(90deg)}.effect{grid-template-columns:1fr;gap:12px}.exchange{grid-template-columns:74px 1fr;gap:8px}.controls button{flex:1 1 42%}}@media(pointer:coarse){button,summary{min-height:44px}}
+</style>
+</head>
+<body>
+<main id="voice-pi">
+<h1>Talk naturally while Pi Durable does the work</h1>
+<p class="intro">The voice session stays responsive while the durable agent handles longer tasks. Both are coordinated by your iPhone app.</p>
+<p class="meta">Research-backed design proposal. AirPods routing, spoken latency, and background voice behavior have not been tested in our spike.</p>
+<div class="airpods"><strong>You ↔ AirPods microphone and earphones</strong><small>Start a voice session in the app. Keep the audio route active while you talk and listen.</small></div>
+<div class="arrow">↕ continuous audio through the native iPhone host</div>
+<div class="zones">
+<section class="boundary" aria-label="Native iPhone host and durable agent">
+ <div class="label"><strong>ON YOUR iPHONE</strong> · App process</div>
+ <strong>Native voice coordinator</strong>
+ <div class="native"><code>AVAudioSession + native WebRTC audio</code><small>One audio owner: capture · playback · echo handling · route changes · interruptions</small></div>
+ <p>Owns the live connection and passes meaningful requests to the local agent.</p>
+ <div class="bridge">↓ task input / corrections &nbsp; ↑ verified progress / results</div>
+ <div class="agent"><strong>Editable JS + Pi Durable</strong><small>Task reasoning · registered tools · durable state<br>Normal text-model provider can remain unchanged.</small></div>
+ <div class="tools"><strong>Existing desktop tools</strong><small>Mac / Linux observation and actions remain the same. Voice is another interface to those tasks.</small></div>
+</section>
+<div class="link" aria-label="Network communication"><span>↔</span></div>
+<section class="boundary cloud" aria-label="Remote model services">
+ <div class="label"><strong>MODEL APIs</strong> · Outside the phone</div>
+ <h2>Voice conversation model</h2>
+ <p>Listens and speaks, manages conversational timing, and delegates task work back to the app.</p>
+ <small>First candidate: GPT-Live with client delegation. Native WebRTC carries audio; events connect it to Pi.</small>
+ <div class="divide"><strong>Pi's existing reasoning model</strong><p>Called by the phone-hosted worker when the task needs reasoning or tool use.</p><small>The provider can differ from the voice provider. Local orchestration does not mean local model inference.</small></div>
+</section>
+</div>
+
+<section class="example">
+<h2>The experience you are aiming for</h2>
+<dl class="exchange">
+ <dt>You</dt><dd>“On my Mac, create a note with today's deployment summary.”</dd>
+ <dt>Voice</dt><dd>“I'll put that together.”</dd>
+ <dt>Pi task</dt><dd class="work">Reads the relevant data, creates the note, then verifies the result.</dd>
+ <dt>Meanwhile</dt><dd>You can add a detail or ask about its progress.</dd>
+ <dt>Voice</dt><dd>“The note is ready.” <small>Only after receiving a verified task result.</small></dd>
+</dl>
+<p class="meta">Illustrative dialogue, not a recorded run or latency measurement.</p>
+</section>
+
+<section class="example">
+<h2>Three different kinds of interruption</h2>
+<div class="controls" aria-label="Choose a voice interruption">
+ <button data-action="speech" aria-pressed="true">Talk over it</button>
+ <button data-action="steer" aria-pressed="false">Change the instruction</button>
+ <button data-action="cancel" aria-pressed="false">Cancel the task</button>
+</div>
+<div class="effect" aria-live="polite"><div><strong>Voice session</strong><p id="voice-effect"></p></div><div><strong>Pi Durable task</strong><p id="pi-effect"></p></div></div>
+<p class="explain" id="effect-detail"></p>
+</section>
+
+<details class="notes"><summary>How this attaches to Pi Durable</summary>
+<p><strong>Use a small adapter, not a new audio provider inside Pi.</strong> In the inspected revision, Pi's normal message contract handles text/images, not a live audio stream. The native coordinator collects voice context, admits a task through <code>Conversation.submit</code>, and watches message/tool events.</p>
+<p><strong>Client delegation needs application context.</strong> GPT-Live's delegation event contains an ID, not the task text. Assemble the relevant transcript and app state; associate the delegation with the Pi submission. Deduplicate admission with a stable request ID, rather than sending every partial transcript fragment as a new command.</p>
+<p><strong>One owner executes tools.</strong> Pi owns tool execution. The voice model receives brief verified results and useful status. For GPT-Live, <code>session.commentary.append</code> supplies information to speak; <code>session.thinking.append</code> supplies quiet context. Do not route the same request into two independent tool loops.</p>
+<p><strong>Persist tasks, not audio packets.</strong> Store commands, corrections, task IDs, outcomes, and relevant conversation records. Keep live audio processing outside the durable commit loop. Reconnect a fresh audio session after a process restart and restore concise context from the local records.</p>
+<p><strong>Preserve the native session during a JS reload.</strong> The audio coordinator stays in the stable host while the editable worker changes. In-flight delegations need a durable mapping to task IDs; reattach to pending work instead of replaying desktop actions.</p>
+</details>
+<details class="notes"><summary>AirPods, lock screen, latency, and cost</summary>
+<p><strong>Audio route:</strong> use <code>.playAndRecord</code> with <code>.voiceChat</code>, voice processing, and a Bluetooth hands-free route. Handle AirPods disconnects and phone-call interruptions. Apple's high-quality Bluetooth recording mode can increase latency and is not its recommendation for real-time communication.</p>
+<p><strong>Screen locked:</strong> with microphone permission and the audio background mode, an active audio conversation can continue after backgrounding or locking. This is not an unrestricted, permanently listening wake-word service. Start with a user-initiated session and test lock/unlock on the actual AirPods and iPhone.</p>
+<p><strong>Fast replies:</strong> keep the connection warm, stream audio, tune turn-taking, and let the voice layer acknowledge a request before a long task completes. Measure end-of-speech → first audible reply separately from time to verified task completion. No subsecond guarantee follows from choosing a realtime API.</p>
+<p><strong>Session cost:</strong> current GPT-Live documentation bills the live session by duration, with backend model/tool usage separate. Design explicit start/stop and idle behavior; do not assume an open, quiet session is free.</p>
+</details>
+<details class="notes"><summary>The simpler alternative</summary>
+<p><strong>Streaming speech recognition → Pi → streaming speech synthesis.</strong> This closely follows Pi's existing text workflow and allows more component choice. Apple's SpeechAnalyzer/SpeechTranscriber is an on-device recognition option, subject to device/language/model-asset support. It still needs speech playback and turn-taking logic.</p>
+<p>The tradeoff is that you manage recognition timing, interruption, and speech output yourself, and the spoken answer often waits on the text agent. It can be made responsive, but full-duplex conversation is more work than adding a microphone button.</p>
+</details>
+<div class="sources">
+<a href="https://developers.openai.com/api/docs/guides/live" target="_blank" rel="noreferrer">Official OpenAI voice architecture</a>
+<a href="https://developers.openai.com/api/docs/guides/live-delegation?delegation-mode=client" target="_blank" rel="noreferrer">Client delegation</a>
+<a href="https://github.com/finnvoor/PiDurableKit/blob/1305a72ffe5ea29a9f5e7d576a7cf9334189c1ef/Sources/PiDurableKit/Conversation.swift" target="_blank" rel="noreferrer">Pi input, steering, cancellation</a>
+<a href="https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/playandrecord" target="_blank" rel="noreferrer">Apple audio session</a>
+<a href="https://developer.apple.com/videos/play/wwdc2025/277/" target="_blank" rel="noreferrer">On-device speech recognition</a>
+</div>
+</main>
+<script>
+(() => {
+ const root=document.getElementById('voice-pi');
+ const effects={
+  speech:["Stops or yields the spoken response and listens to you.","Keeps working unless you actually ask to stop it.","Barge-in is a conversation event. It must not automatically cancel a build, duplicate a request, or abort a desktop action."],
+  steer:["Acknowledges the correction immediately.","Admits the new instruction with whenBusy: .steer; it joins after the current tool round.","Example: ‘Use the Linux machine instead.’ Pi steering is not instant preemption of an in-flight tool; the UI must reflect whether the change has been applied."],
+  cancel:["Acknowledges the stop request, then reports what actually stopped.","The adapter invokes cancellation for the intended job/conversation, such as Conversation.abort().","Cancellation is cooperative and does not undo effects already delivered to macOS. Re-observe any ambiguous desktop action before deciding what to do next."]
+ };
+ root.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>{
+  root.querySelectorAll('[data-action]').forEach(el=>el.setAttribute('aria-pressed',String(el===button)));
+  const value=effects[button.dataset.action];
+  ['voice-effect','pi-effect','effect-detail'].forEach((id,i)=>root.querySelector('#'+id).textContent=value[i]);
+ }));
+ root.querySelector('[data-action="speech"]').click();
+})();
+</script>
+</body>
+</html>

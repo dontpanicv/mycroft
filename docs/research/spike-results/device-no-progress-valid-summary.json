@@ -1,0 +1,67 @@
+{
+  "continued_submissions": [],
+  "intent_events": [
+    {
+      "appState": 0,
+      "event": "intent_entered",
+      "pid": 5214,
+      "protectedDataAvailable": true,
+      "reportsProgress": false,
+      "seconds": 120,
+      "uptime": 25606.164501375002,
+      "wall": 1792262593.331427
+    },
+    {
+      "appState": 2,
+      "event": "intent_cancelled",
+      "pid": 5214,
+      "protectedDataAvailable": true,
+      "reason": "IntentCancellationReason.unknown",
+      "uptime": 25664.400754000002,
+      "wall": 1792262651.567162
+    },
+    {
+      "appState": 2,
+      "code": 1,
+      "description": "The operation couldn\u2019t be completed. (Swift.CancellationError error 1.)",
+      "domain": "Swift.CancellationError",
+      "event": "intent_error",
+      "pid": 5214,
+      "protectedDataAvailable": true,
+      "uptime": 25664.403916416668,
+      "userInfo": "[:]",
+      "wall": 1792262651.570327
+    }
+  ],
+  "work_runs": [
+    {
+      "mode": "long_running_intent",
+      "pid": 5214,
+      "requested_steps": 120,
+      "reports_progress": false,
+      "resume": false,
+      "start": 25606.213963916667,
+      "reloads": [
+        {
+          "appState": 0,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 5214,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 25611.30410316667,
+          "wall": 1792262598.47099
+        }
+      ],
+      "completed": false,
+      "cancel_reason": "IntentCancellationReason.unknown",
+      "cancel_after_seconds": 58.187,
+      "observed_ticks": 55,
+      "background_ticks": 44,
+      "last_step": 55,
+      "last_generation": 2,
+      "observed_seconds": 57.314,
+      "max_tick_gap_seconds": 1.099
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "long_run_seconds": 633.616,
+  "all_600_ticks_background": true,
+  "progress_timeout_seconds": 29.982,
+  "process_recovery": {
+    "passed": true,
+    "old_pid": 29979,
+    "new_pid": 30017,
+    "restored_step": 8,
+    "restored_generation": 2,
+    "completed_step": 12
+  },
+  "native_source_hashes_unchanged": true,
+  "api_scenarios_and_recovery": 9,
+  "result_bundles": [
+    "initial.xcresult",
+    "system-intent.xcresult",
+    "limits-installed.xcresult",
+    "process-recovery.xcresult"
+  ],
+  "limitations": [
+    "Simulator rejected actual background scheduler requests.",
+    "Display power commands did not prove secure lock; subsequent UI testing needed Home/wake handling.",
+    "URL recovery harness was blocked by an Open-in-app alert; final recovery test uses native UI buttons.",
+    "No Git baseline exists for a quality delta."
+  ]
+}

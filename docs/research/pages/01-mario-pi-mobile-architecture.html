@@ -1,0 +1,254 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mario Zechner's phone agent: architecture</title>
+<style>
+  :root { --gap: 14px; }
+  body { font-family: var(--font-sans); color: var(--foreground); line-height: 1.5; font-size: 14px; }
+  .wrap { max-width: 100%; }
+  h2 { font-size: 19px; margin: 4px 0 4px; letter-spacing: -0.01em; }
+  h3 { font-size: 15px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .lede { color: var(--muted-foreground); margin-bottom: 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--font-mono); font-size: 12px; background: var(--code-background); color: var(--code-foreground); padding: 1px 4px; border-radius: 4px; }
+
+  .tldr { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0 4px; }
+  .tldr div { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  .tldr b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); margin-bottom: 2px; }
+
+  .diagram { overflow-x: auto; margin: 6px 0 0; }
+  .diagram svg { display: block; min-width: 700px; width: 100%; height: auto; }
+  svg text { font-family: var(--font-sans); fill: var(--foreground); }
+  svg .mono { font-family: var(--font-mono); }
+  svg .muted { fill: var(--muted-foreground); }
+  svg .phone { fill: none; stroke: var(--foreground); stroke-width: 1.6; }
+  svg .box { fill: var(--card); stroke: var(--border); stroke-width: 1.2; }
+  svg .hot { fill: var(--accent-surface); stroke: var(--accent); stroke-width: 1.2; }
+  svg .ext { fill: none; stroke: var(--muted-foreground); stroke-width: 1.1; stroke-dasharray: 4 3; }
+  svg .chip { fill: var(--secondary); stroke: none; }
+  svg .chiptext { font-size: 10px; fill: var(--secondary-foreground); }
+  svg .line { stroke: var(--muted-foreground); stroke-width: 1.3; fill: none; }
+  svg .loop { stroke: var(--accent); stroke-width: 1.8; fill: none; stroke-dasharray: 6 4; }
+  svg .lbl { font-size: 10px; fill: var(--muted-foreground); }
+  svg .lblhot { font-size: 10.5px; fill: var(--accent); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted-foreground); margin: 6px 0 0; }
+  .legend span::before { content: ""; display: inline-block; width: 18px; height: 0; vertical-align: middle; margin-right: 6px; border-top: 2px solid var(--muted-foreground); }
+  .legend .l-loop::before { border-top: 2px dashed var(--accent); }
+  .legend .l-ext::before { border-top: 1.5px dashed var(--muted-foreground); }
+
+  .loopgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; counter-reset: step; }
+  .step { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px 10px 40px; position: relative; }
+  .step::before { counter-increment: step; content: counter(step); position: absolute; left: 11px; top: 10px; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-foreground); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  .step b { display: block; }
+  .step p { margin: 2px 0 0; font-size: 13px; color: var(--muted-foreground); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); font-weight: 600; }
+  td.when { white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+  .fact { color: var(--success); border: 1px solid var(--success); }
+  .infer { background: var(--warning-surface); color: var(--warning); border: 1px solid var(--warning); }
+  .q { color: var(--muted-foreground); font-style: italic; }
+  .versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  .versions div { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  .versions .v { font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .note { border-left: 3px solid var(--accent); padding: 6px 12px; margin: 10px 0; color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h2>The phone agent that builds itself: "Pi Mobile", now "p2", on Pi Durable</h2>
+<p class="lede">Reconstructed from about 350 of <a href="https://x.com/badlogicgames">@badlogicgames</a>'s posts and replies (Sep 26 – Oct 17, 2026), plus the public <a href="https://github.com/earendil-works/pi">earendil-works/pi</a> repo. The app itself lives in the private <code>pi-private</code> repo, so the internals of the app are inferred from the libraries it is built on and from commit messages that mention it.</p>
+
+<div class="tldr">
+  <div><b>What</b>A personal replacement for Claude/ChatGPT for Android. It has a web UI, multiplayer chat, subagents, artifacts, a file browser and git viewer, and works with any model provider.</div>
+  <div><b>Where it runs</b>Everything except the LLM runs on his Pixel 11 (not rooted): the agent loop, tools, files, state and the web server.</div>
+  <div><b>Why it's possible</b>Pi Durable commits every step to SQLite, so the processes can be killed at any moment (by Android, or by himself to reload code) and resume exactly where they stopped.</div>
+  <div><b>The recursion</b>The agent's working directory is the app's own source tree. Its edits trigger a hot reload or a worker respawn, and the conversation that made the edit carries on.</div>
+</div>
+
+<h3>1 · Runtime topology (current, best estimate)</h3>
+<div class="diagram">
+<svg viewBox="0 0 790 660" role="img" aria-label="Architecture diagram">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted-foreground)"/></marker>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+  </defs>
+
+  <!-- Clients -->
+  <text x="0" y="40" font-size="11" font-weight="700" class="muted">CLIENTS</text>
+  <rect class="box" x="0" y="52" width="140" height="58" rx="8"/>
+  <text x="10" y="72" font-size="12" font-weight="600">Phone UI</text>
+  <text x="10" y="88" class="lbl">React web UI in a browser</text>
+  <text x="10" y="100" class="lbl">(v2: inside the APK)</text>
+  <rect class="box" x="0" y="124" width="140" height="58" rx="8"/>
+  <text x="10" y="144" font-size="12" font-weight="600">Android tablet</text>
+  <text x="10" y="160" class="lbl">same UI, connects to</text>
+  <text x="10" y="172" class="lbl">the phone over the LAN</text>
+  <rect class="box" x="0" y="196" width="140" height="70" rx="8"/>
+  <text x="10" y="216" font-size="12" font-weight="600">Guests (Armin, …)</text>
+  <text x="10" y="232" class="lbl">via an ngrok tunnel + auth</text>
+  <text x="10" y="244" class="lbl">join a session, chat,</text>
+  <text x="10" y="256" class="lbl">co-steer ("chat mode")</text>
+
+  <!-- Phone -->
+  <rect class="phone" x="165" y="18" width="395" height="630" rx="26"/>
+  <text x="185" y="44" font-size="12.5" font-weight="700">Pixel 11 (not rooted) · "p2", most likely in Termux</text>
+  <text x="185" y="58" class="lbl">kept alive via a setting · runs while locked · a few hundred MB</text>
+
+  <!-- Server host -->
+  <rect class="box" x="185" y="72" width="355" height="118" rx="10"/>
+  <text x="197" y="92" font-size="12.5" font-weight="700">Chord server host (Node)</text>
+  <text x="197" y="109" font-size="11">• HTTP + WebSocket, owner/guest principals from cookies</text>
+  <text x="197" y="124" font-size="11">• serves the React UI (dev build with <tspan font-weight="700">HMR</tspan>)</text>
+  <text x="197" y="139" font-size="11">• routes <tspan class="mono">session:&lt;id&gt;</tspan> → spawns or reuses a worker</text>
+  <text x="197" y="154" font-size="11">• relays browser ↔ worker and worker ↔ worker calls</text>
+  <text x="197" y="169" font-size="11">• networked plugins (server / worker / web facets),</text>
+  <text x="207" y="182" font-size="11">hot reload coordinated as prepare → commit ("drain, then swap")</text>
+
+  <!-- Workers -->
+  <rect class="box" x="185" y="214" width="355" height="236" rx="10"/>
+  <text x="197" y="234" font-size="12.5" font-weight="700">Session workers: one Node child per session</text>
+  <text x="197" y="249" class="lbl">IPC link to the server · processLock = a single writer per storage</text>
+  <rect class="hot" x="197" y="260" width="331" height="124" rx="8"/>
+  <text x="209" y="279" font-size="12" font-weight="700">Pi Durable Harness</text>
+  <text x="209" y="294" font-size="10.5" class="muted">conversations · immutable entries · durable tasks · docs</text>
+  <rect class="chip" x="209" y="303" width="76" height="18" rx="9"/><text x="217" y="316" class="chiptext">coding tools</text>
+  <rect class="chip" x="290" y="303" width="66" height="18" rx="9"/><text x="298" y="316" class="chiptext">subagents</text>
+  <rect class="chip" x="361" y="303" width="132" height="18" rx="9"/><text x="369" y="316" class="chiptext">durable codemode (QuickJS)</text>
+  <rect class="chip" x="209" y="326" width="112" height="18" rx="9"/><text x="217" y="339" class="chiptext">agent ↔ agent msgs</text>
+  <rect class="chip" x="326" y="326" width="68" height="18" rx="9"/><text x="334" y="339" class="chiptext">chat mode</text>
+  <rect class="chip" x="399" y="326" width="56" height="18" rx="9"/><text x="407" y="339" class="chiptext">artifacts</text>
+  <rect class="chip" x="460" y="326" width="56" height="18" rx="9"/><text x="468" y="339" class="chiptext">MCP</text>
+  <text x="209" y="362" font-size="10.5" class="muted">each turn, tool result and doc change is committed</text>
+  <text x="209" y="375" font-size="10.5" class="muted">before it is shown; stream partials → <tspan class="mono">pi.live</tspan> (~100 ms)</text>
+  <rect class="box" x="197" y="394" width="160" height="44" rx="8"/>
+  <text x="207" y="412" font-size="11.5" font-weight="600">SQLite (WAL)</text>
+  <text x="207" y="427" class="lbl">one storage per session</text>
+  <rect class="box" x="367" y="394" width="161" height="44" rx="8"/>
+  <text x="377" y="412" font-size="11.5" font-weight="600">ExecutionEnv</text>
+  <text x="377" y="427" class="lbl">local cwd | remote (switchable)</text>
+
+  <!-- Source tree -->
+  <rect class="hot" x="185" y="472" width="355" height="72" rx="10"/>
+  <text x="197" y="492" font-size="12.5" font-weight="700">The app's own source: pi-private monorepo</text>
+  <text x="197" y="508" font-size="11"><tspan class="mono">apps/p2</tspan> + <tspan class="mono">packages/*</tspan> (run from source)</text>
+  <text x="197" y="523" font-size="11">= the agent's cwd · browsable in the UI (files, git)</text>
+  <text x="197" y="537" class="lbl">git push → GitHub (pi-private, shared parts synced to pi)</text>
+
+  <!-- Runtime bar -->
+  <rect class="box" x="185" y="564" width="355" height="66" rx="10"/>
+  <text x="197" y="584" font-size="12" font-weight="700">Linux userland: Termux (Node, git, bash, …)</text>
+  <text x="197" y="600" font-size="11">v2 "Pi Mobile" APK bundled the same thing itself:</text>
+  <text x="197" y="614" font-size="11">Termux rootfs + Node + <tspan class="mono">pi-env-android-arm64</tspan> daemon</text>
+
+  <!-- Right side externals -->
+  <text x="600" y="40" font-size="11" font-weight="700" class="muted">OFF-PHONE</text>
+  <rect class="ext" x="600" y="214" width="180" height="78" rx="8"/>
+  <text x="610" y="234" font-size="12" font-weight="600">LLM providers</text>
+  <text x="610" y="250" class="lbl">any provider/model via pi-ai</text>
+  <text x="610" y="262" class="lbl">(OAuth or API keys); the</text>
+  <text x="610" y="274" class="lbl">only thing not on the phone</text>
+  <rect class="ext" x="600" y="360" width="180" height="88" rx="8"/>
+  <text x="610" y="380" font-size="12" font-weight="600">Hetzner box</text>
+  <text x="610" y="396" class="lbl">pi-env Rust daemon, auto-</text>
+  <text x="610" y="408" class="lbl">deployed over SSH: the remote</text>
+  <text x="610" y="420" class="lbl">"hands". The brain (loop +</text>
+  <text x="610" y="432" class="lbl">state) stays on the phone</text>
+  <rect class="ext" x="600" y="480" width="180" height="56" rx="8"/>
+  <text x="610" y="500" font-size="12" font-weight="600">GitHub</text>
+  <text x="610" y="516" class="lbl">pi-private (app) and</text>
+  <text x="610" y="528" class="lbl">pi (public libraries)</text>
+
+  <!-- Arrows: clients to server -->
+  <path class="line" d="M140 81 L185 110" marker-end="url(#a)" marker-start="url(#a)"/>
+  <path class="line" d="M140 153 L185 140" marker-end="url(#a)" marker-start="url(#a)"/>
+  <path class="line" d="M140 231 C160 210 165 185 185 170" marker-end="url(#a)" marker-start="url(#a)"/>
+  <text x="146" y="100" class="lbl">WS</text>
+  <!-- server to workers -->
+  <path class="line" d="M362 190 L362 214" marker-end="url(#a)" marker-start="url(#a)"/>
+  <text x="368" y="206" class="lbl">IPC relay</text>
+  <!-- workers to LLM -->
+  <path class="line" d="M540 270 L600 258" marker-end="url(#a)"/>
+  <text x="563" y="256" class="lbl">HTTPS</text>
+  <!-- env to hetzner -->
+  <path class="line" d="M528 416 L600 404" marker-end="url(#a)"/>
+  <text x="566" y="402" class="lbl">SSH</text>
+  <!-- env to source (local) -->
+  <path class="line" d="M447 438 L447 472" marker-end="url(#a)"/>
+  <text x="452" y="459" class="lbl">read / edit / bash</text>
+  <!-- source to github -->
+  <path class="line" d="M540 508 L600 508" marker-end="url(#a)"/>
+
+  <!-- Self-modification loop -->
+  <path class="loop" d="M185 520 C150 520 152 470 158 400 C163 330 163 260 172 196" marker-end="url(#ah)"/>
+  <text x="150" y="380" class="lblhot" text-anchor="end">code changed →</text>
+  <text x="150" y="394" class="lblhot" text-anchor="end">web: HMR</text>
+  <text x="150" y="408" class="lblhot" text-anchor="end">server/workers:</text>
+  <text x="150" y="422" class="lblhot" text-anchor="end">reload or kill +</text>
+  <text x="150" y="436" class="lblhot" text-anchor="end">respawn → Durable</text>
+  <text x="150" y="450" class="lblhot" text-anchor="end">resumes the session</text>
+</svg>
+</div>
+<div class="legend"><span>data / control flow</span><span class="l-loop">self-modification loop</span><span class="l-ext">outside the phone</span></div>
+
+<h3>2 · The recursive loop: building pim with pim</h3>
+<div class="loopgrid">
+  <div class="step"><b>Prompt from the phone</b><p>He types or dictates in the web UI, or a guest @-mentions the agent in chat mode, which turns all undelivered chat messages into one steering message.</p></div>
+  <div class="step"><b>Durable turn</b><p>The session worker commits the user entry, calls the LLM, commits the assistant entry, then runs tools as durable child tasks. Subagents and codemode scripts are themselves durable tasks.</p></div>
+  <div class="step"><b>The agent edits its own app</b><p>Its cwd is the pi-private checkout on the phone, so bash and edit tools change <code>apps/p2</code> or the packages, then check, test and commit.</p></div>
+  <div class="step"><b>Reload</b><p>Frontend: Vite-style HMR, and the UI updates in place. Server, worker and plugin code: Chord hot reload (prepare → commit, drain then swap), or the process is simply killed and respawned.</p></div>
+  <div class="step"><b>Resume</b><p>The new process opens the same SQLite storage. Running tasks go back to pending, an interrupted LLM call is re-sent, replay-safe tools re-run and unsafe ones are marked interrupted. The conversation that triggered the reload just keeps going.</p></div>
+  <div class="step"><b>Use the new version</b><p>The next turn runs on the new code, because extension names are rebound to whatever is installed now. He has done this for about two weeks and rewritten the whole app twice, on the phone.</p></div>
+</div>
+<p class="note">His one-line summary (Oct 3): <span class="q">"web &gt; hmr. server/session workers &gt; kill and respawn, pi durable takes care of the rest"</span></p>
+
+<h3>3 · How it evolved: three rewrites in about two weeks</h3>
+<div class="versions">
+  <div><span class="v">v1 · Oct 3 · weekend hack</span><br><b>Termux + browser</b><br>Node server and session workers running in Termux, with the web UI on localhost in Chrome. Exposed via ngrok for multiplayer. He built it from inside regular pi running in Termux, then had it edit itself.</div>
+  <div><span class="v">v2 · Oct 4 → 11 · "Pi Mobile" (apps/mobile)</span><br><b>Native Android APK</b><br>"No more termux needed": the APK bundles a Termux rootfs, Node and the pi-env daemon, and runs the monorepo from source. Added a file browser and git viewer, switching to a remote environment, agent messaging, networked hot-reloadable plugins, chat mode and durable codemode.</div>
+  <div><span class="v">v3 · Oct 12 → now · "p2" (apps/p2)</span><br><b>Rebuilt on "chord2"</b><br>The host runtime (objects, cells, plugins, hot reload, memory/IPC/WebSocket links) was extracted from p2 into the public <code>packages/chord</code>. The old experimental server, client and protocol stack was deleted from public pi. There is no APK build for p2, and on Oct 16 he says the Termux process is kept alive, so it most likely runs in Termux again with the UI in a browser. On Oct 14: "designing a new plugin system. everything leads back to pi-durable concepts".</div>
+</div>
+
+<h3>4 · Evidence trail</h3>
+<table>
+  <thead><tr><th>Date</th><th>What he said or did</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td class="when">Oct 1</td><td>Pi 1.0 ships with Pi Durable; he writes the explainer post.</td><td><a href="https://x.com/badlogicgames/status/2105739632168054992">post</a> · <a href="https://earendil.com/posts/pi-durable/">blog</a></td></tr>
+    <tr><td class="when">Oct 2</td><td>"pi codemode on Android in termux"</td><td><a href="https://x.com/badlogicgames/status/2106107060958212121">post</a></td></tr>
+    <tr><td class="when">Oct 3</td><td>Plans to replace Claude for Android with a pi durable app that runs fully on the phone and that he builds in pi on the phone. Everything runs on the phone except the LLM.</td><td><a href="https://x.com/badlogicgames/status/2106286641551675411">post</a></td></tr>
+    <tr><td class="when">Oct 3</td><td>Android kills the process, it respawns and continues exactly where it left off. Tools run locally on the phone. He wants a web UI, not a terminal.</td><td><a href="https://x.com/badlogicgames/status/2106354140343603217">reply</a></td></tr>
+    <tr><td class="when">Oct 3</td><td>Multiplayer on the phone, exposed via ngrok, with auth. Then: "web &gt; hmr. server/session workers &gt; kill and respawn".</td><td><a href="https://x.com/badlogicgames/status/2106383122183196709">post</a> · <a href="https://x.com/badlogicgames/status/2106387323390960086">reply</a></td></tr>
+    <tr><td class="when">Oct 3</td><td>Live edit, multiplayer, any provider, artifacts: "24h of slop, developed on the phone, on top of Pi Durable". It runs as a foreground service and mostly waits on the LLM, so it uses little battery.</td><td><a href="https://x.com/badlogicgames/status/2106452296087302173">post</a> · <a href="https://x.com/badlogicgames/status/2106485523317489902">reply</a></td></tr>
+    <tr><td class="when">Oct 3</td><td>"self modifying software is the future. i'm building pim with pim on my phone"</td><td><a href="https://x.com/badlogicgames/status/2106461615793004817">post</a></td></tr>
+    <tr><td class="when">Oct 4</td><td>Native Android app, no more Termux needed, built in 2 days on the phone. Agents can find and message other active agents.</td><td><a href="https://x.com/badlogicgames/status/2106855108680024232">post</a> · <a href="https://x.com/badlogicgames/status/2106818236264427975">post</a></td></tr>
+    <tr><td class="when">Oct 5</td><td>Day 3: cwd file browser, git viewer, inline review comments. 12k LOC, 6k of it frontend. A "design study for where pi coding agent may go next".</td><td><a href="https://x.com/badlogicgames/status/2107121062655774922">post</a> · <a href="https://x.com/badlogicgames/status/2107121673811984637">reply</a></td></tr>
+    <tr><td class="when">Oct 5</td><td>A tablet connects to the phone. The agent can move its execution environment to his Hetzner box mid-session while its brain stays on the phone.</td><td><a href="https://x.com/badlogicgames/status/2107231693568438767">post</a> · <a href="https://x.com/badlogicgames/status/2107238740230078520">post</a></td></tr>
+    <tr><td class="when">Oct 7</td><td>"i haven't opened my laptop in days. i'm fully phone agent pilled."</td><td><a href="https://x.com/badlogicgames/status/2107904950453882934">post</a></td></tr>
+    <tr><td class="when">Oct 11</td><td>Hot-reloadable networked plugins in pi-mobile: "everything is a plugin now". In-flight requests drain, then swap. Chat mode. Durable codemode, with Claude Code-style dynamic workflows "for free".</td><td><a href="https://x.com/badlogicgames/status/2109210439015862663">post</a> · <a href="https://x.com/badlogicgames/status/2109369789042876886">post</a> · <a href="https://x.com/badlogicgames/status/2109413968552820840">post</a></td></tr>
+    <tr><td class="when">Oct 12</td><td>Commits: Pi Mobile is replaced by p2; chord2 is moved from p2 into <code>packages/chord</code>; the experimental server stack is deleted.</td><td><a href="https://github.com/earendil-works/pi/commit/b0ac396">b0ac396</a> · <a href="https://github.com/earendil-works/pi/commit/0104fef">0104fef</a> · <a href="https://github.com/earendil-works/pi/commit/7472cda">7472cda</a></td></tr>
+    <tr><td class="when">Oct 16</td><td>Almost 2 weeks of all his work on it, everything on the phone except LLM calls, rewritten twice. Pixel 11, not rooted, a few hundred MB. Keeps running while locked.</td><td><a href="https://x.com/badlogicgames/status/2111189600685207559">post</a> · <a href="https://x.com/badlogicgames/status/2111214825154179397">reply</a></td></tr>
+    <tr><td class="when">Oct 17</td><td>Why not a VPS: "my phone is always with me and quite powerful".</td><td><a href="https://x.com/badlogicgames/status/2111360091047727409">reply</a></td></tr>
+  </tbody>
+</table>
+
+<h3>5 · Confidence</h3>
+<table>
+  <thead><tr><th style="width:90px">Status</th><th>Claim</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag fact">stated</span></td><td>Everything except the LLM runs on the phone; the app is built and edited from inside itself; a crash or restart resumes the session; multiplayer via ngrok; a remote environment on Hetzner; a native APK.</td></tr>
+    <tr><td><span class="tag fact">in code</span></td><td>The APK bundles a Termux ARM64 rootfs, Node and the <code>pi-env</code> Android daemon, and runs the monorepo from source (deleted <code>android-apk.yml</code>). Pi Durable's commit and replay model, durable codemode, Chord's server → <code>session:&lt;id&gt;</code> worker → browser topology, and drain-then-swap hot reload.</td></tr>
+    <tr><td><span class="tag infer">inferred</span></td><td>That p2 runs in Termux, which is suggested by the retired APK workflow plus his Oct 16 reply. That its server and workers are wired exactly as the Chord guide's example shows, with one SQLite file per session. The app code itself is private and unpublished; he says he will release it once it is "less sloppy".</td></tr>
+    <tr><td><span class="tag infer">note</span></td><td><b>tmux is a separate workflow.</b> It is his laptop-era <a href="https://github.com/badlogic/pi-subagent">pi-subagent</a> extension, where each subagent is a tmux session. "Termux" is only the Linux userland the phone app runs on.</td></tr>
+  </tbody>
+</table>
+
+</div>
+</body>
+</html>

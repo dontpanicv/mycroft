@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inside the iPhone: a self-modifying JavaScript agent</title>
+<style>
+html,body{background:transparent;color:var(--foreground,CanvasText);color-scheme:light dark}
+body{margin:0;font-family:var(--font-sans,system-ui);font-size:var(--font-size-base,14px);line-height:1.5}
+*{box-sizing:border-box}h1,h2,h3,p{margin:0 0 10px}h1{font-size:1.5em;font-weight:500}h2{font-size:1.15em;font-weight:500}h3,strong,b{font-weight:500}button,a{font:inherit}button{color:inherit}a{color:var(--foreground,LinkText);text-decoration:underline;text-underline-offset:3px}code{font-family:var(--font-mono,monospace);font-size:.92em;overflow-wrap:anywhere}small,.meta{font-size:.88em;color:var(--muted-foreground,GrayText)}small{display:block}.intro{max-width:65ch}.muted{color:var(--muted-foreground,GrayText)}
+.views{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0}.views button,.state-controls button,.step-controls button{background:transparent;border:1px solid var(--border,GrayText);border-radius:var(--radius,7px);padding:8px 12px;cursor:pointer}.views button[aria-selected=true],.state-controls button[aria-pressed=true]{background:var(--primary,CanvasText);color:var(--primary-foreground,Canvas)}button:focus-visible,a:focus-visible{outline:2px solid var(--ring,Highlight);outline-offset:3px}[hidden]{display:none!important}
+.phone-map{display:grid;gap:12px}.os-strip{border-bottom:1px solid var(--border,GrayText);padding:4px 0 12px}.os-strip button{border:0;padding:0;background:transparent;text-align:left;cursor:pointer;text-decoration:underline;text-underline-offset:3px}.system-arrow{text-align:center;font-size:.88em;color:var(--muted-foreground,GrayText);margin:-4px 0}
+.processes{display:grid;grid-template-columns:minmax(0,1.25fr) 30px minmax(0,.9fr);align-items:stretch}.boundary{border:1.5px solid var(--border,GrayText);padding:16px;min-width:0}.boundary-label{display:block;font-size:.86em;margin-bottom:12px;color:var(--muted-foreground,GrayText)}.boundary-label strong{color:var(--foreground,CanvasText)}.process-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}.process-link span{font-size:1.6em}.process-link small{writing-mode:vertical-rl}.node{width:100%;background:transparent;color:inherit;border:0;text-align:left;padding:7px 0;cursor:pointer}.node strong{display:block}.node small{margin-top:4px}.node[aria-pressed=true]{color:var(--foreground,CanvasText);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:4px}.node[aria-pressed=true] small{text-decoration:none}.call-arrow{font-size:.84em;color:var(--muted-foreground,GrayText);text-align:center;margin:7px 0}.js-realm{border:1px dashed var(--border,GrayText);padding:10px 12px;background:color-mix(in srgb,var(--chart-1,Highlight) 7%,transparent)}.native-ui{border-top:1px solid var(--border,GrayText);margin-top:12px;padding-top:8px}.web-content{margin:18px 0 12px;border-top:1px dashed var(--border,GrayText);border-bottom:1px dashed var(--border,GrayText);padding:10px 0}.bridge-line{font-size:.88em;margin-top:14px}.storage{border-top:1px solid var(--border,GrayText);padding-top:10px}.file-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.bundle{border-top:1px dotted var(--border,GrayText);padding-top:8px;margin-top:8px}.legend{display:flex;gap:8px 20px;flex-wrap:wrap;font-size:.85em;color:var(--muted-foreground,GrayText)}.legend span{display:flex;align-items:center;gap:6px}.line{width:22px;border-top:1.5px solid currentColor}.line.dashed{border-top-style:dashed}.selection{border-top:1px solid var(--border,GrayText);padding-top:14px;margin-top:16px}.selection p{margin-bottom:8px}.selection .analogy{color:var(--muted-foreground,GrayText)}.selection h2{margin-bottom:6px}.selection a{font-size:.88em}.selection:focus{outline:none}
+.matrix{width:100%;border-collapse:collapse;text-align:left}.matrix th,.matrix td{padding:12px 10px 12px 0;vertical-align:top;border-bottom:1px solid var(--border,GrayText);font-weight:400}.matrix th{color:var(--muted-foreground,GrayText);font-size:.88em}.matrix td:first-child{width:24%;font-weight:500}.boundary-key{padding:14px 0}.boundary-key p{margin-bottom:10px}.footnote{margin-top:12px;font-size:.88em;color:var(--muted-foreground,GrayText)}
+.step-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}.step-controls button:disabled{opacity:.4;cursor:default}.step-count{font-variant-numeric:tabular-nums;min-width:82px}.reload-visual{display:grid;grid-template-columns:1fr 1fr;gap:16px}.reload-process{grid-column:1/-1;border:1.5px solid var(--border,GrayText);padding:16px}.reload-runtime{border:1px dashed var(--border,GrayText);padding:12px;margin-top:12px}.durable{border-top:1px solid var(--border,GrayText);padding-top:12px;min-width:0}.state-code{white-space:pre-wrap;margin:10px 0;font-family:var(--font-mono,monospace);font-size:.92em}.step-explanation{padding-top:16px}.recovery{border-top:1px solid var(--border,GrayText);padding-top:12px;margin-top:14px}
+.state-controls{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}.life-view{border-top:1px solid var(--border,GrayText);border-bottom:1px solid var(--border,GrayText);padding:14px 0;margin:12px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}.life-view strong{display:block}.life-view .status{display:block;margin-top:6px}.life-note{min-height:75px}.entrypoints{margin-top:18px}.entry{border-left:2px solid var(--border,GrayText);padding:0 0 0 14px;margin:14px 0}.entry code{display:block;margin-top:6px}.evidence{margin-top:18px;border-top:1px solid var(--border,GrayText);padding-top:12px}.sources{margin-top:18px;border-top:1px solid var(--border,GrayText);padding-top:10px}.sources summary{cursor:pointer}.sources p{margin-top:10px}.sources a{margin-right:12px;display:inline-block;font-size:.88em}
+.boundary,.reload-process{border-color:color-mix(in srgb,var(--foreground,CanvasText) 35%,transparent)}.js-realm,.reload-runtime{border-color:color-mix(in srgb,var(--foreground,CanvasText) 35%,transparent)}.node[aria-pressed=true]{text-decoration:none}.node[aria-pressed=true] strong{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:4px}
+@media(max-width:520px){.processes{grid-template-columns:1fr}.process-link{flex-direction:row;margin:8px 0}.process-link small{writing-mode:horizontal-tb}.process-link span{transform:rotate(90deg)}.file-grid,.reload-visual{grid-template-columns:1fr}.reload-process{grid-column:auto}.life-view{grid-template-columns:1fr;gap:12px}.life-view>div{display:flex;justify-content:space-between;gap:10px}.life-view .status{margin:0}.matrix thead{display:none}.matrix,.matrix tbody,.matrix tr,.matrix td{display:block}.matrix tr{border-bottom:1px solid var(--border,GrayText);padding:8px 0}.matrix td,.matrix td:first-child{width:100%;border:0;padding:4px 0}.matrix td[data-label]:before{content:attr(data-label) ": ";color:var(--muted-foreground,GrayText)}.life-note{min-height:0}.boundary{padding:14px}.views button{flex:1 1 42%}}
+@media(pointer:coarse){button,summary{min-height:44px}}
+</style>
+</head>
+<body>
+<main id="phone-architecture">
+<h1>Inside your iPhone: a native host and a JavaScript agent</h1>
+<p class="intro">Think of a <strong>native supervisor hosting an editable agent</strong>, with an optional web frontend. iOS controls when that supervisor can execute.</p>
+<p class="meta">Proposed architecture based on our spike. Native host + agent + files were tested; the HTML/CSS frontend is an optional addition.</p>
+<nav class="views" role="tablist" aria-label="Architecture views">
+<button id="tab-map" role="tab" aria-selected="true" aria-controls="panel-map" data-view="map">Inside the phone</button>
+<button id="tab-boundaries" role="tab" aria-selected="false" aria-controls="panel-boundaries" data-view="boundaries">Runtime boundaries</button>
+<button id="tab-reload" role="tab" aria-selected="false" aria-controls="panel-reload" data-view="reload">Local self-reload</button>
+<button id="tab-background" role="tab" aria-selected="false" aria-controls="panel-background" data-view="background">Background &amp; death</button>
+</nav>
+
+<section id="panel-map" role="tabpanel" aria-labelledby="tab-map">
+<div class="phone-map" aria-label="Architecture inside the iPhone">
+<div class="os-strip"><button data-node="ios"><strong>iOS system services</strong> · sandbox, execution allowance, networking, Keychain</button><small>Outside your app process. Permission and CPU time are separate concerns.</small></div>
+<div class="system-arrow">↓ execution callbacks &amp; permitted native APIs ↑ requests</div>
+<div class="processes">
+ <section class="boundary" aria-label="Your app process">
+  <span class="boundary-label"><strong>PROCESS A · Your app</strong><br>One native executable and address space</span>
+  <button class="node" data-node="host" aria-pressed="true"><strong>Swift host / supervisor</strong><small>Loads code · owns tools · saves state · handles iOS callbacks</small></button>
+  <div class="call-arrow">↓ evaluateScript() &nbsp; ↑ exposed native functions</div>
+  <div class="js-realm">
+   <button class="node" data-node="agent" aria-pressed="false"><strong>JavaScriptCore → JSContext</strong><small>agent.js · agent memory · agent loop<br>Separate JS state, same app process</small></button>
+  </div>
+  <button class="node native-ui" data-node="native-ui" aria-pressed="false"><strong>Screen owner: SwiftUI or WKWebView</strong><small>The spike uses SwiftUI. A WKWebView handle would also live here.</small></button>
+ </section>
+ <div class="process-link" aria-label="Interprocess messages"><span aria-hidden="true">↔</span><small>IPC messages</small></div>
+ <section class="boundary" aria-label="Optional WebKit web content process">
+  <span class="boundary-label"><strong>PROCESS B · WebKit content</strong><br>Optional HTML/CSS interface</span>
+  <button class="node web-content" data-node="web" aria-pressed="false"><strong>Browser runtime</strong><small>HTML → DOM<br>CSS → layout &amp; style<br>UI JavaScript → interactions</small></button>
+  <small>WebKit also uses JavaScriptCore for JS, but this is a separate instance and heap from the agent's.</small>
+  <p class="bridge-line">UI command → message → Swift → agent<br>Agent event → Swift → message → UI</p>
+  <small>WebKit also manages supporting processes, such as networking; omitted here.</small>
+ </section>
+</div>
+<div class="storage">
+ <span class="boundary-label"><strong>APP DATA CONTAINER · Durable files</strong><br>Native host reads/writes; JS receives only the access you expose.</span>
+ <div class="file-grid">
+  <button class="node" data-node="source" aria-pressed="false"><strong>agent.js</strong><small>Editable executable source<br>Optional: editable UI HTML/CSS/JS</small></button>
+  <button class="node" data-node="state" aria-pressed="false"><strong>checkpoint.json / database</strong><small>Serialized agent state<br>Survives context and process replacement</small></button>
+ </div>
+ <button class="node bundle" data-node="bundle" aria-pressed="false"><strong>INSTALLED APP BUNDLE · Signed Swift host + initial assets</strong><small>The self-edit loop changes sandbox files loaded by the host. It does not replace the signed native executable.</small></button>
+</div>
+<div class="legend"><span><i class="line" aria-hidden="true"></i> OS process boundary</span><span><i class="line dashed" aria-hidden="true"></i> JS environment boundary inside a process</span></div>
+</div>
+<aside class="selection" aria-live="polite" aria-label="Selected architecture component">
+<h2 id="node-title"></h2><p id="node-description"></p><p class="analogy" id="node-analogy"></p><a id="node-source" target="_blank" rel="noreferrer"></a>
+</aside>
+</section>
+
+<section id="panel-boundaries" role="tabpanel" aria-labelledby="tab-boundaries" hidden>
+<h2>“Runtime” is not the same as “process”</h2>
+<table class="matrix">
+<thead><tr><th>Layer</th><th>What it isolates</th><th>What it can reach</th></tr></thead>
+<tbody>
+<tr><td>Swift / native host</td><td data-label="Boundary">Your iOS app process: native memory and threads. Swift runtime and iOS frameworks live here.</td><td data-label="Access">App files and permitted native services. Entitlements and privacy permissions still apply.</td></tr>
+<tr><td>JSContext</td><td data-label="Boundary">A JS global environment: variables, functions, objects. Replacing it resets that environment.</td><td data-label="Access">JavaScript language features + native functions explicitly provided by the host.</td></tr>
+<tr><td>JSVirtualMachine</td><td data-label="Boundary">JavaScriptCore execution resources. Contexts may share one VM; our <code>JSContext()</code> creates an independent VM.</td><td data-label="Access">JSValue sharing only within one VM. Still inside the native app's address space.</td></tr>
+<tr><td>WKWebView content</td><td data-label="Boundary">Separate WebKit content process and JS environment. This is where HTML and CSS execute/render.</td><td data-label="Access">Browser APIs and the native message bridge you expose. No shared agent globals or direct Swift pointers.</td></tr>
+<tr><td>iOS sandbox</td><td data-label="Boundary">OS-enforced restrictions around app resources and system access. A process boundary separates memory; a sandbox restricts authority.</td><td data-label="Access">The app's container and allowed system interfaces. A JS reload gains no new OS permission.</td></tr>
+</tbody>
+</table>
+<div class="boundary-key">
+<p><strong>Same process means shared fate.</strong> A native crash can take the host and embedded agent down together. A JavaScript infinite loop can block the thread evaluating it. A JSContext is not an OS process or a hard CPU/memory quota.</p>
+<p><strong>Thread ≠ background permission.</strong> A thread or Swift actor organizes work within the process. The spike runs its small JS steps on <code>@MainActor</code>; a real host should keep expensive synchronous JS away from UI work. A worker thread still stops when iOS suspends the app.</p>
+<p><strong>Node.js is absent.</strong> Plain JavaScriptCore has no built-in Node <code>fs</code>, <code>child_process</code>, npm runtime, or browser DOM. Fetch, timers, module loading, and storage need host APIs or compatible adapters. TypeScript must become JavaScript before this host evaluates it.</p>
+<p><strong>Extensions are optional separate targets/processes.</strong> They have their own lifecycle and permissions. Our intent explicitly executes in the main app; adding an extension is not a persistent agent daemon.</p>
+</div>
+<p class="footnote">Backend analogy: native process = service host; JSContext = embedded scripting environment; WebKit = another process reached through messages; app container = durable storage. “VM” here does not mean a Linux virtual machine.</p>
+</section>
+
+<section id="panel-reload" role="tabpanel" aria-labelledby="tab-reload" hidden>
+<h2>Replace the agent runtime on the phone</h2>
+<div class="step-controls"><button id="previous-step" aria-label="Previous reload step">← Previous</button><span class="step-count" id="step-count"></span><button id="next-step" aria-label="Next reload step">Next →</button></div>
+<div class="reload-visual">
+ <div class="reload-process"><span class="boundary-label"><strong>SAME NATIVE APP PROCESS THROUGHOUT</strong><br>Swift supervisor stays alive; installed native executable stays installed.</span>
+  <div class="reload-runtime"><strong id="runtime-version"></strong><pre class="state-code" id="runtime-state"></pre></div>
+ </div>
+ <div class="durable"><small>Durable source file</small><strong id="file-version"></strong><pre class="state-code" id="file-code"></pre></div>
+ <div class="durable"><small>Durable checkpoint</small><pre class="state-code" id="checkpoint-state"></pre></div>
+</div>
+<div class="step-explanation" aria-live="polite"><h2 id="step-title"></h2><p id="step-description"></p></div>
+<p class="footnote">Illustrates the tested generation-1 → generation-2 handover. Writing a file does not change functions already loaded into memory. The host must load the new source.</p>
+<div class="recovery"><strong>If iOS terminates the entire app:</strong> memory is lost → a later permitted launch starts a new native process → the host loads source + checkpoint. The agent cannot guarantee its own relaunch.</div>
+<p class="footnote">Persist data and explicit continuation state. An arbitrary call stack, pending promises, timers, native handles, and in-flight requests do not survive a JSON checkpoint. Production needs coordinated version activation/rollback; the spike writes source and state separately.</p>
+</section>
+
+<section id="panel-background" role="tabpanel" aria-labelledby="tab-background" hidden>
+<h2>iOS decides whether the host gets CPU time</h2>
+<div class="state-controls" aria-label="Choose app lifecycle state">
+ <button data-life="foreground" aria-pressed="true">Foreground</button>
+ <button data-life="granted" aria-pressed="false">Background, allowed</button>
+ <button data-life="suspended" aria-pressed="false">Suspended</button>
+ <button data-life="dead" aria-pressed="false">Terminated</button>
+</div>
+<div class="life-view">
+ <div><strong>Native host</strong><span class="status" id="host-status"></span></div>
+ <div><strong>Agent JavaScript</strong><span class="status" id="agent-status"></span></div>
+ <div><strong>Source + checkpoints</strong><span class="status" id="disk-status"></span></div>
+</div>
+<p class="life-note" id="life-description" aria-live="polite"></p>
+<div class="entrypoints"><h2>Two tested entry points, one agent host</h2>
+ <div class="entry"><strong>Continued processing</strong><code>User starts job → BGContinuedProcessingTask callback → Swift Runner → JavaScriptCore</code><small>System-granted time for a user-started job to continue after backgrounding. Reports progress; handles expiration/cancellation.</small></div>
+ <div class="entry"><strong>LongRunningIntent</strong><code>App Intent → performBackgroundTask { Runner → JavaScriptCore }</code><small>Extended execution for the intent. In this spike, the intent targets the main app process.</small></div>
+</div>
+<p><strong>These APIs grant execution time; they do not create another JavaScript runtime.</strong> Neither turns the app into an unrestricted system service. An HTML screen is not required for the native host to run its agent.</p>
+<div class="evidence"><strong>Observed on your iPhone</strong><p>Both paths completed 600 steps: 615.9 s and 621.7 s, including 589 background ticks each. Local reload worked before backgrounding. Reloading while already backgrounded remains unverified because the extra test could not launch.</p><small>The no-progress intent run was cancelled at 58.2 s with reason “unknown.” These observations establish finite execution, not 24/7 availability.</small></div>
+<p class="footnote">Suspension differs from screen lock. Locked-file access also depends on the file/Keychain data-protection class. Some OS-owned operations can continue while an app is suspended; that does not keep an arbitrary JS loop running.</p>
+</section>
+
+<details class="sources"><summary>Apple documentation and evidence</summary><p>
+<a href="https://developer.apple.com/documentation/javascriptcore/jscontext" target="_blank" rel="noreferrer">JSContext</a>
+<a href="https://developer.apple.com/documentation/javascriptcore/jsvirtualmachine" target="_blank" rel="noreferrer">JSVirtualMachine</a>
+<a href="https://developer.apple.com/videos/play/wwdc2020/10188/" target="_blank" rel="noreferrer">WebKit process isolation</a>
+<a href="https://docs.webkit.org/Deep%20Dive/JSC/JavaScriptCore.html" target="_blank" rel="noreferrer">WebKit's JavaScript engine</a>
+<a href="https://support.apple.com/guide/security/security-of-runtime-process-sec15bfe098e/web" target="_blank" rel="noreferrer">iOS sandbox and entitlements</a>
+<a href="https://developer.apple.com/documentation/backgroundtasks/performing-long-running-tasks-on-ios-and-ipados" target="_blank" rel="noreferrer">Continued processing</a>
+<a href="https://developer.apple.com/documentation/appintents/longrunningintent" target="_blank" rel="noreferrer">LongRunningIntent</a>
+</p><p class="meta">Our spike: JavaScriptWork.swift, Runner.swift, RunProbeIntent.swift; raw physical-device journals and validation in ios-background-spike/results. The web UI and a richer agent tool bridge are proposed additions. A remote model API can supply inference over HTTPS; the agent code, tools, self-edit, and runtime replacement remain on the phone.</p></details>
+</main>
+<script>
+(() => {
+ const root = document.getElementById('phone-architecture');
+ const nodes = {
+  host: ['Swift host = your service supervisor', 'Owns the embedded engine, exposes native tools, persists checkpoints, and receives background-task callbacks. The bridge is the authority boundary: JS can invoke only what this host exposes. Keep that surface narrow.', 'Backend analogy: a service process hosting a plugin, with a small explicit tool API.', 'JavaScriptCore native integration', 'https://developer.apple.com/documentation/JavaScriptcore'],
+  agent: ['Agent runtime = embedded JavaScriptCore', 'Runs ordinary JavaScript without a page, HTML, or CSS. Our JSContext() creates an independent JavaScript VM inside the app process. JS state is separate from Swift objects, but this is not OS process isolation. Native functions readSelf() and writeSelf() let the tested JS edit its own source.', 'Backend analogy: embedding a scripting engine in a server, rather than starting a Node child process.', 'Apple: JSContext and native integration', 'https://developer.apple.com/documentation/javascriptcore/jscontext'],
+  'native-ui': ['The screen is separate from the agent logic', 'Our tested interface is SwiftUI, rendered through native UI frameworks. If you prefer HTML/CSS, put a WKWebView in this native view hierarchy. The WKWebView API object is in the app; WebKit executes its page content in another process.', 'Backend analogy: a frontend attached to a service. Closing or reloading the frontend need not replace the agent context.', 'Apple: WKWebView process model', 'https://developer.apple.com/videos/play/wwdc2020/10188/'],
+  web: ['Web UI = another JavaScript environment', 'HTML builds the DOM; CSS controls layout/style; browser JavaScript handles interactions. Page JS cannot reach the agent’s variables directly. It sends messages through WKScriptMessageHandler to Swift; Swift calls the agent and sends updates back. A WKContentWorld separates JS globals within web content, not a new OS process.', 'Backend analogy: frontend ↔ RPC ↔ backend. Here RPC is local IPC, with no HTTP server required.', 'Apple: WebKit isolation and messages', 'https://developer.apple.com/videos/play/wwdc2020/10188/'],
+  source: ['Source code can live in writable app data', 'The installed bundle provides initial code. The host copies or writes editable agent.js into its data container, then reads and evaluates that file. The agent edits it through a native bridge. Optional UI files can also be stored here and reloaded by the host; that frontend path was not tested.', 'Backend analogy: an immutable service binary loads a versioned, editable plugin from its writable volume.', 'Apple: evaluate JavaScript inside an app', 'https://developer.apple.com/documentation/JavaScriptcore'],
+  state: ['Persist state, not the whole live runtime', 'The spike saves JSON after each step. A fresh JSContext loads that data before continuing. Only serialized state survives: not arbitrary promises, closures, native handles, or the old call stack. More complex agents need explicit pending-action records and recovery rules.', 'Backend analogy: a job checkpoint or event log, not a full VM snapshot. Disk state and in-memory state are different things.', 'Apple: JS execution environments', 'https://developer.apple.com/documentation/javascriptcore/jscontext'],
+  bundle: ['The signed native host stays fixed', 'Self-modification here means rewriting JavaScript files in the writable app container and evaluating them with the existing host. It does not replace the installed Swift executable, change signed entitlements, or add new native capabilities. The host defines which operations the editable agent can request.', 'Backend analogy: change a loaded script while leaving the supervisor binary and its OS permissions intact.', 'Apple: runtime security and signed entitlements', 'https://support.apple.com/guide/security/security-of-runtime-process-sec15bfe098e/web'],
+  ios: ['The OS is above every app runtime', 'The sandbox limits resources; entitlements and privacy permissions govern protected capabilities. Separately, lifecycle rules determine whether the app can execute. A JS reload cannot grant background time. Requests for continued work go through native APIs, and iOS may cancel or suspend execution.', 'Backend analogy: OS permissions plus a scheduler. Unlike a server daemon, your app does not own an unlimited CPU lease.', 'Apple: continued background processing', 'https://developer.apple.com/documentation/backgroundtasks/performing-long-running-tasks-on-ios-and-ipados']
+ };
+ const steps = [
+  {title:'1 · Run generation 1',description:'The host has loaded agent.js into JSContext A. Variables live in the JavaScript heap; the latest completed step is on disk.',runtime:'JSContext A · generation 1',memory:'steps = 4\nscore = 4',file:1,checkpoint:'{ "steps": 4, "score": 4 }'},
+  {title:'2 · JavaScript writes its replacement',description:'At step 5, agent code calls the native writeSelf() bridge. The file now contains generation 2. JSContext A still executes the already-loaded generation 1 until the host replaces it.',runtime:'JSContext A · generation 1',memory:'steps = 5\nscore = 5\nreload requested',file:2,checkpoint:'{ "steps": 4, "score": 4 }'},
+  {title:'3 · The host commits the checkpoint',description:'Swift serializes the state after this step. The counter and score are durable. The spike writes source and checkpoint separately; a production version should coordinate activation so a crash cannot select a mismatched pair.',runtime:'JSContext A · generation 1',memory:'steps = 5\nscore = 5',file:2,checkpoint:'{ "steps": 5, "score": 5 }'},
+  {title:'4 · Replace only the JavaScript environment',description:'The host releases its old context and creates JSContext B. It installs the native bridge and evaluates the new source with the saved state. Swift and the app process remain alive. Old context references must be released to let the old environment be reclaimed.',runtime:'JSContext B · generation 2',memory:'restored steps = 5\nrestored score = 5',file:2,checkpoint:'{ "steps": 5, "score": 5 }'},
+  {title:'5 · Continue with changed behavior',description:'The next step becomes 6, not 1. Generation 2 adds 10 instead of 1, so the score becomes 15. Our spike asserts this behavior to prove it ran changed source with preserved state.',runtime:'JSContext B · generation 2',memory:'steps = 6\nscore = 15',file:2,checkpoint:'{ "steps": 6, "score": 15 }'}
+ ];
+ const lives = {
+  foreground: ['Running','Running when called','Remain on disk','The app is visible. Native UI work and agent execution use the same app process. Concurrency still needs deliberate scheduling; a long synchronous JS evaluation can block the thread calling it.'],
+  granted: ['Running with allowance','Can keep stepping','Remain on disk','The user sends the app to the background, and an admitted task grants time for its work. Swift keeps driving the JS runtime, updating progress and handling cancellation. The code has not moved into an iOS daemon.'],
+  suspended: ['No CPU execution','Paused with the process','Remain on disk','The process can retain memory but executes no app code. A JavaScript timer, worker thread, or promise cannot bypass this. When iOS later resumes the app, in-memory work may continue; resumption is controlled by iOS.'],
+  dead: ['Process memory gone','JS heap gone','Remain on disk','The next permitted app launch creates a new host and runtime. They read the source and checkpoint to recover. Files do not launch the app, and the agent cannot promise to wake itself on demand.']
+ };
+ let step = 0;
+ function selectNode(key) {
+  const item = nodes[key];
+  root.querySelectorAll('[data-node]').forEach(el => el.setAttribute('aria-pressed',String(el.dataset.node===key)));
+  root.querySelector('#node-title').textContent=item[0];root.querySelector('#node-description').textContent=item[1];root.querySelector('#node-analogy').textContent=item[2];
+  const link=root.querySelector('#node-source');link.textContent=item[3];link.href=item[4];
+ }
+ function showView(key) {
+  root.querySelectorAll('[data-view]').forEach(el => el.setAttribute('aria-selected',String(el.dataset.view===key)));
+  root.querySelectorAll('[role=tabpanel]').forEach(el => el.hidden=el.id!=='panel-'+key);
+ }
+ function showStep() {
+  const item=steps[step];
+  root.querySelector('#step-count').textContent=(step+1)+' / '+steps.length;
+  root.querySelector('#runtime-version').textContent=item.runtime;root.querySelector('#runtime-state').textContent=item.memory;
+  root.querySelector('#file-version').textContent='agent.js · generation '+item.file;
+  root.querySelector('#file-code').textContent='const generation = '+item.file+';';root.querySelector('#checkpoint-state').textContent=item.checkpoint;
+  root.querySelector('#step-title').textContent=item.title;root.querySelector('#step-description').textContent=item.description;
+  root.querySelector('#previous-step').disabled=step===0;root.querySelector('#next-step').disabled=step===steps.length-1;
+ }
+ function showLife(key) {
+  root.querySelectorAll('[data-life]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.life===key)));
+  const item=lives[key];['host-status','agent-status','disk-status','life-description'].forEach((id,i)=>root.querySelector('#'+id).textContent=item[i]);
+ }
+ root.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view)));
+ root.querySelector('.views').addEventListener('keydown',event=>{
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+  const tabs=[...root.querySelectorAll('[data-view]')];
+  const index=tabs.indexOf(event.target);if(index<0)return;
+  const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+  event.preventDefault();tabs[next].focus();showView(tabs[next].dataset.view);
+ });
+ root.querySelectorAll('[data-node]').forEach(el=>el.addEventListener('click',()=>selectNode(el.dataset.node)));
+ root.querySelectorAll('[data-life]').forEach(el=>el.addEventListener('click',()=>showLife(el.dataset.life)));
+ root.querySelector('#previous-step').addEventListener('click',()=>{step=Math.max(0,step-1);showStep();});
+ root.querySelector('#next-step').addEventListener('click',()=>{step=Math.min(steps.length-1,step+1);showStep();});
+ selectNode('host');showStep();showLife('foreground');
+})();
+</script>
+</body>
+</html>

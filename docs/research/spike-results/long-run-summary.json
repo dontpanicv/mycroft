@@ -1,0 +1,252 @@
+{
+  "continued_submissions": [
+    {
+      "strategy": "fail",
+      "uptime": 55958.77141954167,
+      "pid": 18652,
+      "error": "BGTaskScheduler is not available on this platform.",
+      "domain": "BGTaskSchedulerErrorDomain",
+      "code": 1,
+      "response_ms": 5.45
+    },
+    {
+      "strategy": "queue",
+      "uptime": 56021.121366708336,
+      "pid": 18859,
+      "error": "BGTaskScheduler is not available on this platform.",
+      "domain": "BGTaskSchedulerErrorDomain",
+      "code": 1,
+      "response_ms": 5.81
+    }
+  ],
+  "intent_events": [
+    {
+      "appState": 0,
+      "event": "intent_entered",
+      "pid": 19057,
+      "protectedDataAvailable": true,
+      "reportsProgress": true,
+      "seconds": 120,
+      "uptime": 56107.38665541667,
+      "wall": 1792231067.134303
+    },
+    {
+      "appState": 0,
+      "code": 2004,
+      "description": "LNPerformActionErrorCodeUnsupportedValueType",
+      "domain": "LNContextErrorDomain",
+      "event": "intent_error",
+      "pid": 19057,
+      "protectedDataAvailable": true,
+      "uptime": 56107.39433150001,
+      "userInfo": "[\"NSLocalizedDescription\": \"LNPerformActionErrorCodeUnsupportedValueType\"]",
+      "wall": 1792231067.1419802
+    },
+    {
+      "appState": 2,
+      "event": "intent_entered",
+      "pid": 20331,
+      "protectedDataAvailable": true,
+      "reportsProgress": true,
+      "seconds": 120,
+      "uptime": 56360.77235704167,
+      "wall": 1792231320.520987
+    },
+    {
+      "appState": 2,
+      "event": "intent_completed",
+      "pid": 20331,
+      "protectedDataAvailable": true,
+      "uptime": 56487.45956633334,
+      "wall": 1792231447.208688
+    },
+    {
+      "appState": 2,
+      "event": "intent_entered",
+      "pid": 21604,
+      "protectedDataAvailable": true,
+      "reportsProgress": false,
+      "seconds": 120,
+      "uptime": 56629.124037125,
+      "wall": 1792231588.873707
+    },
+    {
+      "appState": 2,
+      "event": "intent_cancelled",
+      "pid": 21604,
+      "protectedDataAvailable": true,
+      "reason": "IntentCancellationReason.timeout",
+      "uptime": 56659.11155450001,
+      "wall": 1792231618.861342
+    },
+    {
+      "appState": 2,
+      "code": 1,
+      "description": "The operation couldn\u2019t be completed. (Swift.CancellationError error 1.)",
+      "domain": "Swift.CancellationError",
+      "event": "intent_error",
+      "pid": 21604,
+      "protectedDataAvailable": true,
+      "uptime": 56659.118256500005,
+      "userInfo": "[:]",
+      "wall": 1792231618.868044
+    },
+    {
+      "appState": 2,
+      "event": "intent_entered",
+      "pid": 24607,
+      "protectedDataAvailable": true,
+      "reportsProgress": true,
+      "seconds": 600,
+      "uptime": 56950.83454233334,
+      "wall": 1792231910.586025
+    },
+    {
+      "appState": 2,
+      "event": "intent_completed",
+      "pid": 24607,
+      "protectedDataAvailable": true,
+      "uptime": 57584.45984645834,
+      "wall": 1792232544.218782
+    }
+  ],
+  "work_runs": [
+    {
+      "mode": "unprotected_control",
+      "pid": 19013,
+      "requested_steps": 12,
+      "reports_progress": false,
+      "resume": false,
+      "start": 56083.371161625,
+      "reloads": [
+        {
+          "appState": 0,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 19013,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56088.696210125,
+          "wall": 1792231048.44379
+        }
+      ],
+      "completed": true,
+      "observed_ticks": 12,
+      "background_ticks": 0,
+      "last_step": 12,
+      "last_generation": 2,
+      "observed_seconds": 12.561,
+      "max_tick_gap_seconds": 1.07
+    },
+    {
+      "mode": "long_running_intent",
+      "pid": 20331,
+      "requested_steps": 120,
+      "reports_progress": true,
+      "resume": false,
+      "start": 56360.77784279167,
+      "reloads": [
+        {
+          "appState": 2,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 20331,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56365.97948679167,
+          "wall": 1792231325.728138
+        }
+      ],
+      "completed": true,
+      "observed_ticks": 120,
+      "background_ticks": 120,
+      "last_step": 120,
+      "last_generation": 2,
+      "observed_seconds": 126.679,
+      "max_tick_gap_seconds": 1.072
+    },
+    {
+      "mode": "long_running_intent",
+      "pid": 21604,
+      "requested_steps": 120,
+      "reports_progress": false,
+      "resume": false,
+      "start": 56629.129405458334,
+      "reloads": [
+        {
+          "appState": 2,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 21604,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56634.40328116667,
+          "wall": 1792231594.1529741
+        }
+      ],
+      "completed": false,
+      "cancel_reason": "IntentCancellationReason.timeout",
+      "cancel_after_seconds": 29.982,
+      "observed_ticks": 28,
+      "background_ticks": 28,
+      "last_step": 28,
+      "last_generation": 2,
+      "observed_seconds": 29.498,
+      "max_tick_gap_seconds": 1.07
+    },
+    {
+      "mode": "plain_intent_control",
+      "pid": 23154,
+      "requested_steps": 120,
+      "reports_progress": false,
+      "resume": false,
+      "start": 56789.901449000005,
+      "reloads": [
+        {
+          "appState": 2,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 23154,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56795.20891554167,
+          "wall": 1792231754.959231
+        }
+      ],
+      "completed": false,
+      "observed_ticks": 28,
+      "background_ticks": 28,
+      "last_step": 28,
+      "last_generation": 2,
+      "observed_seconds": 29.623,
+      "max_tick_gap_seconds": 1.069
+    },
+    {
+      "mode": "long_running_intent",
+      "pid": 24607,
+      "requested_steps": 600,
+      "reports_progress": true,
+      "resume": false,
+      "start": 56950.839355208336,
+      "reloads": [
+        {
+          "appState": 2,
+          "event": "reload_verified",
+          "generation": 2,
+          "pid": 24607,
+          "protectedDataAvailable": true,
+          "steps": 5,
+          "uptime": 56956.14575900001,
+          "wall": 1792231915.8985171
+        }
+      ],
+      "completed": true,
+      "observed_ticks": 600,
+      "background_ticks": 600,
+      "last_step": 600,
+      "last_generation": 2,
+      "observed_seconds": 633.616,
+      "max_tick_gap_seconds": 1.072
+    }
+  ]
+}

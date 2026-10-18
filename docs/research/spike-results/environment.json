@@ -1,0 +1,20 @@
+{
+  "xcode": "Xcode 27.1\nBuild version 27A9275",
+  "sdk": "27.1",
+  "simulator_id": "SIMULATOR-UDID-REDACTED",
+  "runtime": "iOS 27.0 (24A5408d)",
+  "device_type": "iPhone 17 Pro",
+  "configuration": "Release",
+  "background_modes": [
+    "processing"
+  ],
+  "bundle_id": "dev.local.agent.BackgroundSpike",
+  "date": "2026-10-17",
+  "sources": {
+    "App/JavaScriptWork.swift": "21f98d4804c2e1690aa533d334cb1d1edc3669d532174afa7c18ff619abe0085",
+    "App/Journal.swift": "2ddee379b4963cc39ed44f9d87ff745ec32a900b75639ef18083e35054279680",
+    "App/RunProbeIntent.swift": "03fff80a69dfafd63d8c5de2945ffb91daa766a989cd1d435021b58bb16eb220",
+    "App/Runner.swift": "afcb48fc73e7abea01ba962f7218b59a883ee3862175f52f3f8cf2f973f81f51",
+    "App/SpikeApp.swift": "e8aa9622156f0aa8d8a348618559e3d9b1c529177ef04e50028a7961b7b006a6"
+  }
+}

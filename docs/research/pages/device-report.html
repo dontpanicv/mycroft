@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physical iPhone background execution measurements</title>
+<style>
+:root { color-scheme: light dark; --foreground: light-dark(#1c2028,#edf0f6); --muted-foreground: light-dark(#505968,#a8b0bd); --border: light-dark(#d7dde5,#3b4350); --chart-1: light-dark(#2878b5,#68b4ed); --warning: light-dark(#a36500,#edb75c); --font-sans: system-ui,sans-serif; --font-mono: ui-monospace,monospace; }
+html,body { background: transparent; }
+body { margin:0; color:var(--foreground); font:15px/1.5 var(--font-sans); }
+main { width:100%; }
+h1 { font-size:23px; line-height:1.2; font-weight:650; margin:0 0 8px; }
+h2 { font-size:17px; font-weight:650; margin:25px 0 12px; }
+p { margin:8px 0; }
+.muted,small { color:var(--muted-foreground); }
+.lane { margin:18px 0 22px; }
+.label { display:flex; gap:8px 20px; justify-content:space-between; align-items:baseline; flex-wrap:wrap; }
+.label strong { font-weight:650; }
+.value { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.track { height:14px; margin:8px 0 5px; background:color-mix(in srgb,var(--foreground) 8%,transparent); }
+.bar { height:100%; background:var(--chart-1); }
+.bar.cancel { background:var(--chart-1); opacity:.55; }
+.axis { display:flex; justify-content:space-between; font-size:12px; color:var(--muted-foreground); }
+small { display:block; font-size:13px; }
+details { border-top:1px solid var(--border); margin-top:20px; padding-top:12px; }
+summary { font-weight:600; padding:5px 0; cursor:pointer; }
+dl { display:grid; grid-template-columns:150px 1fr; gap:10px 16px; margin:12px 0; }
+dt { font-weight:600; }
+dd { margin:0; }
+code { font-family:var(--font-mono); font-size:.9em; overflow-wrap:anywhere; }
+@media(max-width:450px) { h1 {font-size:21px;} dl {grid-template-columns:1fr;gap:4px;} dd {margin-bottom:10px;} }
+</style>
+</head>
+<body>
+<main id="device-results">
+<h1>Both background APIs completed a ten-minute job</h1>
+<p class="muted">Physical iPhone 17 Pro Max · iOS 27.2 · Release build · measured 17 October 2026</p>
+<h2>Observed runtime, seconds</h2>
+<div role="img" aria-label="Continued processing completed in 615.926 seconds; LongRunningIntent with progress completed in 621.658 seconds. Without progress it was cancelled after 58.187 seconds with unknown reason. These are individual observed runs, not maximum allowances.">
+<div class="lane">
+  <div class="label"><strong>Continued processing</strong><span class="value">615.9 s · completed</span></div>
+  <div class="track"><div class="bar" style="width:94.758%"></div></div>
+  <small>600 steps · 589 background ticks · background completion callback</small>
+</div>
+<div class="lane">
+  <div class="label"><strong>LongRunningIntent + progress</strong><span class="value">621.7 s · completed</span></div>
+  <div class="track"><div class="bar" style="width:95.640%"></div></div>
+  <small>600 steps · 589 background ticks · background intent completion</small>
+</div>
+<div class="lane">
+  <div class="label"><strong>LongRunningIntent without updates</strong><span class="value">58.2 s · cancelled</span></div>
+  <div class="track"><div class="bar cancel" style="width:8.952%"></div></div>
+  <small>55 steps · 44 background ticks · cancellation reason: unknown</small>
+</div>
+<div class="axis"><span>0</span><span>325</span><span>650 s</span></div>
+</div>
+<p><strong>Measured duration is a lower bound for the completed jobs.</strong> These runs establish finite background work; the maximum lifetime and continuous availability remain unmeasured. The cancellation cause in the no-progress run is unresolved.</p>
+<details open>
+<summary>Self-modification and state restoration</summary>
+<dl>
+<dt>Local rewrite</dt><dd>JavaScript edits its executable source on the phone at step 5. The native host saves state, replaces its JavaScript context, and loads generation 2.</dd>
+<dt>Behavior verified</dt><dd>The next step retains the counter and score, then adds 10 instead of 1. Both ten-minute runs reach generation 2 at step 600.</dd>
+<dt>Timing boundary</dt><dd>The verified reloads happened before Home was pressed. A focused check for the rewrite and reload while backgrounded could not start: the test-runner connection failed, and the phone became unavailable.</dd>
+<dt>Process recovery</dt><dd>A new app process restores generation 2 at step 8, then completes step 12. This recovery control ran in the foreground.</dd>
+</dl>
+</details>
+<details>
+<summary>Lock evidence and practical limits</summary>
+<dl>
+<dt>Locked phone</dt><dd>A separate intent run records 53 ticks with protected data unavailable, spanning 53.6 seconds. Its test later failed when it tried to bring the app forward while locked.</dd>
+<dt>Ten-minute runs</dt><dd>Both were backgrounded, but neither recorded protected-data unavailability. They do not establish ten minutes of locked-device operation.</dd>
+<dt>Workload</dt><dd>Deterministic JavaScript, file writes, and checkpoints, approximately one step per second. No live model, network streaming, or sustained inference.</dd>
+<dt>Not yet measured</dt><dd>24/7 runtime, autonomous relaunch, low power mode, thermal or memory pressure, battery use, and crash consistency between source and checkpoint writes.</dd>
+<dt>Shortcuts route</dt><dd>The physical Shortcuts catalog test could not find this app. In-app LongRunningIntent execution is the validated device route.</dd>
+</dl>
+</details>
+<details>
+<summary>Evidence and test interpretation</summary>
+<p>Each result comes from the persisted app journal, including process ID, app state, source generation, and monotonic timestamps. A successful UI observation alone is insufficient.</p>
+<p><code>results/device-continued-10m-summary.json</code><br><code>results/device-long-intent-10m-summary.json</code><br><code>results/device-no-progress-valid-summary.json</code><br><code>results/device-partial-events.jsonl</code></p>
+<p>Simulator scheduler rejections and the simulator's roughly 30-second timeout remain separate observations. They do not predict this phone's allowance.</p>
+</details>
+</main>
+</body>
+</html>
