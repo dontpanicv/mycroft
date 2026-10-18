@@ -66,6 +66,7 @@ final class AppModel {
             watch(harness)
             await refreshSignIn()
             RunController.shared.attach(self)
+            RunMonitor.shared.attach(self)
         } catch {
             log.error("start failed: \(error)")
             phase = .failed(String(describing: error))
@@ -150,6 +151,7 @@ final class AppModel {
             if let title { list.items[index].title = title }
         }
         RunController.shared.runStarted(thread: title ?? thread.title)
+        RunMonitor.shared.kick()
     }
 
     func stop(_ thread: ThreadMeta) async throws {
@@ -163,13 +165,37 @@ final class AppModel {
         }
     }
 
-    /// Whether any recent thread is working. The background run controller polls this.
-    func anyBusy() async -> Bool {
-        guard let harness else { return false }
+    /// A thread that is working right now, with the tool calls of its newest turns.
+    struct RunSnapshot {
+        let thread: ThreadMeta
+        let live: LiveState
+        let calls: [ToolCall]
+    }
+
+    /// The busy threads among the recent ones. The run monitor polls this.
+    func busySnapshots() async -> [RunSnapshot] {
+        guard let harness else { return [] }
+        var snapshots: [RunSnapshot] = []
         for thread in threads.prefix(12) {
-            if let state = try? await harness.conversation(thread.id)?.liveState(), state.run != nil { return true }
+            guard let conversation = try? await harness.conversation(thread.id),
+                let live = try? await conversation.liveState(), live.run != nil
+            else { continue }
+            let recent = (try? await conversation.entries(limit: 6).items) ?? []
+            let messages = recent.reversed().compactMap(\.assistantMessage) + [live.generation?.message].compactMap { $0 }
+            let calls = messages.flatMap { message in
+                message.content.compactMap { block -> ToolCall? in
+                    if case .toolCall(let call) = block { call } else { nil }
+                }
+            }
+            snapshots.append(RunSnapshot(thread: thread, live: live, calls: calls))
         }
-        return false
+        return snapshots
+    }
+
+    /// How the newest answer of a thread ended: stop, error, aborted…
+    func lastStopReason(_ thread: ConversationID) async -> StopReason? {
+        let entries = (try? await harness?.conversation(thread)?.entries(limit: 4).items) ?? []
+        return entries.first(where: { $0.kind == .assistant })?.assistantMessage?.stopReason
     }
 
     // MARK: Sign-in

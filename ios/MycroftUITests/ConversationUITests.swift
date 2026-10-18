@@ -38,6 +38,39 @@ final class ConversationUITests: XCTestCase {
         XCTAssertTrue(texts.contains("coin"), "the new tool was not called")
     }
 
+    /// A multi-step run reported in the Dynamic Island while the app is in the background.
+    func testLiveActivityInBackground() throws {
+        startThread()
+        send("""
+            Do these one at a time, each as its own tool call: self_status, then self_read SELF.md, then now, \
+            then self_read extension.js. After that, answer with one short sentence.
+            """)
+        _ = app.staticTexts["status.running"].waitForExistence(timeout: 20)
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        Thread.sleep(forTimeInterval: 2)
+        // Live Activities show in Notification Center too; pull it down from the top-left edge.
+        let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.005))
+        top.press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.6)))
+        for second in [2, 6, 10] {
+            Thread.sleep(forTimeInterval: second == 2 ? 2 : 4)
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = "activity-\(second)s"
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+        app.activate()
+        XCTAssertTrue(waitForIdle(timeout: 240))
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 2)
+        top.press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.6)))
+        Thread.sleep(forTimeInterval: 2)
+        let done = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        done.name = "island-done"
+        done.lifetime = .keepAlways
+        add(done)
+    }
+
     private func startThread() {
         let new = app.buttons["newThread"]
         XCTAssertTrue(new.waitForExistence(timeout: 30))

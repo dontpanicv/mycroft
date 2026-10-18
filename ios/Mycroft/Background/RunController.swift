@@ -63,6 +63,12 @@ final class RunController {
         progressWatcher = Task { [weak self] in await self?.drive(task) }
     }
 
+    /// Mirrors the run monitor's summary into the system's background-task banner.
+    func report(thread: String, headline: String) {
+        guard let task, task.subtitle != headline else { return }
+        task.updateTitle("Mycroft · \(thread)", subtitle: headline)
+    }
+
     /// Reports progress on every commit and finishes when all threads have been idle for a few seconds.
     private func drive(_ task: BGContinuedProcessingTask) async {
         guard let harness = app?.harness else { return finish(success: false, reason: "no harness") }
@@ -76,7 +82,8 @@ final class RunController {
         var idleChecks = 0
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(2))
-            let busy = await app?.anyBusy() ?? false
+            RunMonitor.shared.kick()
+            let busy = RunMonitor.shared.isTracking
             idleChecks = busy ? 0 : idleChecks + 1
             if busy {
                 // Keep the indicator moving through long model waits too.
