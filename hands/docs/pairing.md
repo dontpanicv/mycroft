@@ -74,12 +74,14 @@ The template is `hands/scripts/phone-install.sh`. The app fills in `@BASE@`, `@P
    - a failed download (a `404`, say) prints one warning on stderr, and hands is installed without the helper;
    - a placeholder left as is (or filled with an empty string) skips this step silently.
 5. Runs `"$TMP/hands" install --pair "$BASE" --pin "$PIN"`, plus `--desktop-zip "$TMP/MycroftHands.zip"` when step 4
-   fetched it. That copies the binary, sets up the service, installs the helper and its LaunchAgent, opens the helper
-   so macOS asks for its permissions, and pairs.
-6. Prints one line saying the machine is paired. With the helper, `install` prints a second line asking the user to
-   approve "Mycroft Hands" for Accessibility and Screen Recording, unless both are granted already.
+   fetched it. That copies the binary, sets up the service, installs the helper and its LaunchAgent, and pairs.
+6. Prints one line saying the machine is paired. On macOS, `install` then walks through the permissions Mycroft needs,
+   one at a time, on the terminal (`/dev/tty`, since stdin is the script): see hands/README.md, "Permissions on
+   macOS". Without a terminal it prints one line saying to run `hands permissions`. On Linux it prints one line only
+   when hands would stop at logout.
 
-The script must be POSIX `sh`, finish in seconds, and print nothing else unless something fails.
+The script must be POSIX `sh` and finish in seconds, apart from that walkthrough, and print nothing else unless
+something fails.
 
 ### 1.1 The desktop helper (`MycroftHands.zip`)
 
@@ -103,9 +105,9 @@ This is the contract for the iOS app; `hands` and the script above implement the
 
 `hands install --desktop-zip` then unpacks the app to `~/Applications/Mycroft Hands.app`, replacing an installed copy
 only when `CFBundleShortVersionString` differs, after checking its bundle id and code signature. It writes and loads
-the LaunchAgent `dev.mycroft.hands-desktop` (`hands-desktop serve` with `HANDS_STATE_DIR`), and runs
-`open -n -g "~/Applications/Mycroft Hands.app" --args --request-permissions --wait 600` without waiting for it. A
-failure in any of this is one warning on stderr, and pairing goes ahead without desktop control.
+the LaunchAgent `dev.mycroft.hands-desktop` (`hands-desktop serve` with `HANDS_STATE_DIR`). The permissions are asked
+for after pairing, one at a time (step 6). A failure in any of this is one warning on stderr, and pairing goes ahead
+without desktop control.
 
 ### `POST /S/pair`
 
@@ -261,7 +263,7 @@ These record how `hands` 0.2.0 reads the parts the sections above leave open. Th
   - `hands install --pair` first waits up to 10 s for the service's listener.
   - If the service could not be started (a Mac with no GUI login, or no user systemd), or with `--no-service`, it falls back to a detached listener started from `~/.local/bin/hands`. That listener runs until the machine restarts, and the service's listener takes over at the next login. In that case `install` prints one warning line on stderr.
   - On Linux, with `--pair`, a failed `systemctl --user daemon-reload` or `enable --now` is not fatal for the same reason.
-- **Output.** With `--pair`, `hands install` prints only `Paired with <phoneName>. Mycroft can use this <Mac|machine> now.` on stdout, and failures on stderr. This is the "one line" of §1 step 6: the script prints nothing of its own when it succeeds. With `--desktop-zip`, when it opened the helper to ask for its permissions, it prints one more line after it: `Approve "Mycroft Hands" for Accessibility and Screen Recording when macOS asks (or in System Settings > Privacy & Security), so Mycroft can use this Mac's apps.`
+- **Output.** With `--pair`, `hands install` prints only `Paired with <phoneName>. Mycroft can use this <Mac|machine> now.` on stdout, and failures on stderr. This is the "one line" of §1 step 6: the script prints nothing of its own when it succeeds. On macOS the permissions walkthrough follows it on the terminal.
 
 **Listener**
 - **Process.** `supervise --listen` is the listener and the supervisor in one process.

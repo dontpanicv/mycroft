@@ -2,7 +2,10 @@
 # Build the release binaries of hands into dist/ as hands-<os>-<arch>, the names the phone serves and install.sh
 # looks for, with SHA256SUMS. Publishes nothing.
 #
-#   darwin-arm64, darwin-x86_64     cargo build, on macOS (they need the macOS SDK)
+#   darwin-arm64, darwin-x86_64     cargo build, on macOS (they need the macOS SDK), signed as dev.mycroft.hands
+#                                   with an Apple Development identity (or CODESIGN_IDENTITY), so macOS keeps the
+#                                   permissions granted to hands (folders, Local Network, Full Disk Access) across
+#                                   updates. Ad hoc when there is none: those are then asked for again after each update.
 #   linux-x86_64, linux-aarch64     static musl binaries, with cargo zigbuild (or cross)
 #
 # Usage: build-release.sh [--partial]
@@ -36,6 +39,28 @@ place() { # target name
 	chmod 755 "$dist/hands-$2"
 }
 
+signed_with=""
+# sign FILE: as dev.mycroft.hands, with CODESIGN_IDENTITY or the first Apple Development identity that isn't revoked.
+sign() {
+	if [ -n "${CODESIGN_IDENTITY:-}" ] && [ "$CODESIGN_IDENTITY" != - ]; then
+		codesign --force --sign "$CODESIGN_IDENTITY" --identifier dev.mycroft.hands "$1"
+		signed_with="$CODESIGN_IDENTITY (CODESIGN_IDENTITY)"
+		return
+	fi
+	if [ "${CODESIGN_IDENTITY:-}" != - ]; then
+		for hash in $(security find-identity -v -p codesigning 2>/dev/null | awk '/"Apple Development: / { print $2 }'); do
+			codesign --force --sign "$hash" --identifier dev.mycroft.hands "$1" 2>/dev/null || continue
+			case $(spctl --assess -vv "$1" 2>&1 || true) in
+			*REVOKED*) continue ;;
+			esac
+			signed_with=$(security find-identity -v -p codesigning | awk -v id="$hash" '$2 == id { sub(/^[^"]*/, ""); print; exit }')
+			return
+		done
+	fi
+	codesign --force --sign - --identifier dev.mycroft.hands "$1"
+	signed_with="ad hoc (macOS asks for hands' permissions again after each update)"
+}
+
 if [ "$(uname -s)" = Darwin ]; then
 	for pair in aarch64-apple-darwin:darwin-arm64 x86_64-apple-darwin:darwin-x86_64; do
 		target=${pair%%:*}
@@ -43,6 +68,7 @@ if [ "$(uname -s)" = Darwin ]; then
 		if has_target "$target"; then
 			cargo build --release --locked --target "$target"
 			place "$target" "$name"
+			sign "$dist/hands-$name"
 		else
 			missing="$missing
   $name: rustup target add $target"
@@ -89,6 +115,9 @@ if ls "$dist"/hands-* >/dev/null 2>&1; then
 		printf '  %-22s %9s bytes\n' "$(basename "$file")" "$(wc -c <"$file" | tr -d ' ')"
 	done
 	echo "wrote $dist/SHA256SUMS"
+	if [ -n "$signed_with" ]; then
+		echo "macOS binaries signed: $signed_with"
+	fi
 fi
 if [ -n "$missing" ]; then
 	echo "not built:$missing"

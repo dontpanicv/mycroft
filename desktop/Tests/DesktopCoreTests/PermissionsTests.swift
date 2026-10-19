@@ -30,9 +30,9 @@ func state(_ accessibility: Bool, _ screenRecording: Bool) -> PermissionState {
 
 @Suite struct PermissionsTests {
     /// A clock that advances only when the fake sleeps.
-    func run(_ system: FakePermissions, wait: TimeInterval) -> PermissionState {
+    func run(_ system: FakePermissions, only: [Permission] = Permission.allCases, wait: TimeInterval) -> PermissionState {
         let start = Date(timeIntervalSince1970: 0)
-        return PermissionFlow.request(system, wait: wait, poll: 1, now: { start.addingTimeInterval(system.slept) })
+        return PermissionFlow.request(system, only: only, wait: wait, poll: 1, now: { start.addingTimeInterval(system.slept) })
     }
 
     @Test func grantedAlreadyAsksNothing() {
@@ -42,13 +42,30 @@ func state(_ accessibility: Bool, _ screenRecording: Bool) -> PermissionState {
         #expect(system.slept == 0)
     }
 
-    @Test func asksForBothThenOpensScreenRecordingOnceAccessibilityIsGranted() {
+    /// One prompt at a time: Screen Recording is asked for only once Accessibility is granted.
+    @Test func asksForScreenRecordingOnlyOnceAccessibilityIsGranted() {
         let system = FakePermissions([state(false, false), state(false, false), state(true, false), state(true, false), state(true, true)])
         #expect(run(system, wait: 60) == state(true, true))
         #expect(system.events == [
             "prompt accessibility", "open Privacy_Accessibility", "prompt screen recording", "open Privacy_ScreenCapture",
         ])
         #expect(system.slept == 4)
+    }
+
+    @Test func neverAsksForScreenRecordingWhileAccessibilityIsMissing() {
+        let system = FakePermissions([state(false, false)])
+        #expect(run(system, wait: 5) == state(false, false))
+        #expect(system.events == ["prompt accessibility", "open Privacy_Accessibility"])
+    }
+
+    @Test func asksForOnlyTheOneNamed() {
+        let screen = FakePermissions([state(false, false), state(false, true)])
+        #expect(run(screen, only: [.screenRecording], wait: 60) == state(false, true))
+        #expect(screen.events == ["prompt screen recording", "open Privacy_ScreenCapture"])
+        let accessibility = FakePermissions([state(false, false), state(true, false)])
+        #expect(run(accessibility, only: [.accessibility], wait: 60) == state(true, false))
+        #expect(accessibility.events == ["prompt accessibility", "open Privacy_Accessibility"])
+        #expect(Permission(rawValue: "screen-recording") == .screenRecording)
     }
 
     @Test func onlyScreenRecordingMissingOpensItsPaneAtOnce() {

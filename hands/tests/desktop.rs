@@ -332,8 +332,9 @@ fn install_dry_run_with_the_desktop_helper() {
     assert!(text.contains("would write ") && text.contains("Library/LaunchAgents/dev.mycroft.hands-desktop.plist\n"), "{text}");
     assert!(text.contains(&format!("    | \t\t<string>{}/Contents/MacOS/hands-desktop</string>\n    | \t\t<string>serve</string>", app.display())), "{text}");
     assert!(text.contains(&format!("<key>HANDS_STATE_DIR</key>\n    | \t\t<string>{}</string>", state.path.display())), "{text}");
-    assert!(text.contains("dev.mycroft.hands-desktop.plist\nwould ask for Accessibility and Screen Recording"), "{text}");
-    assert!(text.contains("--args --request-permissions --wait 600"), "{text}");
+    // The permissions are asked for afterwards, one at a time, not both at once by the install.
+    assert!(!text.contains("--request-permissions"), "{text}");
+    assert!(text.ends_with("would walk through the permissions Mycroft needs on this Mac, one at a time (hands permissions)\n"), "{text}");
 
     // MycroftHands.zip next to the binary is picked up without --desktop-zip.
     let bin = work.join("bin");

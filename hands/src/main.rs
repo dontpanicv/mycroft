@@ -18,6 +18,7 @@ mod listener;
 mod mdns;
 mod output;
 mod pairing;
+mod permissions;
 mod pty;
 mod scan;
 mod serve;
@@ -48,9 +49,13 @@ const USAGE: &str = "usage: hands <command>
                                     TLS WebSocket listener
   serve [--stdio] [--token <hex>]   the pi-env protocol on stdin/stdout (over ssh, and per listener connection)
   jobs [--json]                     list supervised jobs
+  permissions [--check] [--json]    on macOS, walk through what Mycroft needs approved, one at a time:
+                                    Accessibility and Screen Recording (Mycroft Hands), the Desktop, Documents and
+                                    Downloads folders, Local Network and, optionally, Full Disk Access (hands);
+                                    --check only reports. On Linux, report the service and lingering
   desktop permissions [--request] [--wait <SECONDS>] [--json]
                                     Accessibility and Screen Recording of Mycroft Hands (macOS); --request opens
-                                    the app so macOS asks for them, and waits until both are granted
+                                    the app so macOS asks for each in turn, and waits until both are granted
   doctor                            report the binary, supervisor, listener, paired phones, state dir and jobs
   version                           print the version
 
@@ -137,6 +142,7 @@ fn main() {
         Some("unpair") => cli::unpair(rest),
         Some("jobs") => cli::jobs(rest),
         Some("desktop") => ui::app::main(rest),
+        Some("permissions") => permissions::main(rest),
         Some("doctor") => cli::doctor(),
         Some("version" | "--version" | "-V") => {
             println!("hands {VERSION}");

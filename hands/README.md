@@ -19,7 +19,7 @@ Paste or type it into a terminal on the Mac or Linux machine. The phone serves t
 - pairs the machine with the phone;
 - prints `Paired with <phone>. Mycroft can use this Mac now.`
 
-On a Mac, when the phone serves `MycroftHands.zip`, the script also downloads and verifies it and passes it to `install --desktop-zip`, which installs the desktop helper and opens it so macOS asks for its permissions. `install` then prints one more line asking you to approve "Mycroft Hands" for Accessibility and Screen Recording.
+On a Mac, when the phone serves `MycroftHands.zip`, the script also downloads and verifies it and passes it to `install --desktop-zip`, which installs the desktop helper. `install` then walks you through the permissions Mycroft needs, one at a time (see [Permissions on macOS](#permissions-on-macos)).
 
 The command works once and expires after 10 minutes.
 
@@ -62,6 +62,7 @@ hands supervise [--listen] [--bind ADDR] [--detached]
                                       # the supervisor that owns jobs; with --listen, also the phone's listener
 hands serve --stdio [--token <hex>]   # pi-env protocol 1 on stdin/stdout: over ssh, and per listener connection
 hands jobs [--json]                   # list supervised jobs (from disk if no supervisor is running)
+hands permissions [--check] [--json]  # macOS: walk through what Mycroft needs approved, one at a time; Linux: report
 hands desktop permissions [--request] [--wait N] [--json]
                                       # macOS: Accessibility and Screen Recording of the desktop helper; --request asks
 hands doctor                          # binary, version, OS/arch, state dir, supervisor, listener, paired phones, jobs,
@@ -101,11 +102,40 @@ A process started over SSH or by the listener can't hold Accessibility or Screen
 `hands install --desktop-zip MycroftHands.zip` (or the phone's install):
 1. unpacks the app to `~/Applications/Mycroft Hands.app`, after checking its bundle id and signature. An installed copy is replaced only when the version differs.
 2. writes the LaunchAgent `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist`, which runs the app's `hands-desktop serve` with `HANDS_STATE_DIR`, and loads it with `launchctl bootstrap gui/<uid>`.
-3. unless both permissions are granted already, opens the app with `open -n -g … --args --request-permissions`, without waiting, and prints one line asking you to approve "Mycroft Hands". macOS shows its prompts for the app (not for your terminal), and System Settings opens at the right pane. The app waits up to 10 minutes for both grants, then restarts the helper.
+3. walks through the permissions, below. For Accessibility and Screen Recording it opens the app, one permission at a time (`open -n … --args --request-permissions --only …`), so macOS shows its prompt for the app (not for your terminal) and System Settings opens at the right pane. After Screen Recording is granted, the app restarts the helper, which macOS requires.
 
 `--uninstall` removes the app and its LaunchAgent. The grants stay in System Settings; `tccutil reset All dev.mycroft.hands-desktop` removes them. A failure while installing the helper is a warning: `hands` itself is installed and pairs anyway.
 
-`hands desktop permissions` asks the running helper what it has been granted. `--request` opens the app to ask, and waits (default 300 s, `--wait N`) until both are granted.
+`hands desktop permissions` asks the running helper what it has been granted. `--request` opens the app to ask for each in turn, and waits (default 300 s, `--wait N`) until both are granted.
+
+### Permissions on macOS
+
+`hands permissions` (and `hands install`, right after pairing) walks through everything Mycroft may need on a Mac, one at a time, in the terminal. Each step says what the permission is for, makes macOS ask, and waits with a spinner until it is granted. Enter skips a step; Ctrl-C stops.
+
+```
+[1/7] Accessibility: read and use apps' buttons, menus and fields
+      Turn on "Mycroft Hands" in System Settings, which macOS just opened.
+      ✓ granted
+[2/7] Screen Recording: see the screen when Mycroft takes a screenshot
+[3/7] Desktop folder: commands Mycroft runs can read and change files there
+[4/7] Documents folder
+[5/7] Downloads folder
+[6/7] Local Network: commands can reach other devices on your network
+[7/7] Full Disk Access (optional): everything else: iCloud Drive, external disks, other apps' data
+```
+
+| Permission | Held by | How it is asked |
+|---|---|---|
+| Accessibility, Screen Recording | Mycroft Hands.app | the app's own prompt and System Settings pane, one at a time |
+| Desktop, Documents, Downloads | hands | the service opens the folder, which makes macOS ask about "hands" |
+| Local Network (macOS 15+) | hands | the service sends one UDP packet to the router |
+| Full Disk Access (optional) | hands | no prompt exists: System Settings opens and Finder shows `hands`, to drag into the list |
+
+- **Why the service asks.** macOS gives a permission to the responsible process. From Terminal that is Terminal, so the terminal only drives: the folder, network and disk checks run in the service's supervisor (the `access` op), which launchd started, so macOS asks about `hands`, and the grant covers every command Mycroft runs. A supervisor started from a terminal refuses the op.
+- **A prompt that doesn't come.** macOS asks once. If it was answered before, the walkthrough opens the right System Settings pane after a few seconds and says what to turn on.
+- **Kept across updates.** The macOS binaries are signed as `dev.mycroft.hands` (scripts/build-release.sh), so macOS keeps these grants when hands is updated.
+- **`--check` and `--json`** only report, and never make macOS ask: the folders and Local Network are checked only once a walkthrough has asked about them (`permissions.json` in the state dir). Without a terminal (`ssh` without `-t`, say), `install` prints how to run the walkthrough instead.
+- **Linux** has nothing to approve: hands runs as you. `hands permissions` reports what keeps it running instead, the service and lingering (`sudo loginctl enable-linger $USER` keeps it running after logout).
 
 `hello.features` lists `ui.observe`, `ui.act` and `ui.screenshot` while the helper answers its `ping` (cached for 3 s). Each request opens its own connection to `desktop.sock`; the helper's error codes (`not_trusted`, `not_permitted`, `stale`, ...) come back as the error frame's `code`.
 
@@ -169,6 +199,7 @@ Layout:
 - `src/install.rs` contains `hands install`.
 - `src/cli.rs` contains `hands jobs`, `paired`, `unpair` and `doctor`.
 - `src/ui/mod.rs` forwards `ui.*` to the desktop helper; `src/ui/app.rs` installs the helper and asks for its permissions (`hands desktop`).
+- `src/permissions.rs` is `hands permissions`: the macOS walkthrough, the service's `access` op, and the Linux report.
 
 The other files come from pi-env.
 

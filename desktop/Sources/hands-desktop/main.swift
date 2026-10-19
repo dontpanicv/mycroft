@@ -14,11 +14,12 @@ Usage:
                                               only if the screen has not changed.
   hands-desktop screenshot --out FILE [--max-width N]
                                               Capture the main display as PNG (needs Screen Recording).
-  hands-desktop permissions [--json] [--request] [--wait SECONDS]
+  hands-desktop permissions [--json] [--request] [--only accessibility|screen-recording] [--wait SECONDS]
                                               Report Accessibility and Screen Recording (exit 0 when both are
-                                              granted). --request shows macOS's prompts and the System Settings
-                                              panes, then waits (default 300 s) until both are granted.
-  hands-desktop --request-permissions [--wait SECONDS]
+                                              granted). --request asks for each missing one in turn, macOS's
+                                              prompt and its System Settings pane, and waits (default 300 s) until
+                                              it is granted; --only asks for that one alone.
+  hands-desktop --request-permissions [--only accessibility|screen-recording] [--wait SECONDS]
                                               The request flow, run inside the app: what
                                               `open -n "Mycroft Hands.app" --args --request-permissions` runs.
   hands-desktop doctor                        Report the permissions and how to grant them.
@@ -155,36 +156,45 @@ func restartServingHelper(after state: PermissionState, before: PermissionState)
 }
 
 /// The request flow in this process. Prompts name this process's responsible app.
-func requestInProcess(wait: TimeInterval, json: Bool) -> Never {
+func requestInProcess(_ permissions: [Permission], wait: TimeInterval, json: Bool) -> Never {
     if appBundlePath == nil, !startedByLaunchd {
         log("warning: not running inside Mycroft Hands.app, so macOS asks for (and grants) the app that started this process")
     }
     runOffMain {
         let system = SystemPermissions(freshCheck: [executablePath, "permissions", "--json", "--in-process"])
         let before = SystemPermissions.inProcess()
-        let state = PermissionFlow.request(system, wait: wait, log: { log("permissions: \($0)") })
+        let state = PermissionFlow.request(system, only: permissions, wait: wait, log: { log("permissions: \($0)") })
         restartServingHelper(after: state, before: before)
         printReport(PermissionsReport(state: state, bundleId: Bundle.main.bundleIdentifier, executable: executablePath,
                                       source: "self"), json: json)
-        if !state.allGranted, !json {
+        let missing = permissions.filter { !$0.isGranted(in: state) }
+        if !missing.isEmpty, !json {
             print("Approve \"Mycroft Hands\" in System Settings > Privacy & Security > Accessibility and > Screen & System Audio Recording.")
         }
-        return state.allGranted ? 0 : 1
+        return missing.isEmpty ? 0 : 1
     }
 }
 
 /// `permissions --request`: in this process when launchd started it (or outside the app, where there is no choice),
 /// otherwise through the app.
-func request(wait: TimeInterval, json: Bool, inProcess: Bool) -> Never {
-    if inProcess || appBundlePath == nil { requestInProcess(wait: wait, json: json) }
-    requestThroughApp(appBundlePath!, wait: wait, json: json)
+func request(_ permissions: [Permission], wait: TimeInterval, json: Bool, inProcess: Bool) -> Never {
+    if inProcess || appBundlePath == nil { requestInProcess(permissions, wait: wait, json: json) }
+    requestThroughApp(appBundlePath!, permissions, wait: wait, json: json)
+}
+
+/// `--only NAME`: that permission alone; otherwise both, in order.
+func onlyOption(_ options: [String: String]) -> [Permission] {
+    guard let raw = options["only"] else { return Permission.allCases }
+    guard let permission = Permission(rawValue: raw) else { fail("--only takes accessibility or screen-recording") }
+    return [permission]
 }
 
 /// From a terminal: open the app to ask, then follow the helper's answers.
-func requestThroughApp(_ app: String, wait: TimeInterval, json: Bool) -> Never {
+func requestThroughApp(_ app: String, _ permissions: [Permission], wait: TimeInterval, json: Bool) -> Never {
     let open = Process()
     open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    open.arguments = ["-n", "-g", app, "--args", "--request-permissions", "--wait", String(Int(wait))]
+    let only = permissions.count == 1 ? ["--only", permissions[0].rawValue] : []
+    open.arguments = ["-n", app, "--args", "--request-permissions"] + only + ["--wait", String(Int(wait))]
     do {
         try open.run()
         open.waitUntilExit()
@@ -198,7 +208,12 @@ func requestThroughApp(_ app: String, wait: TimeInterval, json: Bool) -> Never {
     let socket = Paths.defaultSocket()
     let deadline = Date().addingTimeInterval(wait)
     var last = SocketClient.ping(path: socket)
-    while !(last.map { $0.trusted && $0.screenRecording } ?? false), Date() < deadline {
+    let done = { (ping: PingResult?) in
+        ping.map { ping in
+            permissions.allSatisfy { $0.isGranted(in: PermissionState(accessibility: ping.trusted, screenRecording: ping.screenRecording)) }
+        } ?? false
+    }
+    while !done(last), Date() < deadline {
         Thread.sleep(forTimeInterval: 1)
         last = SocketClient.ping(path: socket) ?? last
     }
@@ -209,7 +224,7 @@ func requestThroughApp(_ app: String, wait: TimeInterval, json: Bool) -> Never {
     let state = PermissionState(accessibility: last.trusted, screenRecording: last.screenRecording)
     printReport(PermissionsReport(state: state, version: last.version, bundleId: handsDesktopBundleId, executable: executablePath,
                                   source: "helper"), json: json)
-    exit(state.allGranted ? 0 : 1)
+    exit(permissions.allSatisfy { $0.isGranted(in: state) } ? 0 : 1)
 }
 
 var arguments = CommandLine.arguments.dropFirst()
@@ -320,11 +335,11 @@ case "screenshot":
     }
 
 case "permissions":
-    let (flags, options, positional) = parseFlags(rest, flags: ["json", "request", "in-process"], options: ["wait"])
+    let (flags, options, positional) = parseFlags(rest, flags: ["json", "request", "in-process"], options: ["wait", "only"])
     guard positional.isEmpty else { fail("permissions takes no arguments\n\n\(usage)") }
     let json = flags.contains("json")
     let inProcess = flags.contains("in-process") || startedByLaunchd
-    if flags.contains("request") { request(wait: waitOption(options), json: json, inProcess: inProcess) }
+    if flags.contains("request") { request(onlyOption(options), wait: waitOption(options), json: json, inProcess: inProcess) }
     var report = PermissionsReport(state: SystemPermissions.inProcess(), bundleId: Bundle.main.bundleIdentifier,
                                    executable: executablePath, source: "self")
     if !inProcess, let ping = SocketClient.ping(path: Paths.defaultSocket()) {
@@ -336,15 +351,15 @@ case "permissions":
     exit(report.state.allGranted ? 0 : 1)
 
 case "--request-permissions":
-    let (_, options, positional) = parseFlags(rest, flags: [], options: ["wait"])
+    let (_, options, positional) = parseFlags(rest, flags: [], options: ["wait", "only"])
     guard positional.isEmpty else { fail("\(command) takes no arguments\n\n\(usage)") }
-    requestInProcess(wait: waitOption(options), json: false)
+    requestInProcess(onlyOption(options), wait: waitOption(options), json: false)
 
 case "request-permission":
     // The 0.1 command: now `permissions --request`.
     let (_, options, positional) = parseFlags(rest, flags: [], options: ["wait"])
     guard positional.isEmpty else { fail("\(command) takes no arguments\n\n\(usage)") }
-    request(wait: waitOption(options), json: false, inProcess: startedByLaunchd)
+    request(Permission.allCases, wait: waitOption(options), json: false, inProcess: startedByLaunchd)
 
 case "doctor":
     let state = SystemPermissions.inProcess()

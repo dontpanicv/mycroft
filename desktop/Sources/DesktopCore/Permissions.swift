@@ -2,7 +2,7 @@ import Foundation
 
 // The two privacy permissions the helper needs, Accessibility (ui.observe, ui.act) and Screen Recording
 // (ui.screenshot), and the flow that asks for them. Only the user can grant either; the helper only triggers macOS's
-// own prompts and opens the right System Settings pane.
+// own prompts and opens the right System Settings pane, one permission at a time.
 //
 // macOS attributes both to the *responsible* process. Run from Terminal, that is Terminal. So the request flow must run
 // inside Mycroft Hands.app, started by launchd: `open -n "Mycroft Hands.app" --args --request-permissions`, or the
@@ -70,43 +70,60 @@ public protocol PermissionSystem: AnyObject {
     func sleep(_ seconds: TimeInterval)
 }
 
+/// One of the two permissions, as `--only` names it.
+public enum Permission: String, CaseIterable, Sendable {
+    case accessibility
+    case screenRecording = "screen-recording"
+
+    public func isGranted(in state: PermissionState) -> Bool {
+        switch self {
+        case .accessibility: state.accessibility
+        case .screenRecording: state.screenRecording
+        }
+    }
+
+    var pane: SettingsPane {
+        switch self {
+        case .accessibility: .accessibility
+        case .screenRecording: .screenRecording
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .accessibility: "Accessibility"
+        case .screenRecording: "Screen Recording"
+        }
+    }
+}
+
 public enum PermissionFlow {
-    /// Prompts for whatever is missing and opens its System Settings pane, then polls every `poll` seconds until both
-    /// are granted or `wait` seconds pass. The Accessibility pane opens first; the Screen Recording pane opens once
-    /// Accessibility is granted (or at once when only Screen Recording is missing). Returns the last reading.
+    /// Asks for each of `permissions` that is missing, one at a time and in order: macOS's prompt and the System
+    /// Settings pane for one, then a poll every `poll` seconds until it is granted, then the next. macOS shows one
+    /// permission prompt at a time, so asking for both at once lost the second. Stops at the first permission still
+    /// missing when `wait` seconds have passed. Returns the last reading.
     @discardableResult
-    public static func request(_ system: PermissionSystem, wait: TimeInterval, poll: TimeInterval = 1,
-                               now: () -> Date = Date.init, log: (String) -> Void = { _ in }) -> PermissionState {
+    public static func request(_ system: PermissionSystem, only permissions: [Permission] = Permission.allCases,
+                               wait: TimeInterval, poll: TimeInterval = 1, now: () -> Date = Date.init,
+                               log: (String) -> Void = { _ in }) -> PermissionState {
         var state = system.current()
         log("accessibility \(granted(state.accessibility)), screen recording \(granted(state.screenRecording))")
-        if state.allGranted { return state }
-        var openedScreenRecording = false
-        if !state.accessibility {
-            system.promptAccessibility()
-            system.openSettings(.accessibility)
-            log("asked for Accessibility and opened its System Settings pane")
-        }
-        if !state.screenRecording {
-            system.promptScreenRecording()
-            log("asked for Screen Recording")
-            if state.accessibility {
-                system.openSettings(.screenRecording)
-                openedScreenRecording = true
-                log("opened the Screen Recording pane")
-            }
-        }
         let deadline = now().addingTimeInterval(wait)
-        while !state.allGranted, now() < deadline {
-            system.sleep(poll)
-            let next = system.current()
-            if next != state {
-                log("accessibility \(granted(next.accessibility)), screen recording \(granted(next.screenRecording))")
+        for permission in permissions where !permission.isGranted(in: state) {
+            switch permission {
+            case .accessibility: system.promptAccessibility()
+            case .screenRecording: system.promptScreenRecording()
             }
-            state = next
-            if state.accessibility, !state.screenRecording, !openedScreenRecording {
-                system.openSettings(.screenRecording)
-                openedScreenRecording = true
-                log("opened the Screen Recording pane")
+            system.openSettings(permission.pane)
+            log("asked for \(permission.name) and opened its System Settings pane")
+            while !permission.isGranted(in: state) {
+                guard now() < deadline else { return state }
+                system.sleep(poll)
+                let next = system.current()
+                if next != state {
+                    log("accessibility \(granted(next.accessibility)), screen recording \(granted(next.screenRecording))")
+                }
+                state = next
             }
         }
         return state

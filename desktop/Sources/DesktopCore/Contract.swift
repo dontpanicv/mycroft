@@ -2,7 +2,7 @@ import Foundation
 
 // The JSON contract of docs/desktop-protocol.md: what `hands` sends over desktop.sock and what comes back.
 
-public let handsDesktopVersion = "0.2.0"
+public let handsDesktopVersion = "0.3.0"
 /// The bundle identifier of Mycroft Hands.app. TCC keys both permissions to it (and to the signing team).
 public let handsDesktopBundleId = "dev.mycroft.hands-desktop"
 

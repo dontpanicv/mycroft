@@ -124,10 +124,11 @@ user can grant: **Accessibility** for `ui.observe` and `ui.act`, and **Screen Re
 - macOS asks for, and grants, both to the *responsible* app of a process. That is Mycroft Hands when launchd starts it
   (the LaunchAgent, or `open`), but the terminal app when a binary is run from a shell. So the prompts are always
   shown by the app itself: `open -n "Mycroft Hands.app" --args --request-permissions`.
-- The request flow calls `AXIsProcessTrustedWithOptions` with the prompt option and `CGRequestScreenCaptureAccess`,
-  opens System Settings at `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility` (and at
-  `?Privacy_ScreenCapture` once Accessibility is granted), polls until both are granted or its wait runs out, and
-  then restarts the serving helper, since a process sees a new Screen Recording grant only after a restart.
+- The request flow asks for one at a time: `AXIsProcessTrustedWithOptions` with the prompt option and System Settings
+  at `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`, then, once that is granted,
+  `CGRequestScreenCaptureAccess` and `?Privacy_ScreenCapture` (`--only` asks for one alone). It polls until each is
+  granted or its wait runs out, then restarts the serving helper, since a process sees a new Screen Recording grant
+  only after a restart.
 - TCC keys both grants to the bundle id and the signing team, so they survive updates signed by the same team. An
   ad-hoc signed build is keyed to that exact build and needs both again after every rebuild.
 - `hands desktop permissions` reports what the running helper has; `--request` runs the flow above and waits.

@@ -94,8 +94,12 @@ fn dispatch(jobs: &Arc<Jobs>, op: &str, json: &Value) -> Result<(Value, Vec<u8>)
                 "stateDir": state::dir(),
                 "jobs": count,
                 "running": running,
+                // Started by launchd or systemd: what macOS asks about is hands itself (permissions.rs).
+                "service": crate::permissions::in_service(),
             })))
         }
+        // Blocks this connection's thread while macOS asks the user, the first time.
+        "access" => plain(crate::permissions::access(json)),
         "job.start" => plain(jobs.start(json)),
         "job.status" => plain(jobs.status(json)),
         "job.output" => jobs.output(json),

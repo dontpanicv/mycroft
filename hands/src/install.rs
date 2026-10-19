@@ -11,8 +11,10 @@
 //!
 //! On macOS, given `--desktop-zip` (or with `MycroftHands.zip` next to this binary), it also installs the desktop
 //! helper (ui/app.rs): `~/Applications/Mycroft Hands.app`, replaced only when the version differs, and its
-//! LaunchAgent `dev.mycroft.hands-desktop`. Then it opens the app to ask for Accessibility and Screen Recording,
-//! without waiting, and prints one line asking the user to approve it. A failure there never fails the install.
+//! LaunchAgent `dev.mycroft.hands-desktop`. A failure there never fails the install.
+//!
+//! Then, on macOS, it walks through the permissions Mycroft needs, one at a time, when it has a terminal to talk to
+//! (permissions.rs); otherwise it prints how to get to that walkthrough.
 
 use crate::ui::app;
 use crate::{listener, pairing, state, supervisor, sys};
@@ -48,8 +50,6 @@ enum Step {
     /// Unpack Mycroft Hands.app from the zip, unless the installed copy has the same version.
     InstallApp { zip: PathBuf, to: PathBuf },
     RemoveDir(PathBuf),
-    /// Open the app to ask for its permissions, unless the helper already has both. Does not wait.
-    RequestPermissions { app: PathBuf },
     /// `launchctl bootstrap`, retried briefly: right after `bootout`, launchd may still be removing the old job.
     Bootstrap { domain: String, plist: PathBuf },
     /// A step of the desktop helper's: its failure is a warning, and skips the desktop steps after it.
@@ -80,12 +80,6 @@ impl Step {
                 )
             }
             Step::RemoveDir(path) => format!("remove {}", path.display()),
-            Step::RequestPermissions { app } => format!(
-                "ask for Accessibility and Screen Recording unless granted: open -n -g '{}' --args \
-                 --request-permissions --wait {} (macOS shows its prompts for Mycroft Hands; does not wait)",
-                app.display(),
-                app::INSTALL_WAIT_SECS
-            ),
             Step::Bootstrap { domain, plist } => format!("run launchctl bootstrap {domain} {}", plist.display()),
             Step::Desktop(step) => step.describe(),
         }
@@ -130,13 +124,6 @@ impl Step {
                 Err(error) => Err(error.to_string()),
             },
             Step::InstallApp { zip, to } => app::install(zip, to),
-            Step::RequestPermissions { app: path } => {
-                // The agent was just (re)started; give it a moment to answer.
-                if app::ping_within(Duration::from_secs(3)).is_some_and(|helper| app::granted(&helper)) {
-                    return Ok(ALREADY_GRANTED.into());
-                }
-                app::request_permissions(path, app::INSTALL_WAIT_SECS).map(|()| REQUESTED.into())
-            }
             Step::Bootstrap { domain, plist } => {
                 let mut tries = 0;
                 loop {
@@ -183,12 +170,6 @@ impl Step {
         }
     }
 }
-
-const REQUESTED: &str = "opened Mycroft Hands to ask";
-const ALREADY_GRANTED: &str = "already granted";
-/// The one line `install` prints after opening the app to ask for the permissions.
-const APPROVE: &str = "Approve \"Mycroft Hands\" for Accessibility and Screen Recording when macOS asks (or in System \
-                       Settings > Privacy & Security), so Mycroft can use this Mac's apps.";
 
 fn copy_binary(from: &Path, to: &Path) -> std::io::Result<&'static str> {
     if fs::canonicalize(from).ok() == fs::canonicalize(to).ok() {
@@ -376,7 +357,7 @@ fn start(argv: &[&str], optional: bool) -> Step {
     }
 }
 
-/// The desktop helper's steps: the app, its LaunchAgent (with the service), and the permission request.
+/// The desktop helper's steps: the app and its LaunchAgent (with the service).
 fn desktop_steps(zip: &Path, with_service: bool) -> Vec<Step> {
     let app_path = app::app_path();
     let agent = app::agent_path();
@@ -395,7 +376,6 @@ fn desktop_steps(zip: &Path, with_service: bool) -> Vec<Step> {
         // Fails without a GUI login session (SSH only); the agent then loads at the next login.
         steps.push(Step::Bootstrap { domain, plist: agent });
     }
-    steps.push(Step::RequestPermissions { app: app_path });
     steps.into_iter().map(|step| Step::Desktop(Box::new(step))).collect()
 }
 
@@ -568,7 +548,6 @@ pub fn main(args: &[String]) -> i32 {
     let mut service_started = options.service;
     let mut service_failure = None;
     let mut desktop_failed = false;
-    let mut approve = false;
     for step in &steps {
         let desktop = matches!(step, Step::Desktop(_));
         if desktop && desktop_failed {
@@ -589,7 +568,6 @@ pub fn main(args: &[String]) -> i32 {
         let starts = matches!(step, Step::Run { starts: true, .. });
         match step.apply(quiet) {
             Ok(note) => {
-                approve |= desktop && note == REQUESTED;
                 if !quiet {
                     println!("{}: {note}", step.describe());
                 }
@@ -639,9 +617,7 @@ pub fn main(args: &[String]) -> i32 {
         return match result {
             Ok(line) => {
                 println!("{line}");
-                if approve {
-                    println!("{APPROVE}");
-                }
+                crate::permissions::after_install();
                 0
             }
             Err(error) => {
@@ -651,10 +627,10 @@ pub fn main(args: &[String]) -> i32 {
         };
     }
     if !dry_run {
-        if approve {
-            println!("{APPROVE}");
-        }
         println!("installed; check with: {} doctor", binary_path().display());
+        crate::permissions::after_install();
+    } else if cfg!(target_os = "macos") {
+        println!("would walk through the permissions Mycroft needs on this Mac, one at a time (hands permissions)");
     }
     0
 }

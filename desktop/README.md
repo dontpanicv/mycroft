@@ -58,14 +58,16 @@ hands desktop permissions --request                        # the same through ha
 hands-desktop permissions [--json]                         # from a shell: asks the running helper
 ```
 
-The request flow is `--request-permissions [--wait SECONDS]`, with a default wait of 300 s. Opening the app with no
-arguments, as Finder does, runs it too. It:
-1. reads both permissions, and stops there if both are granted;
-2. if Accessibility is missing, calls `AXIsProcessTrustedWithOptions` with the prompt option and opens
-   `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`;
-3. if Screen Recording is missing, calls `CGRequestScreenCaptureAccess`, and opens `…?Privacy_ScreenCapture` once
-   Accessibility is granted (at once, if it already is);
-4. polls once a second until both are granted or the wait runs out. Each poll runs
+The request flow is `--request-permissions [--only accessibility|screen-recording] [--wait SECONDS]`, with a default
+wait of 300 s. Opening the app with no arguments, as Finder does, runs it too. It asks for one permission at a time,
+because macOS shows one permission prompt at a time (asking for both at once lost the second):
+1. reads both permissions, and stops there if those it was asked for are granted;
+2. if Accessibility is missing, calls `AXIsProcessTrustedWithOptions` with the prompt option, opens
+   `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`, and waits until it is granted;
+3. only then, if Screen Recording is missing, calls `CGRequestScreenCaptureAccess`, opens `…?Privacy_ScreenCapture`,
+   and waits until it is granted. `--only` asks for just the one named, which is what `hands permissions` does, step
+   by step;
+4. polls once a second while it waits, and gives up when the wait runs out. Each poll runs
    `hands-desktop permissions --json --in-process` as a child, because a process sees a Screen Recording grant only
    after a restart;
 5. restarts the serving helper (`launchctl kickstart -k gui/<uid>/dev.mycroft.hands-desktop`) if anything changed.
@@ -144,8 +146,9 @@ hands-desktop serve [--socket PATH]
 hands-desktop observe [--app X] [--max N]
 hands-desktop act '<json>' [--app X]
 hands-desktop screenshot --out FILE [--max-width N]
-hands-desktop permissions [--json] [--request] [--wait SECONDS]
-hands-desktop --request-permissions [--wait SECONDS]     # request-permission: the 0.1 name of permissions --request
+hands-desktop permissions [--json] [--request] [--only accessibility|screen-recording] [--wait SECONDS]
+hands-desktop --request-permissions [--only accessibility|screen-recording] [--wait SECONDS]
+                                                         # request-permission: the 0.1 name of permissions --request
 hands-desktop doctor
 hands-desktop --version
 ```
@@ -173,8 +176,8 @@ helper when one answers.
    with the app's binary and the state dir and writes it to `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist`.
    Then it loads it with `launchctl bootstrap gui/$(id -u) …`. The agent runs `hands-desktop serve` in the Aqua (GUI)
    session with `HANDS_STATE_DIR`, restarts it if it exits, and logs to `$HANDS_STATE_DIR/desktop.log`.
-3. It runs the request flow inside the app (`open -n -g … --args --request-permissions --wait 600`), without waiting
-   for it.
+3. It then walks through the permissions in the terminal (`hands permissions`), which opens the app once per
+   permission: `open -n … --args --request-permissions --only accessibility`, then `--only screen-recording`.
 
 To restart the helper, run `launchctl kickstart -k gui/$(id -u)/dev.mycroft.hands-desktop`. `hands install --uninstall`
 boots it out and removes the agent and the app; `tccutil reset All dev.mycroft.hands-desktop` also removes the grants.

@@ -91,7 +91,8 @@ main() {
 
 	chmod 755 "$tmp/hands"
 	# Copies hands to ~/.local/bin, starts its service and pairs; prints the one line saying so. With the desktop
-	# helper, it also installs Mycroft Hands.app and prints one more line asking to approve its permissions.
+	# helper, it also installs Mycroft Hands.app. On macOS it then walks through the permissions Mycroft needs, one at
+	# a time, on the terminal (/dev/tty: stdin here is this script).
 	if [ -n "$desktop" ]; then
 		"$tmp/hands" install --pair "$BASE" --pin "$PIN" --desktop-zip "$desktop" </dev/null ||
 			fail "installing hands failed"

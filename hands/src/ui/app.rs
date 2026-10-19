@@ -19,7 +19,6 @@ pub const BUNDLE_ID: &str = "dev.mycroft.hands-desktop";
 pub const APP_NAME: &str = "Mycroft Hands.app";
 pub const ZIP_NAME: &str = "MycroftHands.zip";
 /// How long the app keeps polling for the grants after `hands install` opens it.
-pub const INSTALL_WAIT_SECS: u64 = 600;
 const DEFAULT_WAIT_SECS: u64 = 300;
 const TEMPLATE: &str = include_str!("../../../desktop/LaunchAgent/dev.mycroft.hands-desktop.plist.template");
 
@@ -138,17 +137,20 @@ pub fn install(zip: &Path, to: &Path) -> Result<String, String> {
     })
 }
 
-/// Open the app to ask for its permissions. Returns at once; the app keeps asking for `wait` seconds.
-pub fn request_permissions(app: &Path, wait: u64) -> Result<(), String> {
+/// Open the app to ask for its permissions, each in turn, or only `only` (`accessibility`, `screen-recording`).
+/// Returns at once; the app keeps asking for `wait` seconds.
+pub fn request_permissions(app: &Path, only: Option<&str>, wait: u64) -> Result<(), String> {
     if !app.exists() {
         return Err(format!("{} is not installed", app.display()));
     }
     let wait = wait.to_string();
-    run(
-        "open",
-        &["-n".as_ref(), "-g".as_ref(), app.as_os_str(), "--args".as_ref(), "--request-permissions".as_ref(),
-          "--wait".as_ref(), wait.as_ref()],
-    )
+    let mut args: Vec<&std::ffi::OsStr> =
+        vec!["-n".as_ref(), app.as_os_str(), "--args".as_ref(), "--request-permissions".as_ref()];
+    if let Some(only) = only {
+        args.extend::<[&std::ffi::OsStr; 2]>(["--only".as_ref(), only.as_ref()]);
+    }
+    args.extend::<[&std::ffi::OsStr; 2]>(["--wait".as_ref(), wait.as_ref()]);
+    run("open", &args)
 }
 
 /// The helper's ping, waiting up to `patience` for a helper that is still starting.
@@ -229,7 +231,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     let mut helper = ui::ping();
     if request && !helper.as_ref().is_some_and(granted) {
-        if let Err(error) = request_permissions(&app_path(), wait) {
+        if let Err(error) = request_permissions(&app_path(), None, wait) {
             eprintln!("hands desktop: {error}");
             return 1;
         }
