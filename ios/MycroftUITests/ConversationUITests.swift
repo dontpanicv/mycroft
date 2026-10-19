@@ -10,6 +10,7 @@ final class ConversationUITests: XCTestCase {
             || ProcessInfo.processInfo.environment["MYCROFT_LIVE"] == "1", "set MYCROFT_LIVE=1 to talk to the real model")
         continueAfterFailure = false
         app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
         app.launch()
     }
 
@@ -17,10 +18,9 @@ final class ConversationUITests: XCTestCase {
     func testAskAndAnswer() throws {
         startThread()
         send("Reply with exactly the word: pineapple")
-        let answer = app.staticTexts.matching(identifier: "assistantText").firstMatch
-        XCTAssertTrue(answer.waitForExistence(timeout: 120), "no answer from the model")
         XCTAssertTrue(waitForIdle(timeout: 120))
-        XCTAssertTrue(answer.label.lowercased().contains("pineapple"), "answer was: \(answer.label)")
+        let answer = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'pineapple' AND NOT label CONTAINS[c] 'reply with'")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10), "no answer from the model: \(transcript())")
         attachScreenshot("answer")
     }
 
@@ -33,7 +33,7 @@ final class ConversationUITests: XCTestCase {
             """)
         XCTAssertTrue(waitForIdle(timeout: 300), "the self-edit run did not finish")
         attachScreenshot("self-edit")
-        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n").lowercased()
+        let texts = transcript().lowercased()
         XCTAssertTrue(texts.contains("self_activate"), "no activation call visible")
         XCTAssertTrue(texts.contains("coin"), "the new tool was not called")
     }
@@ -45,7 +45,7 @@ final class ConversationUITests: XCTestCase {
             Do these one at a time, each as its own tool call: self_status, then self_read SELF.md, then now, \
             then self_read extension.js. After that, answer with one short sentence.
             """)
-        _ = app.staticTexts["status.running"].waitForExistence(timeout: 20)
+        _ = app.staticTexts["RUNNING"].waitForExistence(timeout: 20)
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         Thread.sleep(forTimeInterval: 2)
@@ -74,19 +74,19 @@ final class ConversationUITests: XCTestCase {
     /// Settings → Machines → Add machine, then waits while the command (on the clipboard) is run on a computer.
     /// The harness runs it: scripts/e2e-pair.sh reads the Simulator's pasteboard and pipes it to sh.
     func testPairMachine() throws {
-        let settings = app.buttons["settings"]
+        let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 30))
         settings.tap()
-        let add = app.buttons["addMachine"]
+        let add = app.buttons["Add machine"]
         for _ in 0..<6 where !add.isHittable { app.swipeUp() }
         XCTAssertTrue(add.waitForExistence(timeout: 10))
         add.tap()
-        XCTAssertTrue(app.staticTexts["installCommand"].waitForExistence(timeout: 20))
-        print("INSTALL COMMAND: \(app.staticTexts["installCommand"].label)")
-        let paired = app.staticTexts["pairedName"]
-        XCTAssertTrue(paired.waitForExistence(timeout: 240), "the machine never paired")
+        let command = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'curl'")).firstMatch
+        XCTAssertTrue(command.waitForExistence(timeout: 20))
+        print("INSTALL COMMAND: \(command.label)")
+        XCTAssertTrue(app.staticTexts["PAIRED"].waitForExistence(timeout: 240), "the machine never paired")
         attachScreenshot("paired")
-        print("PAIRED WITH: \(paired.label)")
+        print("PAIRED: \(transcript())")
     }
 
     /// Uses the paired machine: the agent runs a command there through hands.
@@ -95,7 +95,7 @@ final class ConversationUITests: XCTestCase {
         send("Use hands_exec on the paired machine to run `uname -sm && whoami`, then tell me the output in one line.")
         XCTAssertTrue(waitForIdle(timeout: 180))
         attachScreenshot("remote-exec")
-        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        let texts = transcript()
         XCTAssertTrue(texts.contains("hands_exec"), "no hands_exec call: \(texts)")
         XCTAssertTrue(texts.contains("Darwin"), "no uname output: \(texts)")
     }
@@ -110,7 +110,7 @@ final class ConversationUITests: XCTestCase {
             """)
         XCTAssertTrue(waitForIdle(timeout: 300), "the run did not finish")
         attachScreenshot("two-machines")
-        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        let texts = transcript()
         print("TRANSCRIPT:\n\(texts)")
         XCTAssertTrue(texts.contains("hands_job_start") || texts.contains("hands_exec"), "no hands calls")
     }
@@ -124,7 +124,7 @@ final class ConversationUITests: XCTestCase {
             """)
         XCTAssertTrue(waitForIdle(timeout: 420), "the run did not finish")
         attachScreenshot("desktop-notes")
-        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        let texts = transcript()
         print("TRANSCRIPT:\n\(texts)")
         XCTAssertTrue(texts.contains("desktop_do"), "no desktop_do call")
     }
@@ -133,13 +133,13 @@ final class ConversationUITests: XCTestCase {
     func testStopMidTool() throws {
         startThread()
         send("Use hands_exec on my Mac to run exactly this command: sleep 90 && echo mycroft-stop-test")
-        let stop = app.buttons["stop"]
+        let stop = app.buttons["Stop"]
         XCTAssertTrue(app.staticTexts["hands_exec"].waitForExistence(timeout: 90), "the command never started")
         Thread.sleep(forTimeInterval: 4)
         XCTAssertTrue(stop.waitForExistence(timeout: 5))
         let pressed = Date()
         stop.tap()
-        let idle = app.staticTexts["status.idle"]
+        let idle = app.staticTexts["IDLE"]
         XCTAssertTrue(idle.waitForExistence(timeout: 20), "the run did not stop")
         print("STOPPED AFTER \(String(format: "%.1f", Date().timeIntervalSince(pressed))) s")
         attachScreenshot("stopped")
@@ -151,35 +151,59 @@ final class ConversationUITests: XCTestCase {
         send("modify main color of mycroft to dark green")
         XCTAssertTrue(waitForIdle(timeout: 240), "the run did not finish")
         attachScreenshot("green")
-        let texts = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+        let texts = transcript()
         print("TRANSCRIPT:\n\(texts)")
         XCTAssertTrue(texts.contains("self_activate"), "Mycroft did not change itself")
     }
 
+    /// The user's phrasing for a change to the screen itself: Mycroft rewrites its web UI and it reloads in place,
+    /// with the conversation still on screen.
+    func testChangeOwnScreen() throws {
+        startThread()
+        send("""
+            Change your home screen: under the "Brain on the phone. Hands everywhere." headline, add a line in small             mono text that says "Generation" followed by your generation number and "· self-edited". Preview it, then             activate it.
+            """)
+        XCTAssertTrue(waitForIdle(timeout: 420), "the run did not finish")
+        attachScreenshot("screen-edit-thread")
+        let texts = transcript()
+        print("TRANSCRIPT:\n\(texts)")
+        XCTAssertTrue(texts.contains("self_activate"), "Mycroft did not change itself")
+        XCTAssertTrue(texts.contains("self_preview"), "Mycroft did not look at its draft")
+        // The thread is still open after the hot reload; go home and find the new line.
+        app.buttons["Back"].tap()
+        let line = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'self-edited'")).firstMatch
+        XCTAssertTrue(line.waitForExistence(timeout: 10), "the new line is not on the home screen")
+        attachScreenshot("screen-edit-home")
+    }
+
     private func startThread() {
-        let new = app.buttons["newThread"]
+        let new = app.buttons["New thread"]
         XCTAssertTrue(new.waitForExistence(timeout: 30))
         new.tap()
-        XCTAssertTrue(app.textViews["composer"].waitForExistence(timeout: 10) || app.textFields["composer"].waitForExistence(timeout: 1))
+        XCTAssertTrue(app.textViews["Message Mycroft"].waitForExistence(timeout: 10))
     }
 
     private func send(_ text: String) {
-        let composer = app.textViews["composer"].exists ? app.textViews["composer"] : app.textFields["composer"]
+        let composer = app.textViews["Message Mycroft"]
         composer.tap()
         composer.typeText(text)
-        app.buttons["send"].tap()
+        app.buttons["Send"].tap()
     }
 
     private func waitForIdle(timeout: TimeInterval) -> Bool {
         // Wait for the run to start, then to end.
-        _ = app.staticTexts["status.running"].waitForExistence(timeout: 20)
-        let idle = app.staticTexts["status.idle"]
+        _ = app.staticTexts["RUNNING"].waitForExistence(timeout: 20)
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if idle.exists && !app.staticTexts["status.running"].exists { return true }
+            if app.staticTexts["IDLE"].exists && !app.staticTexts["RUNNING"].exists { return true }
             Thread.sleep(forTimeInterval: 1)
         }
         return false
+    }
+
+    private func transcript() -> String {
+        // Tool rows are buttons in the web screen; prose and labels are static texts.
+        (app.staticTexts.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex).map(\.label).joined(separator: "\n")
     }
 
     private func attachScreenshot(_ name: String) {

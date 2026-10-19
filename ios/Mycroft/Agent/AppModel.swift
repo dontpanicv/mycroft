@@ -62,9 +62,14 @@ final class AppModel {
             if let abandoned = try await generations.beginBoot() {
                 notices.append("Generation \(abandoned) kept failing to start, so Mycroft went back to the last good one.")
             }
+            // The screen loads while the brain wakes up; it shows the starting state until then.
+            let screen = await generations.state.active
+            generation = await generations.state
+            WebUI.shared.load(generation: screen)
             let harness = try await openHarness()
             self.harness = harness
             await refreshGeneration()
+            if generation.active != screen { WebUI.shared.load(generation: generation.active, recover: false) }
             phase = .ready
             watch(harness)
             await refreshSignIn()
@@ -99,9 +104,17 @@ final class AppModel {
     nonisolated static let settings = Settings(toolExecution: .parallel)
 
     private func selfExtension() -> Extension {
-        SelfTools.makeExtension(store: generations) { [weak self] _ in
-            await self?.refreshGeneration()
-        }
+        SelfTools.makeExtension(store: generations, host: .init(
+            preview: { route, snapshot in await UIPreview.run(route: route, snapshot: snapshot) },
+            show: { generation in await WebUI.shared.show(generation: generation) },
+            rollBack: { [weak self] generation in
+                guard let self else { throw StartError.notReady }
+                let target = try await self.rollBack(to: generation)
+                _ = await WebUI.shared.show(generation: target)
+                return target
+            },
+            activated: { [weak self] _ in await self?.refreshGeneration() },
+            screenErrors: { await WebUI.shared.errors }))
     }
 
     private func watch(_ harness: Harness) {
@@ -123,10 +136,11 @@ final class AppModel {
                 self?.log.error("machine list stream ended: \(error)")
             }
         })
-        // A generation that has run for a while without crashing becomes the one to fall back to.
+        // A generation that has run for a while without crashing, with a working screen, becomes the one to fall
+        // back to.
         watchers.append(Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))
-            guard let self else { return }
+            guard let self, WebUI.shared.status == .ready else { return }
             try? await self.generations.markHealthy()
             await self.refreshGeneration()
         })
@@ -134,9 +148,25 @@ final class AppModel {
 
     func refreshGeneration() async {
         generation = await generations.state
-        if let data = await generations.appearance(), let values = try? Appearance.validate(data) {
-            Appearance.shared.apply(values)
-        }
+    }
+
+    /// Re-activates an earlier generation (the previous one by default), agent and all; the caller puts its screen up.
+    func rollBack(to target: Int? = nil) async throws -> Int {
+        let state = await generations.state
+        let target = target ?? state.history.map(\.generation).filter { $0 < state.active }.max() ?? 0
+        if let harness { try await harness.install(try await generations.extensionFor(generation: target)) }
+        try await generations.activate(target)
+        await refreshGeneration()
+        return target
+    }
+
+    /// The screen of a generation failed to load at start: go back to the last good generation, if that's another
+    /// one. Returns the generation to load instead.
+    func recoverScreen(failed: Int, message: String) async -> Int? {
+        let state = await generations.state
+        guard state.active == failed, state.lastGood != failed, (try? await rollBack(to: state.lastGood)) != nil else { return nil }
+        notices.append("Generation \(failed)'s screen failed to load, so Mycroft went back to generation \(state.lastGood). \(message)")
+        return state.lastGood
     }
 
     /// Documents keep working while the phone is locked: the database and agent code are readable after first unlock.
@@ -287,7 +317,7 @@ final class AppModel {
 
     /// ChatGPT sign-in with a device code: show the code, the user approves it at auth.openai.com.
     ///
-    /// The page is opened by the user from the code screen, inside the app (``SafariSheet``): if Mycroft went to the
+    /// The page is opened by the user from the code screen, inside the app (an in-app Safari page): if Mycroft went to the
     /// background, iOS would suspend it and pi-ai's polling for the approval would be cancelled.
     func signInWithChatGPT() async {
         let interaction = LoginInteraction(

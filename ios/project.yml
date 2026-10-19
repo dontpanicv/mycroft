@@ -29,11 +29,15 @@ targets:
     platform: iOS
     sources:
       - path: Mycroft
+        excludes: [Web/web-lib/**]
       - path: Shared
       - path: ../agent/generation-0
         buildPhase: resources
         type: folder
         name: generation-0
+      - path: Mycroft/Web/web-lib
+        buildPhase: resources
+        type: folder
     dependencies:
       - package: PiDurableKit
       - package: Certificates
@@ -114,32 +118,6 @@ targets:
         UIAppFonts: [JetBrainsMono.ttf, SchibstedGrotesk.ttf]
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-    postCompileScripts:
-      - name: Bundle hands
-        basedOnDependencyAnalysis: false
-        script: |
-          # Copies the hands install script and release binaries (hands/scripts/build-release.sh) into the app,
-          # so the phone can serve the one-line install. Missing pieces are skipped with a warning.
-          DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
-          HANDS="${SRCROOT}/../hands"
-          mkdir -p "$DEST/hands-dist"
-          if [ -f "$HANDS/scripts/phone-install.sh" ]; then cp "$HANDS/scripts/phone-install.sh" "$DEST/"; else echo "warning: hands/scripts/phone-install.sh missing"; fi
-          found=0
-          for t in darwin-arm64 darwin-x86_64 linux-x86_64 linux-aarch64; do
-            if [ -f "$HANDS/dist/hands-$t" ]; then cp "$HANDS/dist/hands-$t" "$DEST/hands-dist/"; found=1; fi
-          done
-          [ "$found" = 1 ] || echo "warning: no hands binaries in hands/dist (run hands/scripts/build-release.sh)"
-          # Refuse to ship stale binaries: the bundled hands must be the version in hands/Cargo.toml.
-          want="$(sed -n 's/^version = "\(.*\)"/\1/p' "$HANDS/Cargo.toml" | head -1)"
-          if [ "$found" = 1 ] && [ "$(uname -m)" = arm64 ] && [ -f "$HANDS/dist/hands-darwin-arm64" ]; then
-            have="$("$HANDS/dist/hands-darwin-arm64" version | awk '{print $2}')"
-            if [ "$have" != "$want" ]; then
-              echo "error: hands/dist has hands $have but hands/Cargo.toml is $want. Run hands/scripts/build-release.sh."
-              exit 1
-            fi
-          fi
-          DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
-          if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
     settings:
       base:
         ENABLE_USER_SCRIPT_SANDBOXING: NO

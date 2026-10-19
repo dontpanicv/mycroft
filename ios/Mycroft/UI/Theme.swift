@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Design tokens: grep.ai's console for content, Liquid Glass for controls. See docs/DESIGN.md.
 ///
-/// The colours come from ``Appearance``, which Mycroft can change itself (appearance.json in its generation), so
-/// views read them live.
+/// The screen itself is web code (agent/generation-0/ui/style.css); these tokens are for what stays native: the Live
+/// Activity and the recovery screen. The colours come from ``Appearance``, which the page keeps in sync with its own.
 enum Theme {
     static var canvas: Color { Appearance.shared.color(\.canvas) }
     static var raised: Color { Appearance.shared.color(\.raised) }
@@ -18,7 +18,7 @@ enum Theme {
     static let gutter: CGFloat = 20
 }
 
-/// Mycroft's colours, which the agent can rewrite in `appearance.json` of its generation (agent/generation-0).
+/// Mycroft's colours as the web screen last reported them (`ui.theme`).
 @Observable
 final class Appearance {
     static let shared = Appearance()
@@ -38,7 +38,13 @@ final class Appearance {
         accent: "#5147EF", accentSoft: "#9D93FF", canvas: "#0B0B0D", raised: "#141418", ink: "#F4F4F5",
         inkMuted: "#AAAAB4", success: "#4ADE80", danger: "#F87171")
 
-    private(set) var values = Appearance.defaults
+    private(set) var values = Appearance.stored ?? Appearance.defaults
+
+    /// Kept between launches, so native parts have the right colours before the page reports them.
+    private static let key = "mycroft.appearance"
+    private static var stored: Values? {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(Values.self, from: $0) }
+    }
 
     func apply(_ new: Values) {
         let merged = Values(
@@ -46,32 +52,14 @@ final class Appearance {
             canvas: new.canvas ?? Self.defaults.canvas, raised: new.raised ?? Self.defaults.raised,
             ink: new.ink ?? Self.defaults.ink, inkMuted: new.inkMuted ?? Self.defaults.inkMuted,
             success: new.success ?? Self.defaults.success, danger: new.danger ?? Self.defaults.danger)
-        if merged != values { values = merged }
+        guard merged != values else { return }
+        values = merged
+        UserDefaults.standard.set(try? JSONEncoder().encode(merged), forKey: Self.key)
     }
 
     func color(_ key: KeyPath<Values, String?>) -> Color {
         values[keyPath: key].flatMap(Color.init(hex:)) ?? Self.defaults[keyPath: key].flatMap(Color.init(hex:)) ?? .white
     }
-
-    /// Parses appearance.json and checks every colour, so a bad edit can't reach the UI.
-    nonisolated static func validate(_ data: Data) throws -> Values {
-        let values = try JSONDecoder().decode(Values.self, from: data)
-        let colours: [(String, String?)] = [
-            ("accent", values.accent), ("accentSoft", values.accentSoft), ("canvas", values.canvas), ("raised", values.raised),
-            ("ink", values.ink), ("inkMuted", values.inkMuted), ("success", values.success), ("danger", values.danger),
-        ]
-        for (name, value) in colours {
-            if let value, Color.components(hex: value) == nil {
-                throw AppearanceError(message: "\(name) is \"\(value)\"; colours are \"#RRGGBB\" hex strings")
-            }
-        }
-        return values
-    }
-}
-
-nonisolated struct AppearanceError: LocalizedError {
-    let message: String
-    var errorDescription: String? { "appearance.json: \(message)" }
 }
 
 extension Color {

@@ -3,7 +3,7 @@
 Two references, one rule: **the content is a terminal; the chrome is glass.**
 
 - **grep.ai** gives the content layer its voice: near-black canvas, monospace headlines, uppercase tracked labels, hairline borders, square corners, a dotted grid, one indigo accent. It reads like an engineer's console.
-- **iOS 27 Liquid Glass** gives the controls their physics. The tab bar, composer, voice orb, sheets and toolbars float above the content as real `glassEffect` material. They refract the terminal underneath and morph between states.
+- **iOS 27 Liquid Glass** gives the controls their physics. The composer, buttons, voice orb, sheets and bars float above the content as glass. They blur and lift the terminal underneath and press in when touched. Since the screen is the agent's own web code ([ADR 0009](decisions/0009-self-editable-web-ui.md)), the glass is CSS (`.glass` in `agent/generation-0/ui/style.css`): backdrop blur and saturation, a lit top edge, a specular gradient and press scaling.
 
 ## Tokens (captured from grep.ai, 18 Oct 2026)
 

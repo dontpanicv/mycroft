@@ -6,7 +6,8 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 ┌──────────────────────────── iPhone (iOS 27) ─────────────────────────────┐
 │                                                                          │
 │  Native host (Swift, signed, fixed)                                      │
-│  ├─ SwiftUI shell: threads, chat, voice, settings (Liquid Glass)         │
+│  ├─ WebUI: a WKWebView showing the active generation's ui/ (hot reload)  │
+│  │         + bridge to the app; native recovery screen (shake)           │
 │  ├─ RunController: BGContinuedProcessingTask / LongRunningIntent,        │
 │  │                 Live Activity progress, stall reporting               │
 │  ├─ VoiceSession: GPT-Live (client delegation), AVAudioSession, AirPods  │
@@ -21,7 +22,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 │                                                                          │
 │  Documents/ (file protection: until first unlock)                        │
 │  ├─ mycroft.sqlite              durable state for every thread           │
-│  └─ agent/generations/<n>/      agent source the agent may edit          │
+│  └─ agent/generations/<n>/      extension.js + ui/: agent and screen     │
 └─────────────────────────────────┬────────────────────────────────────────┘
                                   │ HTTPS (models) · SSH (hands)
           ┌───────────────────────┼─────────────────────────┐
@@ -37,11 +38,11 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 |---|---|---|---|
 | Native host | Swift | No. Changes need an Xcode build. | App process |
 | Agent runtime | JavaScript in a `JSContext` | **Yes.** Loaded from `Documents/agent/generations/<active>`. | Replaced on every self-edit; state survives in SQLite |
-| Message canvas (later) | HTML/JS in a `WKWebView` | Yes, artifacts and custom renderers | Per view |
+| Screen | HTML/JS (Preact + htm) in a `WKWebView` | **Yes.** `ui/` of the active generation, served over `mycroft-ui://` | Hot-swapped on every self-edit; UI state and conversations survive |
 
 **Why JavaScriptCore and not a WKWebView for the agent.** The spike (`spikes/background`) ran a `JSContext` in-process through 10+ minutes of background execution, including a self-edit and context swap. A WKWebView runs JS in a separate WebKit process that iOS throttles in the background. We give up WebKit's JIT; the agent is I/O-bound (model streaming, SSH), so that is acceptable. [PiDurableKit](https://github.com/finnvoor/PiDurableKit) already proves Pi Durable runs on JavaScriptCore.
 
-**Why the shell UI is SwiftUI.** Liquid Glass is a native material (`glassEffect`). The thread list, composer and voice surface stay native. Agent-authored UI (artifacts, renderers) goes into a web canvas inside a message, which the agent *can* modify.
+**Why the screen is web code.** At first it was SwiftUI, for real Liquid Glass, but compiled Swift can't change on the phone. Now everything on screen is the agent's own code in `ui/`, and it reloads in place like pim's "web > HMR". Liquid Glass is imitated in CSS. See [ADR 0009](decisions/0009-self-editable-web-ui.md). The agent itself stays in JavaScriptCore, where it keeps running in the background; the web view only renders.
 
 ## 2. Durable state
 
@@ -59,7 +60,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 
 ## 4. Self-modification
 
-As built (see ADR 0004): the agent rewrites `extension.js`, and `self_activate` installs it into the running harness. The steps below are the original plan; the TypeScript step was dropped because the agent writes plain JavaScript.
+As built (see ADRs 0004 and 0009): the agent rewrites `extension.js` and anything under `ui/`. `self_preview` shows it the draft screen. `self_activate` checks that the draft screen renders, installs `extension.js` into the running harness, and hot-swaps the screen in place. The steps below are the original plan; the TypeScript step was dropped because the agent writes plain JavaScript.
 
 1. The agent's source lives in `Documents/agent/generations/<n>/`. Generation 0 is copied from the app bundle on first launch.
 2. Self-edit tools (`self.read`, `self.edit`, `self.test`, `self.activate`) let the agent change a **new** generation, never the running one.

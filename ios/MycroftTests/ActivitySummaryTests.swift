@@ -47,13 +47,6 @@ struct ActivitySummaryTests {
 
 @Suite("Appearance")
 struct AppearanceTests {
-    @Test func validatesColours() throws {
-        let ok = try Appearance.validate(Data(##"{"accent": "#1F6F3A", "accentSoft": "#7FD99A"}"##.utf8))
-        #expect(ok.accent == "#1F6F3A")
-        #expect(throws: AppearanceError.self) { try Appearance.validate(Data(#"{"accent": "dark green"}"#.utf8)) }
-        #expect(throws: AppearanceError.self) { try Appearance.validate(Data(##"{"accent": "#12345"}"##.utf8)) }
-    }
-
     @Test func parsesHex() {
         let rgba = Color.components(hex: "#1F6F3A")
         #expect(rgba?.0 == Double(0x1F) / 255 && rgba?.3 == 1)

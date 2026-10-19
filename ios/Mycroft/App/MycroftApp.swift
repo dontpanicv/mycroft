@@ -7,6 +7,8 @@ struct MycroftApp: App {
 
     init() {
         RunController.shared.register()
+        // UI tests start from the home screen instead of where the screen's saved state left off.
+        if CommandLine.arguments.contains("--reset-ui") { UserDefaults.standard.removeObject(forKey: WebBridge.uiStateKey) }
     }
 
     var body: some Scene {
@@ -22,6 +24,7 @@ struct MycroftApp: App {
             case .active:
                 Journal.note("app_active")
                 RunController.shared.appBecameActive()
+                WebUI.shared.appBecameActive()
                 Task { await RunMonitor.shared.appBecameActive() }
             case .inactive, .background:
                 // Progress is shown outside the app only while the user is away from it.

@@ -1,17 +1,19 @@
 import Foundation
 import PiDurableKit
 
-/// The agent's own code, as numbered generations on disk.
+/// Mycroft's own code, agent and screen, as numbered generations on disk.
 ///
 /// ```
 /// Documents/agent/
 ///   state.json             active, last good, boot attempts, history
-///   generations/<n>/       extension.js, SELF.md — never edited once written
+///   generations/<n>/       extension.js, SELF.md, ui/ — never edited once written
 ///   draft/                 the next generation, being edited by the agent
 /// ```
 ///
 /// The agent edits the draft, `promoteDraft` freezes it as generation n+1. A generation that keeps failing to boot
-/// is rolled back to the last one that ran healthily. See docs/decisions/0004-self-modification-by-generations.md.
+/// is rolled back to the last one that ran healthily. A file a generation doesn't have comes from the app's bundled
+/// generation 0, so generations made before the UI moved into them still show a screen. See
+/// docs/decisions/0004-self-modification-by-generations.md and 0009-self-editable-web-ui.md.
 actor GenerationStore {
     struct Record: Codable, Sendable, Hashable, Identifiable {
         var generation: Int
@@ -32,8 +34,8 @@ actor GenerationStore {
 
     let root: URL
     private(set) var state = State()
-    /// The app's bundled generation 0: defaults for files an older generation doesn't have (appearance.json).
-    private var bundled: URL?
+    /// The app's bundled generation 0: the source of files an older generation doesn't have.
+    private(set) var bundled: URL?
     private let fm = FileManager.default
 
     init(root: URL = URL.documentsDirectory.appending(path: "agent", directoryHint: .isDirectory)) {
@@ -94,77 +96,106 @@ actor GenerationStore {
     // MARK: Loading
 
     func activeExtension() throws -> Extension {
-        try makeExtension(source: try String(contentsOf: folder(state.active).appending(path: "extension.js"), encoding: .utf8),
-                          generation: state.active)
+        try extensionFor(generation: state.active)
     }
 
     func extensionFor(generation: Int) throws -> Extension {
-        try makeExtension(source: try String(contentsOf: folder(generation).appending(path: "extension.js"), encoding: .utf8),
-                          generation: generation)
+        guard let url = Self.locate("extension.js", in: folder(generation), bundled: bundled) else {
+            throw SelfError.unknownGeneration(generation)
+        }
+        return makeExtension(source: try String(contentsOf: url, encoding: .utf8), generation: generation)
     }
 
     func draftExtension() throws -> (Extension, generation: Int) {
         let url = draft.appending(path: "extension.js")
         guard fm.fileExists(atPath: url.path) else { throw SelfError.noDraft }
         let next = nextGeneration
-        return (try makeExtension(source: try String(contentsOf: url, encoding: .utf8), generation: next), next)
+        return (makeExtension(source: try String(contentsOf: url, encoding: .utf8), generation: next), next)
     }
 
     var nextGeneration: Int { (state.history.map(\.generation).max() ?? 0) + 1 }
 
-    private func makeExtension(source: String, generation: Int) throws -> Extension {
+    private func makeExtension(source: String, generation: Int) -> Extension {
         let prelude = "const MYCROFT = Object.freeze({ generation: \(generation), device: \"iPhone\" });\n"
         return Extension(Self.extensionName, javaScript: prelude + source,
                          sourceURL: URL(string: "mycroft://generation/\(generation)/extension.js"))
     }
 
+    // MARK: Files
+
+    /// Where a file of a generation folder really is: the folder's own copy, or the app's generation 0.
+    nonisolated static func locate(_ path: String, in folder: URL, bundled: URL?) -> URL? {
+        let own = folder.appending(path: path)
+        if FileManager.default.fileExists(atPath: own.path) { return own }
+        if let fallback = bundled?.appending(path: path), FileManager.default.fileExists(atPath: fallback.path) { return fallback }
+        return nil
+    }
+
+    /// The folder of a generation, or of the draft, for serving its screen.
+    nonisolated static func folder(of generation: Int?, root: URL) -> URL {
+        guard let generation else { return root.appending(path: "draft", directoryHint: .isDirectory) }
+        return root.appending(path: "generations/\(generation)", directoryHint: .isDirectory)
+    }
+
+    /// Every file path of a generation folder, including the ones it inherits from generation 0.
+    private func effectiveFiles(_ folder: URL) -> Set<String> {
+        Self.files(in: folder).union(bundled.map(Self.files(in:)) ?? [])
+    }
+
+    private nonisolated static func files(in folder: URL) -> Set<String> {
+        guard let paths = FileManager.default.subpaths(atPath: folder.path) else { return [] }
+        return Set(paths.filter { path in
+            var directory: ObjCBool = false
+            FileManager.default.fileExists(atPath: folder.appending(path: path).path, isDirectory: &directory)
+            return !directory.boolValue && !path.hasSuffix(".DS_Store")
+        })
+    }
+
+    private var workingFolder: URL { fm.fileExists(atPath: draft.path) ? draft : folder(state.active) }
+
     // MARK: Editing
 
-    /// Reads a file of the active generation, or of pi-durable's bundled documentation under `docs/pi-durable/`.
+    /// Reads a file of the draft (or of the active generation without one), or of pi-durable's bundled documentation
+    /// under `docs/pi-durable/`.
     func read(_ path: String) throws -> String {
         let clean = try sanitize(path)
         if clean.hasPrefix("docs/pi-durable/") {
             let url = PiDurable.documentation.appending(path: "pi-durable/" + clean.dropFirst("docs/pi-durable/".count))
             return try String(contentsOf: url, encoding: .utf8)
         }
-        let base = fm.fileExists(atPath: draft.path) ? draft : folder(state.active)
-        let url = base.appending(path: clean)
-        if !fm.fileExists(atPath: url.path), let fallback = bundled?.appending(path: clean), fm.fileExists(atPath: fallback.path) {
-            return try String(contentsOf: fallback, encoding: .utf8)  // e.g. appearance.json in an older generation
-        }
-        guard fm.fileExists(atPath: url.path) else { throw SelfError.notFound(clean) }
+        guard let url = Self.locate(clean, in: workingFolder, bundled: bundled) else { throw SelfError.notFound(clean) }
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    /// The active generation's appearance.json, or the app's default.
-    func appearance() -> Data? {
-        let own = folder(state.active).appending(path: "appearance.json")
-        if let data = try? Data(contentsOf: own) { return data }
-        return bundled.flatMap { try? Data(contentsOf: $0.appending(path: "appearance.json")) }
-    }
-
-    /// A file of the draft, if the draft has one.
-    func draftFile(_ name: String) -> Data? {
-        try? Data(contentsOf: draft.appending(path: name))
-    }
-
     func list() throws -> [String] {
-        let base = fm.fileExists(atPath: draft.path) ? draft : folder(state.active)
-        let own = Array(Set(((try? fm.contentsOfDirectory(atPath: base.path)) ?? []) + ["appearance.json"]))
         let docs = (try? fm.subpathsOfDirectory(atPath: PiDurable.documentation.appending(path: "pi-durable").path)) ?? []
-        return own.sorted() + docs.filter { $0.hasSuffix(".md") || $0.hasSuffix(".d.ts") }.sorted().map { "docs/pi-durable/" + $0 }
+        return effectiveFiles(workingFolder).sorted()
+            + docs.filter { $0.hasSuffix(".md") || $0.hasSuffix(".d.ts") }.sorted().map { "docs/pi-durable/" + $0 }
     }
 
-    /// Writes into the draft, creating it as a copy of the active generation first.
+    /// Writes into the draft, creating it as a complete copy of the active generation first.
     func write(_ path: String, content: String) throws {
         let clean = try sanitize(path)
         guard !clean.hasPrefix("docs/") else { throw SelfError.readOnly(clean) }
-        if !fm.fileExists(atPath: draft.path) {
-            try fm.copyItem(at: folder(state.active), to: draft)
-        }
+        try ensureDraft()
         let url = draft.appending(path: clean)
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(content.utf8).write(to: url, options: .atomic)
+    }
+
+    var hasDraft: Bool { fm.fileExists(atPath: draft.path) }
+
+    /// Starts the draft as a full tree: the active generation plus what it inherits from generation 0.
+    private func ensureDraft() throws {
+        guard !fm.fileExists(atPath: draft.path) else { return }
+        let active = folder(state.active)
+        try fm.copyItem(at: active, to: draft)
+        for path in effectiveFiles(active) where !fm.fileExists(atPath: draft.appending(path: path).path) {
+            guard let source = Self.locate(path, in: active, bundled: bundled) else { continue }
+            let target = draft.appending(path: path)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: source, to: target)
+        }
     }
 
     func discardDraft() throws {
@@ -175,14 +206,11 @@ actor GenerationStore {
     func diff() throws -> String {
         guard fm.fileExists(atPath: draft.path) else { return "No draft. Write a file with self_write first." }
         let active = folder(state.active)
-        let names = Set((try fm.contentsOfDirectory(atPath: draft.path)) + (try fm.contentsOfDirectory(atPath: active.path)))
         var out: [String] = []
-        for name in names.sorted() {
-            let old = (try? String(contentsOf: active.appending(path: name), encoding: .utf8)) ?? ""
-            let new = (try? String(contentsOf: draft.appending(path: name), encoding: .utf8)) ?? ""
-            guard old != new else { continue }
+        for name in changedFiles(from: active, to: draft) {
             out.append("--- generation \(state.active)/\(name)\n+++ draft/\(name)")
-            let difference = new.components(separatedBy: "\n").difference(from: old.components(separatedBy: "\n"))
+            let difference = text(name, in: draft).components(separatedBy: "\n")
+                .difference(from: text(name, in: active).components(separatedBy: "\n"))
             for change in difference {
                 switch change {
                 case .remove(let offset, let line, _): out.append("-\(offset + 1): \(line)")
@@ -191,6 +219,33 @@ actor GenerationStore {
             }
         }
         return out.isEmpty ? "The draft is identical to generation \(state.active)." : out.joined(separator: "\n")
+    }
+
+    /// The screen files (under `ui/`, given relative to it) that differ between two generations.
+    func uiChanges(from old: Int, to new: Int) -> [String] {
+        Self.uiPaths(changedFiles(from: folder(old), to: folder(new)))
+    }
+
+    /// The screen files the draft changes.
+    func draftUIChanges() -> [String] {
+        guard fm.fileExists(atPath: draft.path) else { return [] }
+        return Self.uiPaths(changedFiles(from: folder(state.active), to: draft))
+    }
+
+    private static func uiPaths(_ paths: [String]) -> [String] {
+        paths.filter { $0.hasPrefix("ui/") }.map { String($0.dropFirst(3)) }
+    }
+
+    private func changedFiles(from old: URL, to new: URL) -> [String] {
+        effectiveFiles(old).union(effectiveFiles(new)).sorted().filter { name in
+            let a = Self.locate(name, in: old, bundled: bundled).flatMap { try? Data(contentsOf: $0) }
+            let b = Self.locate(name, in: new, bundled: bundled).flatMap { try? Data(contentsOf: $0) }
+            return a != b
+        }
+    }
+
+    private func text(_ name: String, in folder: URL) -> String {
+        Self.locate(name, in: folder, bundled: bundled).flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
     }
 
     /// Freezes the draft as the next generation and makes it active.
