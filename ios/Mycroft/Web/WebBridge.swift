@@ -28,8 +28,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     private var stateFeed: Task<Void, Never>?
     private var viewFeeds: [Int: Task<Void, Never>] = [:]
     private var feeds: [String: Task<Void, Never>] = [:]
-    private var transcriber: Transcriber?
-    private var voice: (any VoiceEngine)?
+    private let listener = Listener()
     private var server: InstallServer?
     private var copiedCommand = ""
     private var safari: SFSafariViewController?
@@ -114,7 +113,6 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             try writable()
             let value: String = args.string("value") ?? ""
             switch args.string("name") {
-            case "openai": try app.saveOpenAIKey(value)
             case "jev": try app.saveJevKey(value)
             default: throw BridgeError("Unknown key \(args.string("name") ?? "")")
             }
@@ -134,17 +132,27 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "pairing.stop":
             stopPairing()
 
-        // Voice
-        case "dictation.start":
+        // Voice: one turn of speech in a thread (Voice/Listener.swift)
+        case "listen.start":
             try writable()
-            startDictation()
-        case "dictation.stop":
-            return ["text": await stopDictation()]
-        case "voice.start":
+            let mode = Listener.Mode(rawValue: args.string("mode") ?? "") ?? .auto
+            await listener.start(try thread(args), mode: mode, prefix: args.string("prefix") ?? "", app: app)
+            followListener()
+        case "listen.mode":
+            listener.setMode(Listener.Mode(rawValue: args.string("mode") ?? "") ?? .auto)
+        case "listen.send":
             try writable()
-            startVoice()
-        case "voice.stop":
-            stopVoice()
+            await listener.send()
+        case "listen.stop":
+            return ["text": await listener.stop()]
+        case "listen.cancel":
+            listener.cancel()
+        case "listen.readAloud":
+            try writable()
+            await listener.setReadAloud(args.bool("on") ?? false, thread: try thread(args), app: app)
+            followListener()
+        case "listen.close":
+            listener.shutDown()
 
         // Self
         case "generation.rollback":
@@ -210,7 +218,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             "generation": Self.object(app.generation) ?? NSNull(),
             "threads": Self.object(app.threads) ?? [],
             "signIn": signIn,
-            "keys": ["openai": app.hasOpenAIKey, "jev": app.hasJevKey],
+            "keys": ["jev": app.hasJevKey],
             "machines": Self.object(app.machines) ?? [],
             "notices": app.notices,
             "model": Provider.defaultModel.modelId,
@@ -283,8 +291,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         viewFeeds.values.forEach { $0.cancel() }
         viewFeeds = [:]
         stopPairing()
-        Task { _ = await stopDictation() }
-        stopVoice()
+        listener.shutDown()
     }
 
     /// The page went away for good.
@@ -293,57 +300,12 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         stopFeeds()
     }
 
-    // MARK: Dictation, voice, pairing
+    // MARK: Voice, pairing
 
-    private func startDictation() {
-        let transcriber = transcriber ?? Transcriber()
-        self.transcriber = transcriber
-        Task { await transcriber.start() }
-        feed("dictation") {
-            var state: [String: Any] = ["text": transcriber.text, "level": transcriber.level]
-            switch transcriber.state {
-            case .idle: state["state"] = "idle"
-            case .preparing: state["state"] = "preparing"
-            case .listening: state["state"] = "listening"
-            case .failed(let message): state["state"] = "failed"; state["message"] = message
-            }
-            return state
-        }
-    }
-
-    private func stopDictation() async -> String {
-        feeds.removeValue(forKey: "dictation")?.cancel()
-        guard let transcriber else { return "" }
-        let text = await transcriber.stop()
-        send("dictation", ["state": "idle", "text": text, "level": 0])
-        return text
-    }
-
-    private func startVoice() {
-        voice?.stop()
-        let engine: any VoiceEngine = app.hasOpenAIKey ? VoiceSession() : OnDeviceVoice()
-        voice = engine
-        Task { await engine.start(app: app) }
-        feed("voice", every: .milliseconds(80)) {
-            [
-                "status": engine.statusText, "live": engine.isLive, "speaking": engine.speaking, "level": engine.level,
-                "failure": engine.failure ?? NSNull(), "engine": engine is VoiceSession ? "gpt-live" : "on-device",
-                "lines": engine.lines.map { line in
-                    let speaker = switch line.speaker {
-                    case .user: "user"
-                    case .mycroft: "mycroft"
-                    case .step: "step"
-                    }
-                    return ["id": line.id.uuidString, "text": line.text, "speaker": speaker]
-                },
-            ]
-        }
-    }
-
-    private func stopVoice() {
-        feeds.removeValue(forKey: "voice")?.cancel()
-        voice?.stop()
-        voice = nil
+    /// The `listen` events while the listener is in use; they stop with the page.
+    private func followListener() {
+        guard feeds["listen"] == nil else { return }
+        feed("listen", every: .milliseconds(80)) { [listener] in listener.snapshot() }
     }
 
     private func startPairing(prefer: String?) async {
@@ -488,6 +450,7 @@ struct Args {
     init(_ values: [String: Any]) { self.values = values }
 
     func string(_ key: String) -> String? { values[key] as? String }
+    func bool(_ key: String) -> Bool? { (values[key] as? NSNumber)?.boolValue }
     func int(_ key: String) -> Int? { (values[key] as? NSNumber)?.intValue ?? (values[key] as? String).flatMap(Int.init) }
 
     func require<T>(_ key: String) throws -> T {

@@ -58,6 +58,7 @@ nonisolated enum HandsTools {
                     Machines paired with hands. Every hands_* tool takes `machine`; use the exact name below.
                     \(lines.joined(separator: "\n"))
                     - The user may say "the Mac", "the Linux box" or "the server": pick the machine that matches; ask only if two match.
+                    - The user often talks instead of typing, and on-device speech recognition turns unusual names into sound-alikes ("vendor too" for bender-2). Match what you read to these names by sound.
                     - You can use several machines in one turn. Calls in the same step run at the same time, so start independent work on different machines together.
                     - For something that must keep running while you do other things (a server, a watcher, a build), use hands_job_start, and stop it with hands_job_cancel when you are done.
                     - When one machine has to reach another, use the other machine's address from this list, not localhost.

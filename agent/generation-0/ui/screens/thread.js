@@ -1,5 +1,7 @@
 // One thread: the transcript as a console (user turns as bordered blocks, prose, numbered tool rows) and the
-// glass composer with dictation, send, steer and stop.
+// glass composer with voice, send, steer and stop. Voice is the app's on-device listener (the `listen` events): hold
+// the mic to talk and let go to send, or tap it and pause; "Read aloud" in the header reads answers and keeps
+// listening.
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Markdown, Spinner, pad, duration, summarize, haptic } from '../lib.js'
@@ -15,7 +17,10 @@ export function Thread({ id }) {
 
 	useEffect(() => {
 		call('thread.open', { id }).catch((e) => setError(e.message))
-		return () => call('thread.close', { id }).catch(() => {})
+		return () => {
+			call('thread.close', { id }).catch(() => {})
+			call('listen.close').catch(() => {})
+		}
 	}, [id])
 
 	// Follow the bottom while the user is there.
@@ -47,7 +52,7 @@ export function Thread({ id }) {
 					<span class="title mono">${meta?.title ?? 'Thread'}</span>
 					<span class=${`label tiny ${busy ? 'soft' : 'faint'}`} id="status">${busy ? 'Running' : 'Idle'}</span>
 				</div>
-				<span class="bar-side"></span>
+				<${ReadAloud} id=${id} onError=${setError} />
 				${showProgress && html`<div class="progress"></div>`}
 			</header>
 			<div class="scroll transcript" ref=${scroller} onScroll=${onScroll}>
@@ -167,17 +172,52 @@ function ToolRow({ index, call, result, live }) {
 	</div>`
 }
 
+// MARK: Voice
+
+/** The listener's state when it is listening for this thread. */
+function useListen(id) {
+	const listen = useData((d) => d.listen)
+	return listen?.thread === id ? listen : null
+}
+
+/** Reads answers aloud and keeps listening between turns. */
+function ReadAloud({ id, onError }) {
+	const call = useCall()
+	const listen = useListen(id)
+	const on = !!listen?.readAloud
+	const toggle = () => {
+		haptic(call)
+		call('listen.readAloud', { id, on: !on }).catch((error) => onError(error.message))
+	}
+	return html`<button class=${`icon-button glass ${on ? 'on' : ''}`} aria-label="Read aloud" aria-pressed=${on} onClick=${toggle}>
+		<${Icon} name=${on ? 'speaker' : 'speakerOff'} />
+	</button>`
+}
+
+/** What the listener is doing, in a few words. */
+function voiceHint(listen, holding) {
+	if (!listen) return null
+	if (listen.state === 'preparing') return 'Starting the microphone…'
+	if (holding === 'hold') return 'Release to send · slide ↑ to lock · ← to cancel'
+	if (listen.speaking) return 'Reading · talk to interrupt'
+	if (listen.sendsIn != null) return 'Sending · tap the mic to keep it'
+	if (listen.awaitingAnswer && !listen.text) return 'Working · the answer will be read'
+	if (listen.state === 'on') return listen.text ? 'Pause to send, or say "send it"' : 'Listening'
+	return null
+}
+
 // MARK: Composer
 
 function Composer({ id, busy, model, onError }) {
 	const call = useCall()
 	const [drafts, setDrafts] = useUI('drafts', {})
-	const dictation = useData((d) => d.dictation)
-	const [dictating, setDictating] = useState(false)
-	const before = useRef('')
+	const listen = useListen(id)
+	const active = listen?.state === 'on' || listen?.state === 'preparing'
+	const [holding, setHolding] = useState(null)
+	const press = useRef(null)
 	const field = useRef(null)
 	const draft = drafts[id] ?? ''
-	const text = dictating && dictation?.text ? [before.current, dictation.text].filter(Boolean).join(' ') : draft
+	const text = active ? [listen.prefix, listen.text].filter(Boolean).join(' ') : draft
 	const empty = !text.trim()
 	const setDraft = (value) => setDrafts((all) => ({ ...all, [id]: value }))
 
@@ -188,17 +228,29 @@ function Composer({ id, busy, model, onError }) {
 		el.style.height = `${Math.min(el.scrollHeight, 160)}px`
 	}, [text])
 
+	// The listener sent a turn (with the typed draft before it): the draft is gone.
+	const sent = useRef(listen?.sent)
 	useEffect(() => {
-		if (dictating && dictation?.state === 'failed') {
-			setDictating(false)
-			onError(dictation.message)
-		}
-	}, [dictation?.state])
+		if (listen && sent.current != null && listen.sent > sent.current) setDraft('')
+		sent.current = listen?.sent
+	}, [listen?.sent])
+	useEffect(() => {
+		if (listen?.error) onError(listen.error)
+	}, [listen?.error])
+
+	/** Stops listening and keeps what was said in the draft, to edit. */
+	const keep = async () => {
+		const { text: kept } = await call('listen.stop')
+		if (kept) setDraft(kept)
+	}
 
 	const send = async () => {
+		if (active) {
+			haptic(call)
+			return call('listen.send').catch((error) => onError(error.message))
+		}
 		const value = text.trim()
 		if (!value) return
-		if (dictating) await toggleDictation()
 		setDraft('')
 		haptic(call)
 		try {
@@ -210,36 +262,83 @@ function Composer({ id, busy, model, onError }) {
 		}
 	}
 
-	const toggleDictation = async () => {
-		if (dictating) {
-			setDictating(false)
-			const { text: heard } = await call('dictation.stop')
-			setDraft([before.current, heard].filter(Boolean).join(' '))
-		} else {
-			before.current = draft.trim()
-			setDictating(true)
-			call('dictation.start').catch((error) => { setDictating(false); onError(error.message) })
+	// The mic: hold to talk and let go to send; slide up to lock, left to cancel. A quick tap listens until a pause
+	// sends it. Tapping while it listens stops and keeps the words.
+	const down = (event) => {
+		event.currentTarget.setPointerCapture?.(event.pointerId)
+		if (active) {
+			press.current = { stop: true }
+			return
+		}
+		press.current = { x: event.clientX, y: event.clientY, at: Date.now() }
+		setHolding('hold')
+		haptic(call)
+		call('listen.start', { id, mode: 'hold', prefix: draft.trim() }).catch((error) => {
+			setHolding(null)
+			onError(error.message)
+		})
+	}
+	const move = (event) => {
+		const p = press.current
+		if (!p || p.stop || p.done) return
+		if (event.clientY - p.y < -60) {
+			p.done = true
+			setHolding(null)
+			haptic(call)
+			call('listen.mode', { mode: 'auto' })
+		} else if (event.clientX - p.x < -80) {
+			p.done = true
+			setHolding(null)
+			haptic(call, 'medium')
+			call('listen.cancel')
 		}
 	}
+	const up = () => {
+		const p = press.current
+		press.current = null
+		setHolding(null)
+		if (!p || p.done) return
+		if (p.stop) return keep()
+		if (Date.now() - p.at < 350) return call('listen.mode', { mode: 'auto' })
+		call('listen.send').catch((error) => onError(error.message))
+	}
 
+	const hint = voiceHint(active ? listen : null, holding)
+	const counting = active && listen.sendsIn != null
 	return html`<div class="composer">
 		<div class="row gap chips">
-			<${Tag}>${model ?? 'gpt-6.1-sol'}<//>
-			<${Tag}>Phone<//>
-			${busy && html`<${Tag} tone="soft">${empty ? 'Running' : 'Steer'}<//>`}
-			${dictating && html`<${Tag} tone="soft">On-device dictation<//>`}
+			${hint
+				? html`<${Tag} tone="soft">${hint}<//>`
+				: html`<${Tag}>${model ?? 'gpt-6.1-sol'}<//><${Tag}>Phone<//>`}
+			${busy && !hint && html`<${Tag} tone="soft">${empty ? 'Running' : 'Steer'}<//>`}
 		</div>
 		<div class="row gap end">
-			<textarea ref=${field} class="field glass" rows="1" aria-label="Message Mycroft"
-				placeholder=${busy ? 'Steer the run…' : 'Message Mycroft'} value=${text}
+			<textarea ref=${field} class=${`field glass ${active ? 'live' : ''}`} rows="1" aria-label="Message Mycroft"
+				placeholder=${active ? 'Listening…' : busy ? 'Steer the run…' : 'Message Mycroft'} value=${text}
+				readOnly=${active} onFocus=${active ? keep : undefined}
 				onInput=${(event) => setDraft(event.target.value)}></textarea>
-			<button class=${`icon-button glass tall ${dictating ? 'listening' : ''}`} aria-label=${dictating ? 'Stop dictation' : 'Dictate'}
-				onClick=${toggleDictation} style=${dictating ? `--level:${dictation?.level ?? 0}` : ''}>
-				<${Icon} name=${dictating ? 'wave' : 'mic'} />
+			<button class=${`icon-button glass tall mic ${active ? 'listening' : ''} ${holding ? 'held' : ''}`}
+				aria-label=${active ? 'Stop listening' : 'Talk'} style=${active ? `--level:${listen.level ?? 0}` : ''}
+				onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
+				onContextMenu=${(event) => event.preventDefault()}>
+				<${Icon} name=${active ? 'wave' : 'mic'} />
 			</button>
-			${busy && empty && !dictating
+			${busy && empty && !active
 				? html`<button class="round glass" aria-label="Stop" onClick=${() => { haptic(call, 'medium'); call('thread.stop', { id }) }}><${Icon} name="stop" size=${16} stroke=${2.6} /></button>`
-				: html`<button class="round glass prominent" aria-label=${busy ? 'Steer' : 'Send'} disabled=${empty} onClick=${send}><${Icon} name="up" stroke=${2.4} /></button>`}
+				: html`<button class="round glass prominent send" aria-label=${busy ? 'Steer' : 'Send'} disabled=${empty} onClick=${send}>
+						${counting && html`<${Countdown} total=${listen.countdown} left=${listen.sendsIn} />`}
+						<${Icon} name="up" stroke=${2.4} />
+					</button>`}
 		</div>
 	</div>`
+}
+
+/** A ring that fills around the send button until a paused turn sends itself. */
+function Countdown({ total, left }) {
+	// Started once, with the time left then: later events only confirm it.
+	const [start] = useState(() => ({ delay: -(total - left) }))
+	return html`<svg class="countdown" viewBox="0 0 48 48" aria-hidden="true">
+		<circle cx="24" cy="24" r="22" pathLength="100"
+			style=${`animation-duration:${total}ms; animation-delay:${start.delay}ms`} />
+	</svg>`
 }

@@ -8,9 +8,8 @@ import { Threads } from './screens/threads.js'
 import { Thread } from './screens/thread.js'
 import { Settings, Notices } from './screens/settings.js'
 import { Pair } from './screens/pair.js'
-import { Voice } from './screens/voice.js'
 
-/** Routes: '#/' threads, '#/t/<id>' a thread, '#/settings', '#/notices', '#/pair', '#/voice'. */
+/** Routes: '#/' threads, '#/t/<id>' a thread, '#/settings', '#/notices', '#/pair'. */
 function screenFor(route) {
 	const [, name, arg] = route.match(/^#\/([^/]*)\/?(.*)$/) ?? []
 	switch (name) {
@@ -18,7 +17,6 @@ function screenFor(route) {
 		case 'settings': return html`<${Settings} />`
 		case 'notices': return html`<${Notices} />`
 		case 'pair': return html`<${Pair} />`
-		case 'voice': return html`<${Voice} />`
 		default: return html`<${Threads} />`
 	}
 }

@@ -32,8 +32,8 @@ function createStore(initial) {
 }
 
 // What the app tells the screen: `state` (threads, sign-in, generations, machines…), `views` (open threads by id),
-// and the latest `dictation`, `voice` and `pairing` events. See README.md for their shapes.
-const data = createStore({ state: null, views: {}, dictation: null, voice: null, pairing: null })
+// and the latest `listen` and `pairing` events. See README.md for their shapes.
+const data = createStore({ state: null, views: {}, listen: null, pairing: null })
 
 // What the screen remembers about itself: navigation, drafts… Saved in the app, so it survives hot reloads,
 // full reloads and relaunches.

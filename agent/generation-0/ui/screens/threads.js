@@ -1,4 +1,4 @@
-// The home screen: the thread list, sign-in when needed, and the two floating buttons (voice, new thread).
+// The home screen: the thread list, sign-in when needed, and the floating new-thread button.
 
 import { html, useState } from '/lib/preact.js'
 import { useData, useCall, useNavigation, Icon, Label, Tag, pad, ago, haptic } from '../lib.js'
@@ -64,7 +64,6 @@ export function Threads() {
 			<div class="spacer"></div>
 		</main>
 
-		<button class="fab fab-left glass" aria-label="Talk to Mycroft" onClick=${() => go('#/voice')}><${Icon} name="wave" size=${22} /></button>
 		<button class="fab fab-right glass prominent" aria-label="New thread" disabled=${creating} onClick=${create}>
 			<${Icon} name="plus" size=${24} stroke=${2.2} />
 		</button>

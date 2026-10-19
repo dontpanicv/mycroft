@@ -13,10 +13,10 @@ lives in a store that survives the swap.
 | `boot.js` | The link to the app, the two stores, and the hot swap. Changing it (or index.html) means a full page reload. |
 | `app.js` | `mount(root, runtime)` / `unmount(root)`, the routes, the edge-swipe back, the theme report. |
 | `lib.js` | Hooks (`useData`, `useUI`, `useCall`, `useNavigation`), markdown, formatting, icons, `Label`, `Tag`, `Spinner`. |
-| `screens/threads.js` | Home: thread list, sign-in, voice and new-thread buttons. |
+| `screens/threads.js` | Home: thread list, sign-in, the new-thread button. |
 | `screens/thread.js` | A thread: transcript (user turns, prose, numbered tool rows) and the composer. |
 | `screens/settings.js` | Settings: sign-in, keys, generations, machines, notices. |
-| `screens/pair.js`, `screens/voice.js` | Adding a machine; the voice orb. |
+| `screens/pair.js` | Adding a machine. |
 | `style.css` | All styling. Colours are CSS variables in `:root` (`--accent`, `--accent-soft`, `--canvas`, `--raised`, `--ink`, `--ink-muted`, `--success`, `--danger`). |
 
 Imports are relative (`./lib.js`) except the runtime: `import { html, render, useState, … } from '/lib/preact.js'`
@@ -43,7 +43,7 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
 ## The runtime (`useRuntime()`)
 
 - `call(op, args)` → Promise of the app's answer (rejects with its error message).
-- `data`: the app's store: `{ state, views, dictation, voice, pairing }`. Use `useData((d) => …)`.
+- `data`: the app's store: `{ state, views, listen, pairing }`. Use `useData((d) => …)`.
 - `ui`: the screen's own store, saved in the app. Use `useUI(key, initial)`. `stack` (navigation) and `drafts`
   (composer text by thread id) live here.
 - `on(type, fn)`: raw events from the app.
@@ -58,7 +58,7 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
   generation: { active, lastGood, history: [{ generation, note, createdAt }] },
   threads: [{ id, title, createdAt, updatedAt, archived, machine? }],      // newest first
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
-  keys: { openai: bool, jev: bool },
+  keys: { jev: bool },
   machines: [{ name, hostname, addresses, port, os, arch, version, pairedAt }],
   notices: [string], model: 'gpt-6.1-sol', screenErrors: [string] }
 ```
@@ -78,8 +78,13 @@ is the answer being written right now.
 
 Other events:
 
-- `dictation`: `{ state: 'idle'|'preparing'|'listening'|'failed', text, level, message? }`
-- `voice`: `{ status, live, speaking, level, failure, engine, lines: [{ id, speaker: 'user'|'mycroft'|'step', text }] }`
+- `listen`: the on-device listener, which listens for one thread at a time: `{ state: 'off'|'preparing'|'on'|'failed',
+  thread, mode: 'hold'|'auto', readAloud, text, prefix, level, speaking, awaitingAnswer, sent, sendsIn, countdown,
+  error }`. `text` is what is being said in this turn and `prefix` the typed draft it goes after. In `auto` mode a
+  pause starts a countdown (`sendsIn` ms left of `countdown`), then the app sends `prefix + text` itself and bumps
+  `sent`. "Send it" sends at once and "scratch that" clears the turn. With `readAloud`, the app reads each answer
+  aloud (`speaking`; talking interrupts it) and keeps listening. The loop is native, so it runs with the screen
+  locked.
 - `pairing`: `{ state: 'starting'|'waiting'|'paired'|'failed', command, pinned, copied, localNetwork, addresses: [{ network, ip }], chosen, machine?, message? }`. `addresses` are where a computer could reach the phone, nearest first; `network` is `Wi-Fi`, `Ethernet`, `Tailscale`, `NetBird`, `VPN`, `Personal Hotspot` or an interface name. `command` (short, on the clipboard) and `pinned` use the `chosen` one.
 
 ## Ops
@@ -93,13 +98,18 @@ Other events:
 | `thread.stop` / `thread.archive` | `id` | |
 | `signin.start` / `signin.signOut` | | ChatGPT device-code sign-in; progress arrives in `state.signIn` |
 | `signin.open` | `url, code?` | copies the code, opens the page in-app |
-| `keys.save` | `name: 'openai'\|'jev', value` | empty value removes the key |
+| `keys.save` | `name: 'jev', value` | empty value removes the key |
 | `machines.check` | | `{ name: 'online' \| reason }` |
 | `machines.forget` | `name` | |
 | `pairing.start` / `pairing.stop` | `prefer?` (a network name) | install server for a new machine; `pairing` events |
 | `pairing.choose` | `ip` | which address the commands use; the new command is copied |
-| `dictation.start` / `dictation.stop` | | on-device speech to text; `stop` returns `{ text }` |
-| `voice.start` / `voice.stop` | | the voice conversation; `voice` events |
+| `listen.start` | `id, mode: 'hold'\|'auto', prefix?` | listen for thread `id`; `listen` events |
+| `listen.mode` | `mode` | `auto` after a hold was slid up (locked) or a tap |
+| `listen.send` | | send this turn now (the mic was released, or send tapped) |
+| `listen.stop` | | stop listening; returns `{ text }` (prefix and words) for the draft |
+| `listen.cancel` | | throw this turn away |
+| `listen.readAloud` | `id, on` | read answers aloud and keep listening |
+| `listen.close` | | stop everything (the thread's screen went away) |
 | `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |
 | `clipboard.copy` | `text` | |
 | `haptic` | `style: 'light'\|'medium'\|'success'\|'error'\|'selection'` | |

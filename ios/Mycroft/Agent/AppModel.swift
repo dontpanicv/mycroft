@@ -53,7 +53,6 @@ final class AppModel {
         protectDocuments()
         notices += await DevImport.run(models: models)
         hasJevKey = Keychain.read(Secret.jev) != nil
-        hasOpenAIKey = Keychain.read(Secret.openAI) != nil
         do {
             guard let bundled = Bundle.main.url(forResource: "generation-0", withExtension: nil) else {
                 throw StartError.missingGeneration0
@@ -205,37 +204,11 @@ final class AppModel {
         RunMonitor.shared.runSubmitted(current)
     }
 
-    /// The thread live voice works in, created on first use.
-    func voiceThread() async throws -> ThreadMeta {
-        if let existing = threads.first(where: { $0.title == Self.voiceTitle }) { return existing }
-        var thread = try await newThread()
-        thread.title = Self.voiceTitle
-        let id = thread.id
-        try await harness?.update(Threads.document) { list in
-            if let index = list.items.firstIndex(where: { $0.id == id }) { list.items[index].title = Self.voiceTitle }
-        }
-        return thread
-    }
-
-    nonisolated static let voiceTitle = "Voice"
-
     func isBusy(_ thread: ThreadMeta) async -> Bool {
         ((try? await harness?.conversation(thread.id)?.liveState())?.run) != nil
     }
 
-    /// What the newest turn did so far, as activity headlines, oldest first.
-    func recentSteps(_ thread: ThreadMeta) async -> [String] {
-        guard let conversation = try? await harness?.conversation(thread.id),
-            let entries = try? await conversation.entries(limit: 24).items
-        else { return [] }
-        var calls: [ToolCall] = []
-        for entry in entries {
-            if entry.kind == .user { break }
-            for case .toolCall(let call) in entry.assistantMessage?.content ?? [] { calls.insert(call, at: 0) }
-        }
-        return calls.map { ActivitySummary.describe(tool: $0.name, arguments: $0.arguments).headline }
-    }
-
+    /// The newest answer in the thread, as text: what reading aloud reads.
     func lastAnswer(_ thread: ThreadMeta) async -> String? {
         let entries = (try? await harness?.conversation(thread.id)?.entries(limit: 6).items) ?? []
         return entries.first(where: { $0.kind == .assistant })?.assistantMessage?.content.compactMap(\.text).joined(separator: "\n")
@@ -353,16 +326,6 @@ final class AppModel {
     func signOut() async {
         try? await models.logout(from: Provider.codex)
         signIn = .signedOut
-    }
-
-    // MARK: Keys
-
-    private(set) var hasOpenAIKey = Keychain.read(Secret.openAI) != nil
-
-    func saveOpenAIKey(_ key: String) throws {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { Keychain.delete(Secret.openAI) } else { try Keychain.write(trimmed, for: Secret.openAI) }
-        hasOpenAIKey = !trimmed.isEmpty
     }
 
     // MARK: Jev

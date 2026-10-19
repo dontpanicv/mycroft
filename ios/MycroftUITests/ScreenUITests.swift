@@ -58,9 +58,6 @@ final class ScreenUITests: XCTestCase {
         app.swipeUp()
         snap(app, "settings-2")
         app.buttons["Back"].tap()
-        app.buttons["Talk to Mycroft"].tap()
-        sleep(3)
-        snap(app, "voice")
     }
 
     /// Add machine: the short command, and the network picker switching it to another of the phone's addresses.
@@ -93,6 +90,26 @@ final class ScreenUITests: XCTestCase {
         waitForExpectations(timeout: 5)
         print("PAIR: \(first) → \(command.label)")
         snap(app, "pair-vpn")
+    }
+
+    /// Voice lives in every thread: the mic in the composer and "Read aloud" in the header. The Simulator has no speech
+    /// models, so starting fails, and says why.
+    func testVoiceControls() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+        XCTAssertTrue(app.buttons["New thread"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["Talk to Mycroft"].exists, "the separate voice screen is gone")
+        app.buttons["New thread"].tap()
+        XCTAssertTrue(app.buttons["Talk"].waitForExistence(timeout: 10))
+        // aria-pressed makes it a toggle to accessibility, not a plain button.
+        XCTAssertTrue(app.descendants(matching: .any)["Read aloud"].exists)
+        snap(app, "voice-controls")
+        app.buttons["Talk"].tap()
+        let failure = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'speech'")).firstMatch
+        XCTAssertTrue(failure.waitForExistence(timeout: 15), "starting the mic without speech models says why")
+        snap(app, "voice-unavailable")
+        XCTAssertTrue(app.buttons["Talk"].exists, "the mic is back to its resting state")
     }
 
     private func snap(_ app: XCUIApplication, _ name: String) {

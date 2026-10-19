@@ -26,16 +26,6 @@ enum DevImport {
             }
             try? fm.removeItem(at: codex)
         }
-        let openAI = folder.appending(path: "openai.key")
-        if fm.fileExists(atPath: openAI.path) {
-            if let key = try? String(contentsOf: openAI, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-                !key.isEmpty
-            {
-                try? Keychain.write(key, for: Secret.openAI)
-                imported.append("OpenAI API key for live voice")
-            }
-            try? fm.removeItem(at: openAI)
-        }
         let jev = folder.appending(path: "jev.key")
         if fm.fileExists(atPath: jev.path) {
             if let key = try? String(contentsOf: jev, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),

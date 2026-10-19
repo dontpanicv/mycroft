@@ -10,7 +10,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 │  │         + bridge to the app; native recovery screen (shake)           │
 │  ├─ RunController: BGContinuedProcessingTask / LongRunningIntent,        │
 │  │                 Live Activity progress, stall reporting               │
-│  ├─ VoiceSession: GPT-Live (client delegation), AVAudioSession, AirPods  │
+│  ├─ Listener: on-device speech in every thread, read aloud, AirPods      │
 │  ├─ Bridges: SQLite · files · keychain · URLSession fetch/SSE · SSH      │
 │  └─ RuntimeHost: owns the JSContext, loads the active generation,        │
 │                  swaps it on self-edit, rolls back on crash loops        │
@@ -28,7 +28,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
           ┌───────────────────────┼─────────────────────────┐
           ▼                       ▼                         ▼
    OpenAI (Sol 6.1 via      hands on Linux servers    hands on a Mac
-   ChatGPT sub) · GPT-Live  files · exec · PTY ·      + desktop agent:
+   ChatGPT sub)             files · exec · PTY ·      + desktop agent:
    · Jev (typesafe.ai)      supervised jobs           AX observe / act
 ```
 
@@ -88,9 +88,9 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 
 ## 7. Voice
 
-- GPT-Live with **client delegation**: the live model handles the conversation and hands real work to Pi Durable through a function call. Each call becomes a durable submission whose `requestId` is the call id, so retries are deduplicated. Progress streams back as context.
-- Barge-in maps to Pi's steer and cancel.
-- Audio lives in the native host (`VoiceSession`, `AVAudioSession` in play-and-record mode with the `audio` background mode), so a JS self-reload never drops the call.
+- Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener (Apple's SpeechTranscriber, English) serves the open thread: hold the mic to talk, or tap and pause; a pause ends the turn on the audio's own clock, and a short countdown sends it.
+- "Read aloud" reads each answer with Apple's speech, through the same voice-processing audio engine as the microphone, so talking over it interrupts it. Talking while a run works steers it.
+- The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
 
 ## 8. Threads
 

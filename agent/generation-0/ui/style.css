@@ -152,13 +152,22 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .icon-button { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .icon-button.tall { width: 42px; height: 46px; border-radius: 23px; }
 .icon-button.listening { color: var(--accent-soft); box-shadow: 0 0 0 calc(var(--level, 0) * 10px) color-mix(in srgb, var(--accent) 30%, transparent); }
+.icon-button.on { color: var(--accent-soft); }
+/* The mic takes press-and-hold: no text selection, callout or scrolling from it. */
+.mic { touch-action: none; -webkit-touch-callout: none; }
+.mic.held { transform: scale(1.12); color: var(--accent-soft); }
+.field.live { color: var(--ink-muted); caret-color: transparent; }
+/* The send button's ring while a paused turn counts down to sending itself. */
+.send { position: relative; }
+.countdown { position: absolute; inset: -4px; width: calc(100% + 8px); height: calc(100% + 8px); transform: rotate(-90deg); pointer-events: none; }
+.countdown circle { fill: none; stroke: var(--accent-soft); stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; animation: countdown linear forwards; }
+@keyframes countdown { to { stroke-dashoffset: 0; } }
 .round { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .button { border-radius: 999px; padding: 10px 16px; font: 500 12px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .button.small { padding: 6px 12px; font-size: 10.5px; }
 .button.wide { width: 100%; padding: 13px 16px; }
 .button.danger { color: var(--danger); }
 .fab { position: absolute; bottom: calc(var(--bottom) + 10px); width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; z-index: 6; }
-.fab-left { left: var(--gutter); }
 .fab-right { right: var(--gutter); }
 
 /* Content: square cards with hairlines */
@@ -246,25 +255,6 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .button.pinned { align-self: flex-start; }
 .paired-name { font: 600 26px var(--mono); }
 
-/* Voice */
-.voice { align-items: center; }
-.voice .bar { width: 100%; position: relative; }
-.orb { position: relative; width: 180px; height: 180px; margin: auto; flex: none; border-radius: 50%; }
-.orb-glow {
-	position: absolute; inset: -30px; border-radius: 50%; filter: blur(22px);
-	background: radial-gradient(circle, color-mix(in srgb, var(--accent) 70%, transparent), transparent 65%);
-	transform: scale(calc(1 + var(--level) * 0.6)); transition: transform 0.18s, opacity 0.3s; opacity: 0.6;
-}
-.orb.speaking .orb-glow { opacity: 1; transform: scale(1.25); }
-.orb-glass { position: absolute; inset: 0; border-radius: 50%; transform: scale(calc(1 + var(--level) * 0.15)); transition: transform 0.18s; }
-.orb.live .orb-glass { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.orb-mark { position: absolute; inset: 0; display: grid; place-items: center; font: 700 34px var(--mono); color: var(--accent-soft); }
-.voice-lines { width: 100%; max-height: 300px; padding: 0 var(--gutter); display: flex; flex-direction: column; gap: 10px; }
-.voice-user { color: var(--ink-muted); font-size: 15px; }
-.voice-mycroft { font-size: 16px; }
-.voice-step { display: flex; gap: 10px; align-items: baseline; border: 1px solid var(--hairline); padding: 7px 10px; font: 12px var(--mono); }
-.voice > .faint { padding-bottom: var(--bottom); padding-top: 12px; }
-
 /* Activity */
 .spinner {
 	display: inline-block; width: 12px; height: 12px; flex: none; border-radius: 50%; align-self: center;
@@ -279,7 +269,5 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 	.page.forward, .page.back, .sheet { animation-name: fade; }
 	.page { transition: none; }
 	button.glass:active:not(:disabled) { transform: none; }
-	.orb-glow, .orb.speaking .orb-glow { transform: none; opacity: calc(0.5 + var(--level) * 0.5); }
-	.orb.speaking .orb-glow { opacity: 1; }
-	.orb-glass { transform: none; }
+	.countdown circle { animation: none; stroke-dashoffset: 0; }
 }

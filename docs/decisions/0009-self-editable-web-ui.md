@@ -12,7 +12,7 @@
   - the screen's own saved state: navigation, drafts.
 
   On a new generation it imports that generation's `app.js`, unmounts the old tree and mounts the new one. CSS swaps link by link. Changing `boot.js`/`index.html` forces a full page reload, with the UI state saved first. Conversations live in Pi Durable, so nothing is lost either way.
-- **Bridge.** The page calls the app with `postMessage({ op, args })` (reply-capable), and the app pushes events (`state`, `view`, `dictation`, `voice`, `pairing`, `hot`). The contract is `agent/generation-0/ui/README.md`, which the agent reads.
+- **Bridge.** The page calls the app with `postMessage({ op, args })` (reply-capable), and the app pushes events (`state`, `view`, `listen`, `pairing`, `hot`). The contract is `agent/generation-0/ui/README.md`, which the agent reads.
 - **Safety, in layers:**
   1. `self_activate` renders the draft off-screen first and refuses it on load errors, render errors or uncaught errors. JavaScriptCore names the file and line of syntax errors.
   2. `self_preview` gives the agent a picture of the draft.

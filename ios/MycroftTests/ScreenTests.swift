@@ -100,10 +100,10 @@ struct ScreenCheckTests {
     }
 
     @Test func aSyntaxErrorIsCaught() async throws {
-        try await withDraft(["ui/screens/voice.js": "export function Voice( {"]) {
+        try await withDraft(["ui/screens/pair.js": "export function Pair( {"]) {
             let result = await UIPreview.run(snapshot: false)
             #expect(result.problem != nil)
-            #expect(result.summary.contains("ui/screens/voice.js:1"), "\(result.summary)")
+            #expect(result.summary.contains("ui/screens/pair.js:1"), "\(result.summary)")
             print("CHECK: \(result.summary)")
         }
     }

@@ -100,7 +100,7 @@ enum UIPreview {
         return result
     }
 
-    /// Parses the draft's changed modules: `ui/screens/voice.js:3: SyntaxError: …`.
+    /// Parses the draft's changed modules: `ui/screens/pair.js:3: SyntaxError: …`.
     private static func syntaxErrors(in files: [String], store: GenerationStore) async -> [String] {
         var errors: [String] = []
         for file in files {

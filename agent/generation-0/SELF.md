@@ -23,7 +23,7 @@ connection and the install server. Offer what you can change instead.
 - `self_write { path, content }` writes a complete file into the **draft**, which starts as a full copy of the
   active generation. New files are fine (e.g. `ui/screens/jobs.js`).
 - `self_preview { route? }` renders the draft's screen off-screen at this iPhone's size. It returns a picture and
-  any errors the page logged. Routes: `#/`, `#/t/<threadId>`, `#/settings`, `#/voice`, or one you added.
+  any errors the page logged. Routes: `#/`, `#/t/<threadId>`, `#/settings`, `#/pair`, or one you added.
 - `self_diff {}` shows what the draft changes.
 - `self_activate { note }` makes the draft live:
   1. It checks that the draft's screen renders cleanly.

@@ -24,10 +24,6 @@ export function Settings() {
 	const state = useData((d) => d.state)
 	return html`<${Page} title="Settings">
 		<${Section} title="Model"><${SignIn} /><//>
-		<${Section} title="Live voice · GPT-Live">
-			<${KeyField} name="openai" saved=${state?.keys?.openai}
-				about="Live voice uses OpenAI's GPT-Live, which needs a platform API key (the ChatGPT subscription doesn't cover it). Without one, voice runs on this iPhone: on-device transcription and speech." />
-		<//>
 		<${Section} title="Desktop control · Jev">
 			<${KeyField} name="jev" saved=${state?.keys?.jev}
 				about="Jev (typesafe.ai) picks the next action on your Mac from its accessibility tree." />

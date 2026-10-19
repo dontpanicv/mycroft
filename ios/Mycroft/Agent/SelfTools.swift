@@ -76,7 +76,7 @@ nonisolated enum SelfTools {
 
             Tool(
                 "self_preview",
-                description: "Look at your screen: renders the draft (or the active generation without a draft) off-screen at this iPhone's size, and returns a picture plus any errors it logged. route picks the screen: #/ (threads), #/t/<threadId>, #/settings, #/voice, or one you added.",
+                description: "Look at your screen: renders the draft (or the active generation without a draft) off-screen at this iPhone's size, and returns a picture plus any errors it logged. route picks the screen: #/ (threads), #/t/<threadId>, #/settings, #/pair, or one you added.",
                 parameters: .object(["route": .string("Hash route, default #/").optional]),
                 replay: .safe
             ) { (args: PreviewArguments, _) -> ToolResult in
