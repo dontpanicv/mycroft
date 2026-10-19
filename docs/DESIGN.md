@@ -26,10 +26,15 @@ Two references, one rule: **the content is a terminal; the chrome is glass.**
 
 ## Screens
 
-- **Threads.** A list of hairline rows: an unsent draft, pinned threads, active threads, then a collapsed "Settled (N)" shelf of slim rows. Each row shows the title in mono, when it last moved, the machine badge (`PHONE`, `HETZNER`, `MAC`) and what needs the user (`WORKING`, receding; `FAILED`; `DONE`, unread). Swipe left to settle, long-press for pin, rename and archive. A floating **+** opens a new thread's draft.
+No decoration that repeats what is already on screen or is the same everywhere: no slogans, no row numbers, no
+labels on the user's own messages, no model or `PHONE` tags on every thread, no status text the progress line and the
+run capsule already show.
+
+
+- **Threads.** A list of hairline rows: an unsent draft, pinned threads, active threads, then a collapsed "Settled (N)" shelf of slim rows. Each row shows the title in mono, when it last moved, a machine badge only when it runs on one (`HETZNER`, `MAC`), and what needs the user (`WORKING`, receding; `FAILED`; `DONE`, unread). With nothing open, the list says "All settled" (or "No threads yet") with a New thread button. Swipe left to settle, long-press for pin, rename and archive. A floating **+** opens a new thread's draft.
 - **Thread.**
   - The transcript is the terminal: user turns are bordered blocks, assistant prose is grotesk, and tool calls are mono rows such as `01 bash  ls -la  ✓ 0.4s` that expand into output.
-  - The composer is a glass capsule at the bottom with model and machine chips, the mic and send. While listening, the chips give way to a red dot, a timer and one line saying what to do ("‹ Slide to cancel" while held, with a lock above the mic to slide up to); the words appear live in the field, and ✕ clears it. While a run works, a glass capsule above shows "Working 1m 05s" and "N queued", and send queues (or steers).
+  - The composer is a glass capsule at the bottom: the field, the mic and send (a machine badge above it only when the thread runs on one). While listening, a row above shows a red dot, a timer and one line saying what to do ("‹ Slide to cancel" while held, with a lock above the mic to slide up to); the words appear live in the field, and ✕ clears it. While a run works, a glass capsule above shows "Working 1m 05s" and "N queued", and send queues (or steers).
   - A finished run folds into "Worked for 1m 05s · 4 steps"; the answer keeps Copy, Fork and its time.
   - A run shows a thin indigo progress line under the nav bar and a Live Activity on the lock screen.
 - **Machines.** Hands hosts as square cards showing hostname, OS, latency and running jobs. Pairing is a glass sheet.

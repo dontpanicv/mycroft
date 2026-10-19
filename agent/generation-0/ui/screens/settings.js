@@ -71,8 +71,8 @@ export function SignIn() {
 }
 
 const engines = [
-	{ id: 'parakeet', name: 'Parakeet v3', about: "NVIDIA's model, inside the app. Fewer mistakes, especially with accents; the text arrives in short steps." },
-	{ id: 'apple', name: 'Apple', about: "The iPhone's own model. Words appear as you say them." },
+	{ id: 'parakeet', name: 'Parakeet v3', about: 'Fewer mistakes, especially with accents. Text arrives in short steps.' },
+	{ id: 'apple', name: 'Apple', about: 'Words appear as you say them.' },
 ]
 
 /** Which on-device model turns speech into text. */
@@ -83,20 +83,20 @@ function Dictation({ dictation }) {
 	return html`<${Choices} label="Dictation model" options=${options} chosen=${dictation.engine}
 		onChoose=${(engine) => call('dictation.engine', { engine })}>
 		${!dictation.parakeet && html`<p class="faint small">This build doesn't include Parakeet.</p>`}
-		<p class="faint small">Both run on this iPhone; your voice never leaves it.</p>
+		<p class="faint small">Both run on this iPhone.</p>
 	<//>`
 }
 
 const ways = [
-	{ id: 'queue', name: 'Queue', about: 'Your message waits and is sent when the current run finishes.' },
-	{ id: 'steer', name: 'Steer', about: 'Your message reaches Mycroft at its next step, changing what it is working on.' },
+	{ id: 'queue', name: 'Queue', about: 'Sent when the current run finishes.' },
+	{ id: 'steer', name: 'Steer', about: 'Reaches Mycroft at its next step.' },
 ]
 
 /** What send does while a run is going. Holding send offers the other way. */
 function WhileWorking() {
 	const [way, setWay] = useUI('whileWorking', 'queue')
 	return html`<${Choices} label="While Mycroft works" options=${ways} chosen=${way} onChoose=${setWay}>
-		<p class="faint small">Hold the send button to do the other.</p>
+		<p class="faint small">Hold send for the other.</p>
 	<//>`
 }
 
@@ -133,7 +133,6 @@ function KeyField({ name, saved, about }) {
 				placeholder=${saved ? 'Key saved — paste to replace' : 'Paste API key'} value=${value} onInput=${(e) => setValue(e.target.value)} />
 			<button class="button glass" disabled=${!value && !saved} onClick=${save}>${!value && saved ? 'Remove' : 'Save'}</button>
 		</div>
-		<${Tag} tone=${saved ? 'success' : ''}>${saved ? 'Key saved' : 'No key'}<//>
 	</div>`
 }
 
@@ -141,8 +140,10 @@ function KeyField({ name, saved, about }) {
 function Generations({ generation }) {
 	const call = useCall()
 	const [armed, setArmed] = useState(null)
+	const [all, setAll] = useState(false)
 	if (!generation) return null
 	const history = [...generation.history].sort((a, b) => b.generation - a.generation)
+	const shown = all ? history : history.slice(0, 5)
 	const use = (number) => {
 		if (armed !== number) return setArmed(number)
 		setArmed(null)
@@ -150,7 +151,7 @@ function Generations({ generation }) {
 		call('generation.rollback', { generation: number })
 	}
 	return html`<div class="card list-card">
-		${history.map((record) => html`<div class="gen-row">
+		${shown.map((record) => html`<div class="gen-row">
 			<span class="index">${pad(record.generation)}</span>
 			<span class="grow"><span class="block">${record.note}</span><span class="faint mono tiny">${ago(record.createdAt)}</span></span>
 			${record.generation === generation.active
@@ -158,7 +159,8 @@ function Generations({ generation }) {
 				: html`<button class=${`button small glass ${armed === record.generation ? 'prominent' : ''}`} onClick=${() => use(record.generation)}>
 						${armed === record.generation ? 'Switch?' : record.generation === generation.lastGood ? 'Last good' : 'Use'}</button>`}
 		</div>`)}
-		<p class="faint small">Shake the phone for the native recovery screen if a generation ever breaks this one.</p>
+		${shown.length < history.length && html`<button class="more inline" onClick=${() => setAll(true)}>Show ${history.length - shown.length} older</button>`}
+		<p class="faint small">Shake the phone to recover from a broken generation.</p>
 	</div>`
 }
 

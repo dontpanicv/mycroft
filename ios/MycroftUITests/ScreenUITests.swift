@@ -2,6 +2,9 @@ import XCTest
 
 /// The web screen without the model: it loads, navigates, keeps drafts, and shows its controls to accessibility.
 final class ScreenUITests: XCTestCase {
+    /// A row of the thread list: its label is "title · when · …".
+    static let threadRow = NSPredicate(format: "label CONTAINS ' · ' AND NOT label CONTAINS 'Draft'")
+
     func testNavigationAndDrafts() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -14,7 +17,7 @@ final class ScreenUITests: XCTestCase {
         app.buttons["Back"].tap()
 
         // A new thread is a draft: nothing is created until it is sent.
-        let rows = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '01 '")).count
+        let rows = app.buttons.matching(Self.threadRow).count
         app.buttons["New thread"].tap()
         let composer = app.textViews["Message Mycroft"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
@@ -26,7 +29,7 @@ final class ScreenUITests: XCTestCase {
         app.buttons["Back"].tap()
         let draftRow = app.buttons.matching(NSPredicate(format: "label CONTAINS 'a draft that survives'")).firstMatch
         XCTAssertTrue(draftRow.waitForExistence(timeout: 5), "the unsent draft is listed")
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH '01 '")).count, rows, "no thread was created")
+        XCTAssertEqual(app.buttons.matching(Self.threadRow).count, rows, "no thread was created")
 
         // The draft is kept in the screen's saved state, across a relaunch too.
         app.terminate()
@@ -50,9 +53,9 @@ final class ScreenUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
-        let first = app.buttons.matching(NSPredicate(format: "label BEGINSWITH '01 '")).firstMatch
+        let first = app.buttons.matching(Self.threadRow).firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 30))
-        let title = first.label
+        let title = first.label.components(separatedBy: " · ")[0]
         first.press(forDuration: 0.8)
         XCTAssertTrue(app.buttons["Rename"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Settle"].exists)
@@ -62,15 +65,17 @@ final class ScreenUITests: XCTestCase {
         XCTAssertTrue(shelf.waitForExistence(timeout: 5))
         snap(app, "settled-collapsed")
         shelf.tap()
-        // Settled rows are slim: the title without the number.
-        let name = title.components(separatedBy: " ").dropFirst().prefix(2).joined(separator: " ")
-        let settled = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label != 'New thread'", name)).firstMatch
-        XCTAssertTrue(settled.waitForExistence(timeout: 5), "\(name) is in the shelf")
+        let settled = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title + " · ")).firstMatch
+        XCTAssertTrue(settled.waitForExistence(timeout: 5), "\(title) is in the shelf")
+        // A long press doesn't scroll to its element the way a tap does.
+        for _ in 0..<12 where !settled.isHittable { app.swipeUp() }
+        // A touch while the list still coasts only stops it.
+        sleep(2)
         snap(app, "settled-open")
         settled.press(forDuration: 0.8)
         XCTAssertTrue(app.buttons["Un-settle"].waitForExistence(timeout: 5))
         app.buttons["Un-settle"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH '01 '")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(Self.threadRow).firstMatch.waitForExistence(timeout: 5))
     }
 
     /// A real run (needs the Simulator signed in): a new thread starts on send; while it works a message queues;
@@ -110,8 +115,8 @@ final class ScreenUITests: XCTestCase {
         resume.tap()
         XCTAssertTrue(working.waitForExistence(timeout: 30), "resuming sends the queued message")
         // The title button reads the title and the status.
-        let idle = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'UI test' AND label ENDSWITH 'IDLE'")).firstMatch
-        XCTAssertTrue(idle.waitForExistence(timeout: 180), "the run ends")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: working)
+        waitForExpectations(timeout: 180)
         snap(app, "run-done")
 
         let fork = app.buttons.matching(NSPredicate(format: "label == 'Fork from this answer'"))
@@ -135,7 +140,7 @@ final class ScreenUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["New thread"].waitForExistence(timeout: 30))
         snap(app, "home")
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH '01 '")).firstMatch.tap()
+        app.buttons.matching(Self.threadRow).firstMatch.tap()
         XCTAssertTrue(app.textViews["Message Mycroft"].waitForExistence(timeout: 10))
         sleep(2)
         let toolRow = app.buttons.matching(NSPredicate(format: "label CONTAINS 'self_'")).firstMatch
@@ -205,6 +210,16 @@ final class ScreenUITests: XCTestCase {
         XCTAssertTrue(failure.waitForExistence(timeout: 15), "starting the mic without speech models says why")
         snap(app, "voice-unavailable")
         XCTAssertTrue(app.buttons["Talk"].exists, "the mic is back to its resting state")
+
+        // The same in an existing thread, whose id is a number (the listener reports it as a string).
+        app.buttons["Back"].tap()
+        let first = app.buttons.matching(Self.threadRow).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        first.tap()
+        XCTAssertTrue(app.buttons["Talk"].waitForExistence(timeout: 10))
+        app.buttons["Talk"].tap()
+        XCTAssertTrue(failure.waitForExistence(timeout: 15), "a thread's composer hears from the listener too")
+        snap(app, "voice-in-thread")
     }
 
     /// Settings → Dictation: Parakeet (bundled) by default, and switching to Apple and back sticks.

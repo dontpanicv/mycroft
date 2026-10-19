@@ -83,15 +83,14 @@ export function Thread({ id }) {
 				<button class="icon-button glass" aria-label="Back" onClick=${back}><${Icon} name="back" /></button>
 				<button class="bar-title" disabled=${draft} onClick=${() => setSheet('rename')}>
 					<span class="title mono">${draft ? 'New thread' : meta?.title ?? 'Thread'}</span>
-					<span class=${`label tiny ${busy ? 'soft' : 'faint'}`} id="status">${draft ? 'Draft' : busy ? 'Running' : 'Idle'}</span>
 				</button>
 				<span class="bar-side"></span>
 				${showProgress && html`<div class="progress"></div>`}
 			</header>
 			<div class="scroll transcript" ref=${scroller} onScroll=${onScroll}>
 				${draft
-					? html`<section class="draft-hero"><h1>What should Mycroft do?</h1><p class="muted">Type, or hold the mic and talk. The thread starts when you send.</p></section>`
-					: view ? html`${parent && html`<button class="forked-from faint small" onClick=${() => go(`#/t/${parent.id}`)}><${Icon} name="fork" size=${13} /> Forked from ${parent.title}</button>`}
+					? html`<section class="draft-hero"><h1>What should Mycroft do?</h1></section>`
+					: view ? html`${parent && html`<button class="forked-from faint small" onClick=${() => go(`#/t/${parent.id}`)}><${Icon} name="fork" size=${13} /><span class="ellipsis">Forked from ${parent.title}</span></button>`}
 						<${Transcript} view=${view} thread=${meta} onError=${setError} onRetry=${(text) => submit(text, 'send')} />`
 					: html`<div class="center"><${Spinner} /></div>`}
 				${(error || view?.error) && html`<p class="card danger mono small">${error || view.error}</p>`}
@@ -99,7 +98,7 @@ export function Thread({ id }) {
 			</div>
 			<${Composer} owner=${draft ? 'new' : id} busy=${busy} preferred=${whileWorking}
 				placeholder=${draft ? 'Ask Mycroft anything…' : busy ? (whileWorking === 'steer' ? 'Steer the run…' : 'Queue a message…') : 'Message Mycroft'}
-				chips=${html`<${Tag}>${view?.model ?? 'gpt-6.1-sol'}<//><${Tag}>${meta?.machine ?? 'Phone'}<//>`}
+				chips=${meta?.machine && html`<${Tag}>${meta.machine}<//>`}
 				above=${!draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
 					onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`}
 				onSubmit=${submit} onStop=${() => call('thread.stop', { id })} onError=${setError} />
@@ -250,9 +249,7 @@ function Transcript({ view, thread, onError, onRetry }) {
 					? turn.replies.map((entry) => entry.model[0].role === 'assistant' && html`<${AssistantTurn} key=${entry.id} message=${entry.model[0]} ...${props} />`)
 					: html`<${FinishedRun} key=${`run-${turn.user?.id ?? index}`} turn=${turn} thread=${thread} props=${props} onError=${onError} />`}`
 		})}
-		${streaming
-			? html`<${AssistantTurn} message=${streaming} ...${props} />`
-			: view.busy && html`<div class="row gap soft working"><${Spinner} /><${Label} tone="soft">${liveTools.length ? 'Working' : 'Thinking'}<//></div>`}
+		${streaming && html`<${AssistantTurn} message=${streaming} ...${props} />`}
 		${!view.busy && lastAnswer?.errorMessage && html`<div class="card danger stack">
 			<p class="mono small">${lastAnswer.errorMessage}</p>
 			${lastUser && html`<button class="button small glass" onClick=${() => onRetry(textOf(lastUser))}><${Icon} name="retry" size=${14} /> Retry</button>`}
@@ -318,10 +315,7 @@ function textOf(message) {
 }
 
 function UserTurn({ message }) {
-	return html`<div class="card user-turn">
-		<${Label} tone="faint" size=${9.5}>You<//>
-		<p class="user-text">${textOf(message)}</p>
-	</div>`
+	return html`<div class="card user-turn"><p class="user-text">${textOf(message)}</p></div>`
 }
 
 function AssistantTurn({ message, results, numbers, live }) {

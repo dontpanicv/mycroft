@@ -9,10 +9,11 @@
 import { html, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, Icon, Label, Tag, Sheet, haptic } from '../lib.js'
 
-/** The listener's state while it listens for this composer. */
+/** The listener's state while it listens for this composer. The app reports `owner` as a string; thread ids are
+ * numbers. */
 function useListen(owner) {
 	const listen = useData((d) => d.listen)
-	return listen?.owner === owner ? listen : null
+	return listen?.owner === String(owner) ? listen : null
 }
 
 const clock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`
@@ -30,6 +31,9 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 	// 'hold' while the mic is held; 'locked' after sliding up or a tap.
 	const [gesture, setGesture] = useState(null)
 	const [choosing, setChoosing] = useState(false)
+	const holding = gesture === 'hold'
+	// Feedback from the first touch, before the microphone has started.
+	const recording = active || gesture != null
 	const sendPress = useRef(null)
 	const press = useRef(null)
 	const field = useRef(null)
@@ -46,7 +50,9 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 		el.style.height = `${Math.min(el.scrollHeight, 160)}px`
 	}, [text])
 	useEffect(() => {
-		if (listen?.error) onError(listen.error)
+		if (!listen?.error) return
+		onError(listen.error)
+		setGesture(null)
 	}, [listen?.error])
 	useEffect(() => {
 		if (!active && gesture === 'locked') setGesture(null)
@@ -61,7 +67,8 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 	/** Stops listening and keeps the words in the field, to edit. */
 	const keep = async () => {
 		const kept = await stopListening()
-		setDraft(kept)
+		// Nothing comes back if it never started: the typed draft stays.
+		if (kept) setDraft(kept)
 		field.current?.focus()
 	}
 	const submit = async (how) => {
@@ -91,7 +98,7 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 	// The mic: hold to talk and let go to send; slide up to lock, left to cancel. A quick tap locks it on.
 	const down = (event) => {
 		event.currentTarget.setPointerCapture?.(event.pointerId)
-		if (active) {
+		if (recording) {
 			press.current = { stop: true }
 			return
 		}
@@ -145,18 +152,18 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 		submit(way)
 	}
 
-	const holding = gesture === 'hold'
 	return html`<div class="composer">
 		${above}
-		${active
+		${recording
 			? html`<div class="row gap chips recording">
 					${!holding && html`<button class="icon-button glass small-icon danger" aria-label="Cancel dictation" onClick=${cancel}><${Icon} name="trash" size=${17} /></button>`}
-					<span class="rec-dot"></span><span class="mono small">${clock(listen.elapsed ?? 0)}</span>
-					<${Tag} tone="soft">${listen.state === 'preparing' ? 'Starting the microphone…'
+					<span class="rec-dot"></span><span class="mono small">${clock(listen?.elapsed ?? 0)}</span>
+					<${Tag} tone="soft">${holding ? '‹ Slide to cancel · ↑ to lock'
+						: !active || listen.state === 'preparing' ? 'Starting the microphone…'
 						: listen.loading ? 'Loading Parakeet · keep talking'
-						: holding ? '‹ Slide to cancel' : 'Listening · tap the mic to edit'}<//>
+						: 'Listening · tap ■ to edit'}<//>
 				</div>`
-			: html`<div class="row gap chips">${chips}</div>`}
+			: chips && html`<div class="row gap chips">${chips}</div>`}
 		<div class="row gap end">
 			<div class="field-wrap">
 				<textarea ref=${field} class=${`field glass ${active ? 'live' : ''}`} rows="1" aria-label="Message Mycroft"
@@ -167,11 +174,11 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 			</div>
 			<div class="mic-wrap">
 				${holding && html`<div class="lock-hint glass" aria-hidden="true"><${Icon} name="lock" size=${15} /><${Icon} name="up" size=${13} /></div>`}
-				<button class=${`icon-button glass tall mic ${active ? 'listening' : ''} ${holding ? 'held' : ''}`}
-					aria-label=${active ? 'Stop listening' : 'Talk'} style=${active ? `--level:${listen.level ?? 0}` : ''}
+				<button class=${`icon-button glass tall mic ${recording ? 'listening' : ''} ${holding ? 'held' : ''}`}
+					aria-label=${recording && !holding ? 'Stop listening' : 'Talk'} style=${active ? `--level:${listen.level ?? 0}` : ''}
 					onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
 					onContextMenu=${(event) => event.preventDefault()}>
-					<${Icon} name=${active && !holding ? 'stop' : 'mic'} />
+					<${Icon} name=${recording && !holding ? 'stop' : 'mic'} />
 				</button>
 			</div>
 			${busy && empty && !active

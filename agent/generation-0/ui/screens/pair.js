@@ -70,8 +70,8 @@ export function Pair() {
 					<button class="button glass" onClick=${() => { call('clipboard.copy', { text: pairing.command }); haptic(call) }}><${Icon} name="copy" size=${15} /> Copy again</button>
 					<span class="row gap soft"><${Spinner} /><${Label} size=${10}>Waiting for the machine<//></span>
 				</div>
-				<p class="faint small">Keep this screen open while it installs. The code works once, for 10 minutes. The first download trusts the network; everything after it is pinned to this iPhone.</p>
-				<p class="faint small">On a network you don't trust, use the pinned command instead. It's longer, but only this iPhone can answer it.</p>
+				<p class="faint small">Keep this screen open while it installs. The code works once, for 10 minutes.</p>
+				<p class="faint small">On a network you don't trust, use the pinned command: only this iPhone can answer it.</p>
 				<button class="button glass small pinned" onClick=${copyPinned}><${Icon} name=${pinnedCopied ? 'check' : 'copy'} size=${13} /> ${pinnedCopied ? 'Pinned command copied' : 'Copy pinned command'}</button>
 			`}
 			${state === 'paired' && html`

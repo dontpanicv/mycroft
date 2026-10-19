@@ -182,8 +182,11 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .card { border: 1px solid var(--hairline); padding: 14px; }
 .card.danger { color: var(--danger); }
 .notice { margin: 0 var(--gutter) 10px; color: var(--accent-soft); }
-.hero { padding: 8px var(--gutter) 22px; }
-.hero h1 { font: 600 26px/1.15 var(--mono); letter-spacing: -0.045em; margin-bottom: 10px; }
+.top-gap { margin-top: 8px; }
+/* Home with nothing open: everything settled, or no threads yet. */
+.caught-up { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18vh var(--gutter) 6vh; text-align: center; }
+.caught-up h2 { font: 600 20px var(--mono); letter-spacing: -0.03em; }
+.caught-up-mark { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent-soft) 40%, transparent); }
 .section { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .list { list-style: none; border-top: 1px solid var(--hairline); }
 .thread-row { width: 100%; display: flex; align-items: baseline; gap: 14px; padding: 16px var(--gutter); border-bottom: 1px solid var(--hairline); }
@@ -207,8 +210,7 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .shelf .rule { flex: 1; height: 1px; background: var(--hairline); }
 .more { display: block; margin: 12px var(--gutter) 0; width: calc(100% - 2 * var(--gutter)); padding: 11px; border: 1px dashed var(--hairline); font: 11px var(--mono); letter-spacing: 0.06em; color: var(--ink-faint); }
 .archived-open { text-align: left; min-width: 0; }
-.how { display: flex; flex-direction: column; padding-top: 8px; }
-.how .label { margin-bottom: 8px; }
+.more.inline { margin: 12px 0 0; width: 100%; }
 .step { display: flex; gap: 14px; align-items: baseline; padding: 12px 0; border-top: 1px solid var(--hairline); font-size: 15px; color: var(--ink-muted); }
 .step b { color: var(--ink); }
 
@@ -227,7 +229,9 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .draft-hero h1 { font: 600 24px/1.2 var(--mono); letter-spacing: -0.04em; margin-bottom: 8px; }
 button.bar-title:disabled { opacity: 1; }
 .worked { align-self: flex-start; }
-.forked-from { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; }
+.forked-from { display: flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.forked-from .icon { flex: none; }
+.forked-from .ellipsis { overflow: hidden; text-overflow: ellipsis; }
 .answer-actions { display: flex; align-items: center; gap: 4px; margin-top: -4px; }
 .answer-action { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--ink-faint); }
 .answer-action:active { background: rgba(255, 255, 255, 0.08); color: var(--ink); }

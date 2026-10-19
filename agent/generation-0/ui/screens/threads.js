@@ -5,7 +5,7 @@
 // it back. Each row says what needs the user: Working, Failed, or Done (an answer they haven't opened yet).
 
 import { html, useState } from '/lib/preact.js'
-import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Sheet, Spinner, pad, ago, haptic } from '../lib.js'
+import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Sheet, Spinner, ago, haptic } from '../lib.js'
 import { SignIn } from './settings.js'
 import { RenameSheet } from './thread.js'
 
@@ -55,35 +55,33 @@ export function Threads() {
 	}
 	const open = (thread) => go(`#/t/${thread.id}`)
 
+	const openCount = pinned.length + active.length + (draft ? 1 : 0)
 	return html`
-		<main class=${`screen scroll ${threads.length || draft ? '' : 'grid'}`}>
+		<main class=${`screen scroll ${openCount ? '' : 'grid'}`}>
 			<header class="bar glass-bar">
 				<span class="bar-side"></span>
 				<${Label} tone="ink">Mycroft<//>
 				<button class="icon-button glass" aria-label="Settings" onClick=${() => go('#/settings')}><${Icon} name="gear" /></button>
 			</header>
 
-			<section class="hero">
-				<h1><span class="soft">Brain on the phone.</span><br />Hands everywhere.</h1>
-				<div class="row gap">
-					<${Tag} tone="soft">Gen ${state?.generation?.active ?? 0}<//>
-					<${Tag} tone=${signIn === 'signedIn' ? '' : 'danger'}>${signIn === 'signedIn' ? 'Sol 6.1' : 'Signed out'}<//>
-					${state?.machines?.length ? html`<${Tag}>${state.machines.length} machine${state.machines.length > 1 ? 's' : ''}<//>` : null}
-				</div>
-			</section>
-
-			${signIn && signIn !== 'signedIn' && signIn !== 'unknown' && html`<div class="gutter"><${SignIn} /></div>`}
+			${signIn && signIn !== 'signedIn' && signIn !== 'unknown' && html`<div class="gutter top-gap"><${SignIn} /></div>`}
 			${(state?.notices ?? []).map((notice) => html`<p class="card notice mono small">${notice}</p>`)}
 
 			${threads.length || draft
-				? html`<ol class="list">
-						${draft && html`<li><${Row} title=${draft.split('\n')[0]} label="Draft" icon="pencil" onOpen=${() => go('#/new')}
+				? html`${openCount
+						? html`<ol class="list">
+						${draft && html`<li><${Row} title=${draft.split('\n')[0]} label="Draft" onOpen=${() => go('#/new')}
 							onMenu=${() => setMenu({ draft: true })} /></li>`}
-						${[...pinned, ...active].map(({ thread, status }, index) => html`<li key=${thread.id}>
-							<${Row} index=${index + 1} title=${thread.title} thread=${thread} status=${status} onOpen=${() => open(thread)}
+						${[...pinned, ...active].map(({ thread, status }) => html`<li key=${thread.id}>
+							<${Row} title=${thread.title} thread=${thread} status=${status} onOpen=${() => open(thread)}
 								onMenu=${() => setMenu({ thread, status })} swipe=${{ label: 'Settle', run: () => settle(thread, true) }} />
 						</li>`)}
-					</ol>
+					</ol>`
+						: html`<section class="caught-up">
+							<span class="caught-up-mark"><${Icon} name="check" size=${22} stroke=${2.2} /></span>
+							<h2>All settled</h2>
+							<button class="button glass prominent" onClick=${() => { haptic(call); go('#/new') }}><${Icon} name="plus" size=${15} stroke=${2.2} /> New thread</button>
+						</section>`}
 					${settled.length > 0 && html`<button class="shelf" aria-expanded=${settledOpen} onClick=${() => setSettledOpen(!settledOpen)}>
 						<${Label}>${settledOpen ? 'Settled' : `Settled (${settled.length})`}<//><span class="rule"></span>
 						<${Icon} name=${settledOpen ? 'down' : 'chevron'} size=${14} />
@@ -94,15 +92,18 @@ export function Threads() {
 								onMenu=${() => setMenu({ thread, status, settled: true })} swipe=${{ label: 'Un-settle', run: () => settle(thread, false) }} />
 						</li>`)}
 					</ol>
-					${settled.length > shown && html`<button class="more" onClick=${() => setShown(shown + 25)}>Show more (${settled.length - shown} settled hidden)</button>`}`}
+					${settled.length > shown && html`<button class="more" onClick=${() => setShown(shown + 25)}>Show ${Math.min(25, settled.length - shown)} more</button>`}`}
 					${archived > 0 && html`<button class="more" onClick=${() => go('#/archived')}>Archived (${archived})</button>`}`
-				: html`<${HowItWorks} />`}
+				: html`<section class="caught-up">
+						<h2>No threads yet</h2>
+						<button class="button glass prominent" onClick=${() => { haptic(call); go('#/new') }}><${Icon} name="plus" size=${15} stroke=${2.2} /> New thread</button>
+					</section>`}
 			<div class="spacer"></div>
 		</main>
 
-		<button class="fab fab-right glass prominent" aria-label="New thread" onClick=${() => { haptic(call); go('#/new') }}>
+		${openCount > 0 && html`<button class="fab fab-right glass prominent" aria-label="New thread" onClick=${() => { haptic(call); go('#/new') }}>
 			<${Icon} name="plus" size=${24} stroke=${2.2} />
-		</button>
+		</button>`}
 
 		${menu?.draft && html`<${Sheet} onClose=${() => setMenu(null)}>
 			<${Label}>Draft<//>
@@ -125,7 +126,7 @@ export function Threads() {
 const statusLabels = { working: ['Working', 'soft'], failed: ['Failed', 'danger'], done: ['Done', 'success'] }
 
 /** One thread in the list: tap to open, long-press for the menu, swipe left for `swipe.run`. */
-function Row({ index, title, thread, status, label, icon, slim, swipe, onOpen, onMenu }) {
+function Row({ title, thread, status, label, slim, swipe, onOpen, onMenu }) {
 	const call = useCall()
 	const [dx, setDx] = useState(0)
 	const [gesture] = useState(() => ({}))
@@ -170,21 +171,21 @@ function Row({ index, title, thread, status, label, icon, slim, swipe, onOpen, o
 	}
 
 	const [statusText, tone] = statusLabels[status] ?? []
+	const spoken = [title, label ?? ago(thread.updatedAt), thread?.machine, statusText].filter(Boolean).join(' · ')
 	return html`<div class="swipe-row">
 		${swipe && dx < 0 && html`<div class=${`swipe-action ${armed ? 'armed' : ''}`}><span>${swipe.label}</span></div>`}
-		<button class=${`thread-row ${slim ? 'slim' : ''} ${status === 'working' ? 'recede' : ''}`} style=${dx ? `transform: translateX(${dx}px); transition: none` : ''}
+		<button class=${`thread-row ${slim ? 'slim' : ''} ${status === 'working' ? 'recede' : ''}`} style=${dx ? `transform: translateX(${dx}px); transition: none` : ''} aria-label=${spoken}
 			onClick=${click} onTouchStart=${start} onTouchMove=${move} onTouchEnd=${end} onTouchCancel=${end}
 			onContextMenu=${(event) => { event.preventDefault(); haptic(call, 'medium'); onMenu() }}>
-			${!slim && html`<span class="index">${index ? pad(index) : html`<${Icon} name=${icon} size=${13} />`}</span>`}
 			<span class="grow">
 				<span class="title">${thread?.pinned && html`<${Icon} name="pin" size=${12} /> `}${title}</span>
 				${!slim && html`<span class="meta">
-					${label ? html`<${Tag} tone="warning">${label}<//>` : html`<span>${ago(thread.updatedAt)}</span><${Tag}>${thread.machine ?? 'Phone'}<//>`}
+					${label ? html`<${Tag} tone="warning">${label}<//>` : html`<span>${ago(thread.updatedAt)}</span>${thread.machine && html`<${Tag}>${thread.machine}<//>`}`}
 				</span>`}
 			</span>
 			${statusText
 				? html`<span class=${`row-status ${tone}`}>${status === 'working' && html`<${Spinner} />`}${statusText}</span>`
-				: slim ? html`<span class="faint small">${ago(thread.updatedAt)}</span>` : html`<span class="faint"><${Icon} name="out" size=${16} /></span>`}
+				: slim ? html`<span class="faint small">${ago(thread.updatedAt)}</span>` : null}
 		</button>
 	</div>`
 }
@@ -211,16 +212,4 @@ export function Archived() {
 		${!archived.length && html`<p class="gutter muted">Nothing archived.</p>`}
 		<div class="spacer"></div>
 	</main>`
-}
-
-function HowItWorks() {
-	const steps = [
-		['Start a thread.', 'Each one is a durable conversation that survives iOS killing the app.'],
-		['Let it work.', 'Leave the app; the run keeps going in the background and shows its progress.'],
-		['Let it grow.', 'Ask Mycroft to change anything about itself — this screen included. It reloads in place.'],
-	]
-	return html`<section class="gutter how">
-		<${Label}>How it works<//>
-		${steps.map(([title, detail], i) => html`<p class="step"><span class="index">${pad(i + 1)}</span><span><b>${title}</b> ${detail}</span></p>`)}
-	</section>`
 }
