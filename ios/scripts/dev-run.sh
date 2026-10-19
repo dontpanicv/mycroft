@@ -15,6 +15,7 @@ BUNDLE_ID="$(sed -n 's/^MYCROFT_BUNDLE_ID = //p' Config/Local.xcconfig 2>/dev/nu
 BUNDLE_ID="${BUNDLE_ID:-dev.mycroft.app}"
 
 xcodegen generate --quiet
+scripts/fetch-parakeet.sh >/dev/null
 xcrun simctl boot "$UDID" 2>/dev/null || true
 open "$(xcode-select -p)/Applications/Simulator.app" --args -CurrentDeviceUDID "$UDID" || true
 xcodebuild -project Mycroft.xcodeproj -scheme Mycroft -destination "platform=iOS Simulator,id=$UDID" \

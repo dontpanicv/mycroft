@@ -1,7 +1,6 @@
 // One thread: the transcript as a console (user turns as bordered blocks, prose, numbered tool rows) and the
 // glass composer with voice, send, steer and stop. Voice is the app's on-device listener (the `listen` events): hold
-// the mic to talk and let go to send, or tap it and pause; "Read aloud" in the header reads answers and keeps
-// listening.
+// the mic to talk and let go to send, or tap it and pause.
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Markdown, Spinner, pad, duration, summarize, haptic } from '../lib.js'
@@ -52,7 +51,7 @@ export function Thread({ id }) {
 					<span class="title mono">${meta?.title ?? 'Thread'}</span>
 					<span class=${`label tiny ${busy ? 'soft' : 'faint'}`} id="status">${busy ? 'Running' : 'Idle'}</span>
 				</div>
-				<${ReadAloud} id=${id} onError=${setError} />
+				<span class="bar-side"></span>
 				${showProgress && html`<div class="progress"></div>`}
 			</header>
 			<div class="scroll transcript" ref=${scroller} onScroll=${onScroll}>
@@ -180,28 +179,13 @@ function useListen(id) {
 	return listen?.thread === id ? listen : null
 }
 
-/** Reads answers aloud and keeps listening between turns. */
-function ReadAloud({ id, onError }) {
-	const call = useCall()
-	const listen = useListen(id)
-	const on = !!listen?.readAloud
-	const toggle = () => {
-		haptic(call)
-		call('listen.readAloud', { id, on: !on }).catch((error) => onError(error.message))
-	}
-	return html`<button class=${`icon-button glass ${on ? 'on' : ''}`} aria-label="Read aloud" aria-pressed=${on} onClick=${toggle}>
-		<${Icon} name=${on ? 'speaker' : 'speakerOff'} />
-	</button>`
-}
-
 /** What the listener is doing, in a few words. */
 function voiceHint(listen, holding) {
 	if (!listen) return null
 	if (listen.state === 'preparing') return 'Starting the microphone…'
 	if (holding === 'hold') return 'Release to send · slide ↑ to lock · ← to cancel'
-	if (listen.speaking) return 'Reading · talk to interrupt'
+	if (listen.loading) return 'Loading Parakeet · keep talking'
 	if (listen.sendsIn != null) return 'Sending · tap the mic to keep it'
-	if (listen.awaitingAnswer && !listen.text) return 'Working · the answer will be read'
 	if (listen.state === 'on') return listen.text ? 'Pause to send, or say "send it"' : 'Listening'
 	return null
 }

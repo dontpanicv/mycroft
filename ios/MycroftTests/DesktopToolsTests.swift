@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 
@@ -83,6 +84,22 @@ struct TranscriberTests {
         let url = try #require(Bundle(for: BundleToken.self).url(forResource: "speech", withExtension: "wav"))
         let text = try await Transcriber.transcribe(file: url).lowercased()
         print("transcribed: \(text)")
+        #expect(text.contains("server"))
+        #expect(text.contains("mac"))
+    }
+
+    /// Runs the bundled Parakeet model on the same clip. It runs in the Simulator too, on the CPU there.
+    @Test(.enabled(if: Parakeet.isBundled, "this build has no Parakeet model"), .timeLimit(.minutes(5)))
+    func parakeetTranscribesAClip() async throws {
+        let url = try #require(Bundle(for: BundleToken.self).url(forResource: "speech", withExtension: "wav"))
+        let file = try AVAudioFile(forReading: url)
+        #expect(file.processingFormat.sampleRate == Parakeet.sampleRate)
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: buffer)
+        let samples = Array(UnsafeBufferPointer(start: try #require(buffer.floatChannelData?[0]), count: Int(buffer.frameLength)))
+        let started = Date.now
+        let text = try await Parakeet.shared.transcribe(samples).lowercased()
+        print("parakeet: \(text) (\(Date.now.timeIntervalSince(started)) s, loading included)")
         #expect(text.contains("server"))
         #expect(text.contains("mac"))
     }

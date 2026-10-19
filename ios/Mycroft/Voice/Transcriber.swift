@@ -9,7 +9,7 @@ nonisolated enum Transcriber {}
 extension Transcriber {
     /// Transcribes an audio file on the device (voice memos, tests).
     nonisolated static func transcribe(file url: URL, locale: Locale = Locale(identifier: "en-US")) async throws -> String {
-        let model = await SpeechModel.make(locale: locale, live: false)
+        let model = await SpeechModel.make(locale: locale)
         try await SpeechModel.install(model.module)
         let collect = Task {
             var text = ""
@@ -63,16 +63,15 @@ nonisolated enum SpeechModel {
         let isFinal: Bool
     }
 
-    static func make(locale: Locale, live: Bool) async -> (module: any SpeechModule, results: AsyncThrowingStream<Piece, Error>) {
+    static func make(locale: Locale) async -> (module: any SpeechModule, results: AsyncThrowingStream<Piece, Error>) {
         if SpeechTranscriber.isAvailable {
             let chosen = await SpeechTranscriber.supportedLocale(equivalentTo: locale) ?? Locale(identifier: "en-US")
             let module = SpeechTranscriber(
-                locale: chosen, transcriptionOptions: [],
-                reportingOptions: live ? [.volatileResults, .fastResults] : [], attributeOptions: [])
+                locale: chosen, transcriptionOptions: [], reportingOptions: [], attributeOptions: [])
             return (module, stream(module.results) { Piece(text: String($0.text.characters), isFinal: $0.isFinal) })
         }
         let chosen = await DictationTranscriber.supportedLocale(equivalentTo: locale) ?? Locale(identifier: "en-US")
-        let module = DictationTranscriber(locale: chosen, preset: live ? .progressiveLongDictation : .longDictation)
+        let module = DictationTranscriber(locale: chosen, preset: .longDictation)
         return (module, stream(module.results) { Piece(text: String($0.text.characters), isFinal: $0.isFinal) })
     }
 
@@ -111,10 +110,6 @@ nonisolated enum AudioTap {
 
     static func completion(_ handle: @escaping @Sendable () -> Void) -> AVAudioNodeCompletionHandler {
         { handle() }
-    }
-
-    static func played(_ handle: @escaping @Sendable () -> Void) -> AVAudioPlayerNodeCompletionHandler {
-        { _ in handle() }
     }
 }
 

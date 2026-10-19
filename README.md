@@ -11,7 +11,7 @@ The design builds on Mario Zechner's "pim" ([Pi Durable](https://github.com/eare
 ## What it will do
 
 - **Threads.** Multiple parallel conversations, each a durable Pi conversation with its own model, tools and execution environment.
-- **Talk or type, in any thread.** Hold the mic and let go to send, or tap it and pause. Answers can be read aloud while Mycroft keeps listening, and talking interrupts. Speech is recognized on the iPhone itself ([ADR 0010](docs/decisions/0010-voice-in-every-thread.md)).
+- **Talk or type, in any thread.** Hold the mic and let go to send, or tap it and pause. Speech is recognized on the iPhone itself, by NVIDIA's Parakeet v3 bundled in the app or Apple's model ([ADR 0010](docs/decisions/0010-voice-in-every-thread.md), [0011](docs/decisions/0011-dictation-parakeet.md)).
 - **ChatGPT subscription login.** Default model **Sol 6.1** via the `openai-codex` provider, signed in with the device-code flow (the same login Codex uses). Any other Pi provider can be selected per thread.
 - **Self-modification, screen included.** The agent's code (its behaviour in `extension.js`, and the whole screen in `ui/`, web code with Preact) lives in the app's Documents folder, not the signed bundle. The agent edits it, previews the screen off-screen, and activates it. The runtime swaps the code, the screen hot-reloads in place, and Pi Durable carries on. Known-good generations are kept for rollback.
 - **Long-running background work.** User-started runs continue after you leave the app via `BGContinuedProcessingTask` and `LongRunningIntent` (both measured above 10 minutes on an iPhone with iOS 27.2; see the spike).

@@ -1,4 +1,4 @@
-// Settings: the ChatGPT sign-in, API keys, Mycroft's generations, paired machines, notices.
+// Settings: the ChatGPT sign-in, the dictation model, API keys, Mycroft's generations, paired machines, notices.
 
 import { html, useEffect, useState } from '/lib/preact.js'
 import { useData, useCall, useNavigation, Icon, Label, Tag, Spinner, pad, ago, haptic } from '../lib.js'
@@ -24,6 +24,7 @@ export function Settings() {
 	const state = useData((d) => d.state)
 	return html`<${Page} title="Settings">
 		<${Section} title="Model"><${SignIn} /><//>
+		<${Section} title="Dictation"><${Dictation} dictation=${state?.dictation} /><//>
 		<${Section} title="Desktop control · Jev">
 			<${KeyField} name="jev" saved=${state?.keys?.jev}
 				about="Jev (typesafe.ai) picks the next action on your Mac from its accessibility tree." />
@@ -65,6 +66,31 @@ export function SignIn() {
 		default:
 			return html`<div class="card stack"><p>Sign in with your ChatGPT subscription to use Sol 6.1.</p>${button}</div>`
 	}
+}
+
+const engines = [
+	{ id: 'parakeet', name: 'Parakeet v3', about: "NVIDIA's model, inside the app. Fewer mistakes, especially with accents; the text arrives in short steps." },
+	{ id: 'apple', name: 'Apple', about: "The iPhone's own model. Words appear as you say them." },
+]
+
+/** Which on-device model turns speech into text. */
+function Dictation({ dictation }) {
+	const call = useCall()
+	if (!dictation) return null
+	const choose = (engine) => {
+		if (engine === dictation.engine) return
+		haptic(call)
+		call('dictation.engine', { engine })
+	}
+	return html`<div class="card list-card" role="radiogroup" aria-label="Dictation model">
+		${engines.map((engine) => html`<button class="choice-row" role="radio" aria-checked=${engine.id === dictation.engine}
+			aria-label=${engine.name} disabled=${engine.id === 'parakeet' && !dictation.parakeet} onClick=${() => choose(engine.id)}>
+			<span class="grow"><span class="mono strong block">${engine.name}</span><span class="faint small about">${engine.about}</span></span>
+			${engine.id === dictation.engine && html`<${Icon} name="check" size=${18} stroke=${2.4} />`}
+		</button>`)}
+		${!dictation.parakeet && html`<p class="faint small">This build doesn't include Parakeet.</p>`}
+		<p class="faint small">Both run on this iPhone; your voice never leaves it.</p>
+	</div>`
 }
 
 function KeyField({ name, saved, about }) {

@@ -59,6 +59,7 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
   threads: [{ id, title, createdAt, updatedAt, archived, machine? }],      // newest first
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
   keys: { jev: bool },
+  dictation: { engine: 'parakeet'|'apple', parakeet: bool },   // parakeet: this build bundles the model
   machines: [{ name, hostname, addresses, port, os, arch, version, pairedAt }],
   notices: [string], model: 'gpt-6.1-sol', screenErrors: [string] }
 ```
@@ -79,12 +80,12 @@ is the answer being written right now.
 Other events:
 
 - `listen`: the on-device listener, which listens for one thread at a time: `{ state: 'off'|'preparing'|'on'|'failed',
-  thread, mode: 'hold'|'auto', readAloud, text, prefix, level, speaking, awaitingAnswer, sent, sendsIn, countdown,
-  error }`. `text` is what is being said in this turn and `prefix` the typed draft it goes after. In `auto` mode a
-  pause starts a countdown (`sendsIn` ms left of `countdown`), then the app sends `prefix + text` itself and bumps
-  `sent`. "Send it" sends at once and "scratch that" clears the turn. With `readAloud`, the app reads each answer
-  aloud (`speaking`; talking interrupts it) and keeps listening. The loop is native, so it runs with the screen
-  locked.
+  thread, mode: 'hold'|'auto', engine: 'parakeet'|'apple', loading, text, prefix, level, sent, sendsIn, countdown,
+  error }`. `text` is what is being said in this turn and `prefix` the typed draft it goes after. With Parakeet,
+  `text` updates every second or so and at each pause (Apple's updates word by word); `loading` is Parakeet still
+  loading, while what is said is kept. In `auto` mode a pause starts a countdown (`sendsIn` ms left of `countdown`),
+  then the app sends `prefix + text` itself, bumps `sent` and stops listening. "Send it" sends at once and "scratch
+  that" clears the turn. The loop is native, so it runs with the screen locked.
 - `pairing`: `{ state: 'starting'|'waiting'|'paired'|'failed', command, pinned, copied, localNetwork, addresses: [{ network, ip }], chosen, machine?, message? }`. `addresses` are where a computer could reach the phone, nearest first; `network` is `Wi-Fi`, `Ethernet`, `Tailscale`, `NetBird`, `VPN`, `Personal Hotspot` or an interface name. `command` (short, on the clipboard) and `pinned` use the `chosen` one.
 
 ## Ops
@@ -108,8 +109,8 @@ Other events:
 | `listen.send` | | send this turn now (the mic was released, or send tapped) |
 | `listen.stop` | | stop listening; returns `{ text }` (prefix and words) for the draft |
 | `listen.cancel` | | throw this turn away |
-| `listen.readAloud` | `id, on` | read answers aloud and keep listening |
 | `listen.close` | | stop everything (the thread's screen went away) |
+| `dictation.engine` | `engine: 'parakeet'\|'apple'` | the model dictation uses from the next turn; in `state.dictation` |
 | `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |
 | `clipboard.copy` | `text` | |
 | `haptic` | `style: 'light'\|'medium'\|'success'\|'error'\|'selection'` | |

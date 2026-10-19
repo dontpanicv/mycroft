@@ -32,3 +32,6 @@ spikes/**/*.log
 
 # personal Xcode signing
 ios/Config/Local.xcconfig
+
+# the Parakeet model the app bundles (ios/scripts/fetch-parakeet.sh)
+ios/Models/

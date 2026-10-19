@@ -92,24 +92,50 @@ final class ScreenUITests: XCTestCase {
         snap(app, "pair-vpn")
     }
 
-    /// Voice lives in every thread: the mic in the composer and "Read aloud" in the header. The Simulator has no speech
+    /// Voice lives in every thread: the mic in the composer. With Apple's model chosen, the Simulator has no speech
     /// models, so starting fails, and says why.
     func testVoiceControls() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
         XCTAssertTrue(app.buttons["New thread"].waitForExistence(timeout: 30))
+        choose(app, dictation: "Apple")
+        app.buttons["Back"].tap()
         XCTAssertFalse(app.buttons["Talk to Mycroft"].exists, "the separate voice screen is gone")
         app.buttons["New thread"].tap()
         XCTAssertTrue(app.buttons["Talk"].waitForExistence(timeout: 10))
-        // aria-pressed makes it a toggle to accessibility, not a plain button.
-        XCTAssertTrue(app.descendants(matching: .any)["Read aloud"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["Read aloud"].exists, "reading aloud is gone")
         snap(app, "voice-controls")
         app.buttons["Talk"].tap()
         let failure = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'speech'")).firstMatch
         XCTAssertTrue(failure.waitForExistence(timeout: 15), "starting the mic without speech models says why")
         snap(app, "voice-unavailable")
         XCTAssertTrue(app.buttons["Talk"].exists, "the mic is back to its resting state")
+    }
+
+    /// Settings → Dictation: Parakeet (bundled) by default, and switching to Apple and back sticks.
+    func testDictationSetting() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
+        choose(app, dictation: "Apple")
+        snap(app, "dictation-apple")
+        choose(app, dictation: "Parakeet v3")
+        snap(app, "dictation-parakeet")
+    }
+
+    /// Opens Settings and picks a dictation model; it stays on the Settings screen.
+    private func choose(_ app: XCUIApplication, dictation name: String) {
+        if !app.staticTexts["DICTATION"].exists { app.buttons["Settings"].tap() }
+        // WebKit reports role="radio" as a plain element whose value is 1 when checked.
+        let options = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Parakeet v3", "Apple"]))
+        let option = options[name]
+        XCTAssertTrue(option.waitForExistence(timeout: 10), "Settings shows the \(name) option")
+        option.tap()
+        expectation(for: NSPredicate(format: "value == '1'"), evaluatedWith: option)
+        waitForExpectations(timeout: 5)
+        XCTAssertEqual(options.matching(NSPredicate(format: "value == '1'")).count, 1, "one model is chosen")
     }
 
     private func snap(_ app: XCUIApplication, _ name: String) {

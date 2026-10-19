@@ -30,7 +30,6 @@ Two references, one rule: **the content is a terminal; the chrome is glass.**
 - **Thread.**
   - The transcript is the terminal: user turns are bordered blocks, assistant prose is grotesk, and tool calls are mono rows such as `01 bash  ls -la  ✓ 0.4s` that expand into output.
   - The composer is a glass capsule at the bottom with model and machine chips, the mic and send. While listening, the chips give way to one line saying what to do ("Release to send · slide ↑ to lock · ← to cancel"), the words appear live in the field, and a ring fills around send before a paused turn sends itself.
-  - "Read aloud" (a speaker in the header) reads answers and keeps listening.
   - A run shows a thin indigo progress line under the nav bar and a Live Activity on the lock screen.
 - **Machines.** Hands hosts as square cards showing hostname, OS, latency and running jobs. Pairing is a glass sheet.
 - **Self.** The agent's generations: diff, self-test result, active, rollback. In mono, like a git log.

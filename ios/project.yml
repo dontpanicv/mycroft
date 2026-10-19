@@ -14,6 +14,9 @@ packages:
   Certificates:
     url: https://github.com/apple/swift-certificates
     from: 1.21.0
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    exactVersion: 0.17.7
   PiDurableKit:
     url: https://github.com/finnvoor/PiDurableKit
     revision: 1305a72ffe5ea29a9f5e7d576a7cf9334189c1ef
@@ -44,6 +47,7 @@ targets:
         product: X509
       - package: ASN1
         product: SwiftASN1
+      - package: FluidAudio
       - target: MycroftActivity
     info:
       path: Mycroft/Info.plist
@@ -91,6 +95,19 @@ targets:
           fi
           DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
           if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
+      - name: Bundle Parakeet
+        basedOnDependencyAnalysis: false
+        script: |
+          # Copies the Parakeet speech model (ios/scripts/fetch-parakeet.sh, ~460 MB) into the app. Without it, dictation
+          # offers Apple's model only.
+          MODEL="${SRCROOT}/Models/parakeet-tdt-0.6b-v3"
+          if [ -f "$MODEL/REVISION" ]; then
+            DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Parakeet"
+            mkdir -p "$DEST"
+            rsync -a --delete --exclude REVISION "$MODEL/" "$DEST/"
+          else
+            echo "warning: no Parakeet model in ios/Models (run ios/scripts/fetch-parakeet.sh); dictation will use Apple's model"
+          fi
     settings:
       base:
         ENABLE_USER_SCRIPT_SANDBOXING: NO

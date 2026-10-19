@@ -28,6 +28,10 @@ final class AppModel {
     private(set) var generation = GenerationStore.State()
     private(set) var hasJevKey = Keychain.read(Secret.jev) != nil
     private(set) var machines: [Machine] = []
+    /// The model dictation uses (Voice/Parakeet.swift).
+    var dictation = Dictation.saved {
+        didSet { UserDefaults.standard.set(dictation.rawValue, forKey: Dictation.key) }
+    }
     var notices: [String] = []
 
     let models = Models(credentials: .keychain(service: "dev.mycroft.credentials"))
@@ -209,11 +213,6 @@ final class AppModel {
     }
 
     /// The newest answer in the thread, as text: what reading aloud reads.
-    func lastAnswer(_ thread: ThreadMeta) async -> String? {
-        let entries = (try? await harness?.conversation(thread.id)?.entries(limit: 6).items) ?? []
-        return entries.first(where: { $0.kind == .assistant })?.assistantMessage?.content.compactMap(\.text).joined(separator: "\n")
-    }
-
     func stop(_ thread: ThreadMeta) async throws {
         try await harness?.conversation(thread.id)?.abort()
     }

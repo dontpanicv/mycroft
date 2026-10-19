@@ -85,6 +85,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             return Self.object(thread)
         case "thread.open":
             openView(try args.require("id"))
+            Listener.warm(app)
         case "thread.close":
             viewFeeds.removeValue(forKey: try args.require("id"))?.cancel()
         case "thread.send":
@@ -147,12 +148,14 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             return ["text": await listener.stop()]
         case "listen.cancel":
             listener.cancel()
-        case "listen.readAloud":
-            try writable()
-            await listener.setReadAloud(args.bool("on") ?? false, thread: try thread(args), app: app)
-            followListener()
         case "listen.close":
             listener.shutDown()
+        case "dictation.engine":
+            try writable()
+            guard let engine = args.string("engine").flatMap(Dictation.init) else { throw BridgeError("Unknown engine") }
+            if engine == .parakeet, !Parakeet.isBundled { throw BridgeError("This build of Mycroft doesn't include Parakeet.") }
+            app.dictation = engine
+            if engine == .apple { Task { await Parakeet.shared.unload() } }
 
         // Self
         case "generation.rollback":
@@ -219,6 +222,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             "threads": Self.object(app.threads) ?? [],
             "signIn": signIn,
             "keys": ["jev": app.hasJevKey],
+            "dictation": ["engine": app.dictation.rawValue, "parakeet": Parakeet.isBundled],
             "machines": Self.object(app.machines) ?? [],
             "notices": app.notices,
             "model": Provider.defaultModel.modelId,
@@ -434,6 +438,10 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let notices = """
         Mycroft's screen is built with Preact (MIT, © Jason Miller) and htm (Apache-2.0, © Google LLC), \
         bundled as htm's preact/standalone build.
+
+        Dictation uses FluidAudio (Apache-2.0, © FluidInference) and NVIDIA's Parakeet TDT 0.6B v3 \
+        (CC-BY-4.0, © NVIDIA), converted to CoreML by FluidInference: \
+        https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
 
         """ + PiDurable.thirdPartyNotices
 }

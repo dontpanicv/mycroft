@@ -152,7 +152,6 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .icon-button { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .icon-button.tall { width: 42px; height: 46px; border-radius: 23px; }
 .icon-button.listening { color: var(--accent-soft); box-shadow: 0 0 0 calc(var(--level, 0) * 10px) color-mix(in srgb, var(--accent) 30%, transparent); }
-.icon-button.on { color: var(--accent-soft); }
 /* The mic takes press-and-hold: no text selection, callout or scrolling from it. */
 .mic { touch-action: none; -webkit-touch-callout: none; }
 .mic.held { transform: scale(1.12); color: var(--accent-soft); }
@@ -244,6 +243,11 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .gen-row .block { font-size: 14px; }
 .list-card > p { margin-top: 10px; }
 .link-row { width: 100%; }
+.choice-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 0; text-align: left; border-bottom: 1px solid var(--hairline); }
+.choice-row:last-of-type { border-bottom: none; }
+.choice-row:disabled { opacity: 0.45; }
+.choice-row .about { display: block; margin-top: 2px; }
+.choice-row svg { color: var(--accent-soft); }
 .code { font: 700 30px var(--mono); letter-spacing: 0.15em; color: var(--accent-soft); -webkit-user-select: text; user-select: text; }
 .notices { white-space: pre-wrap; font-size: 10px; color: var(--ink-muted); -webkit-user-select: text; user-select: text; }
 .command { white-space: pre-wrap; word-break: break-all; font-size: 11px; color: var(--accent-soft); background: var(--raised); -webkit-user-select: text; user-select: text; }

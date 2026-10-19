@@ -10,7 +10,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 │  │         + bridge to the app; native recovery screen (shake)           │
 │  ├─ RunController: BGContinuedProcessingTask / LongRunningIntent,        │
 │  │                 Live Activity progress, stall reporting               │
-│  ├─ Listener: on-device speech in every thread, read aloud, AirPods      │
+│  ├─ Listener: on-device dictation in every thread (Parakeet or Apple)    │
 │  ├─ Bridges: SQLite · files · keychain · URLSession fetch/SSE · SSH      │
 │  └─ RuntimeHost: owns the JSContext, loads the active generation,        │
 │                  swaps it on self-edit, rolls back on crash loops        │
@@ -88,9 +88,9 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 
 ## 7. Voice
 
-- Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener (Apple's SpeechTranscriber, English) serves the open thread: hold the mic to talk, or tap and pause; a pause ends the turn on the audio's own clock, and a short countdown sends it.
-- "Read aloud" reads each answer with Apple's speech, through the same voice-processing audio engine as the microphone, so talking over it interrupts it. Talking while a run works steers it.
-- The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
+- Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener serves the open thread: hold the mic to talk, or tap and pause; a pause ends the turn on the audio's own clock, and a short countdown sends it. Talking while a run works steers it.
+- The recognizer is chosen in Settings ([ADR 0011](decisions/0011-dictation-parakeet.md)): NVIDIA's Parakeet TDT 0.6B v3, bundled in the app and run through FluidAudio on the Neural Engine (the default; the turn is transcribed again every second and at each pause), or Apple's SpeechTranscriber (words as they are spoken).
+- The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with no voice processing, and the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
 
 ## 8. Threads
 
