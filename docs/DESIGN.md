@@ -39,4 +39,7 @@ Two references, one rule: **the content is a terminal; the chrome is glass.**
 
 - Glass morphs between composer ↔ voice orb (`glassEffectID` with namespace transitions).
 - Streaming text appears token by token without a cursor bounce. The tool-call row number ticks while running.
-- Respect Reduce Motion and Reduce Transparency: glass falls back to an opaque `#141418` with a hairline border.
+- Loops are slow and seamless: the spinner turns once a second, the run glow glides off both edges in 2.8 s.
+- Respect Reduce Motion: slides and zooms become fades, press scaling stops, and the voice orb brightens instead of
+  growing. Activity indicators keep their normal pace, as iOS's do. A loop squeezed to near-zero duration strobes.
+- Respect Reduce Transparency: glass falls back to an opaque `#141418` with a hairline border.

@@ -34,7 +34,10 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
    goes back to the previous generation by itself.
 5. Keep it a phone app: safe areas (`env(safe-area-inset-*)`), thumb-sized targets (≥ 40 px), `aria-label` on icon
    buttons, readable contrast on the dark canvas.
-6. Never send secrets or user data anywhere from the page. Links open in an in-app Safari sheet; the page can't
+6. Motion: keep looping animations slow and seamless (the spinner turns once a second, the run glow takes 2.8 s and
+   leaves both edges before it comes back). Under `prefers-reduced-motion`, swap slides and zooms for fades; never
+   shorten an infinite animation's duration there, since it becomes a strobe.
+7. Never send secrets or user data anywhere from the page. Links open in an in-app Safari sheet; the page can't
    navigate away.
 
 ## The runtime (`useRuntime()`)

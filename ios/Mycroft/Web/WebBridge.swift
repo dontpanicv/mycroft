@@ -446,8 +446,9 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     }
 
+    /// Sorted keys: feeds compare this text to skip unchanged updates, and a dictionary's order isn't stable.
     static func json(_ object: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed]) else { return "null" }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .sortedKeys]) else { return "null" }
         return String(decoding: data, as: UTF8.self)
     }
 
