@@ -78,7 +78,9 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
 ```
 
 Assistant `content` blocks are `{ type: 'text', text }`, `{ type: 'thinking', thinking }` and
-`{ type: 'toolCall', id, name, arguments }`. Tool results are `{ role: 'toolResult', toolCallId, toolName, content,
+`{ type: 'toolCall', id, name, arguments }`. A `show` call is something the agent showed the user, not a tool row:
+`arguments.html` (render it sandboxed, no scripts) or, on its result, `details: { kind: 'image', image: { data,
+mimeType }, width, height }`; `arguments.caption` goes under either. Tool results are `{ role: 'toolResult', toolCallId, toolName, content,
 isError, durationMs }`, and their content may include `{ type: 'image', data, mimeType }`. `live.generation.message`
 is the answer being written right now.
 

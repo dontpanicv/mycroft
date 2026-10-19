@@ -53,7 +53,8 @@ final class ScreenUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
-        let first = app.buttons.matching(Self.threadRow).firstMatch
+        // A thread that is working can't settle.
+        let first = app.buttons.matching(Self.threadRow).matching(NSPredicate(format: "NOT label CONTAINS 'Working'")).firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 30))
         let title = first.label.components(separatedBy: " · ")[0]
         first.press(forDuration: 0.8)
@@ -65,7 +66,9 @@ final class ScreenUITests: XCTestCase {
         XCTAssertTrue(shelf.waitForExistence(timeout: 5))
         snap(app, "settled-collapsed")
         shelf.tap()
-        let settled = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title + " · ")).firstMatch
+        // Earlier test runs leave threads with the same title: the settled one is the last on screen.
+        let same = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title + " · "))
+        let settled = same.element(boundBy: max(0, same.count - 1))
         XCTAssertTrue(settled.waitForExistence(timeout: 5), "\(title) is in the shelf")
         // A long press doesn't scroll to its element the way a tap does.
         for _ in 0..<12 where !settled.isHittable { app.swipeUp() }
@@ -133,6 +136,34 @@ final class ScreenUITests: XCTestCase {
         snap(app, "list-after-run")
     }
 
+    /// A real run: the agent shows an image a tool returned and a piece of HTML, and both render in the thread.
+    func testShowImageAndHTML() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+        XCTAssertTrue(app.buttons["New thread"].waitForExistence(timeout: 30))
+        app.buttons["New thread"].tap()
+        let composer = app.textViews["Message Mycroft"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("UI test: call self_preview with route #/settings, then show the latest image with the caption Settings preview, then show an HTML table of two fruits and their colours with a red header row. Then answer in one line.")
+        app.buttons["Send"].tap()
+
+        let image = app.images["Settings preview"]
+        XCTAssertTrue(image.waitForExistence(timeout: 240), "the shown image is in the thread")
+        // WebKit reports the frame as a plain element named by its title.
+        let frame = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Shown by Mycroft'")).firstMatch
+        XCTAssertTrue(frame.waitForExistence(timeout: 120), "the shown HTML is in the thread")
+        sleep(2)
+        snap(app, "shown")
+        XCTAssertGreaterThan(frame.frame.height, 60, "the frame is as tall as its content")
+        // The thread follows the bottom, so the image's top may be under the header: tap its lower part.
+        image.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)).tap()
+        XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 5))
+        snap(app, "shown-viewer")
+        app.buttons["Close"].tap()
+    }
+
     /// Screenshots of every screen, for looking at the design (attachments in the result bundle).
     func testTour() throws {
         let app = XCUIApplication()
@@ -143,7 +174,8 @@ final class ScreenUITests: XCTestCase {
         app.buttons.matching(Self.threadRow).firstMatch.tap()
         XCTAssertTrue(app.textViews["Message Mycroft"].waitForExistence(timeout: 10))
         sleep(2)
-        let toolRow = app.buttons.matching(NSPredicate(format: "label CONTAINS 'self_'")).firstMatch
+        // A numbered tool row, not the title (which may mention a tool too).
+        let toolRow = app.buttons.matching(NSPredicate(format: "label MATCHES '^[0-9]{2} self_.*'")).firstMatch
         if toolRow.exists { toolRow.tap() }
         snap(app, "thread")
         app.textViews["Message Mycroft"].tap()

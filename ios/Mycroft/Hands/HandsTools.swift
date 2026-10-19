@@ -287,6 +287,24 @@ nonisolated enum HandsTools {
         return String(decoding: try read.get().payload, as: UTF8.self)
     }
 
+    /// A whole file's bytes, up to `limit`.
+    static func readData(_ path: String, on hands: HandsConnection, limit: Int) async throws -> Data {
+        let opened = try await hands.request("open", ["path": path, "mode": "read"])
+        guard let handle = opened.int("handle") else { throw ToolError("could not open \(path)") }
+        let read = await Result(catching: { () async throws -> Data in
+            var data = Data()
+            let chunk = 1024 * 1024
+            while true {
+                let piece = try await hands.request("pread", ["handle": handle, "offset": data.count, "length": chunk]).payload
+                data.append(piece)
+                if piece.count < chunk { return data }
+                guard data.count <= limit else { throw ToolError("\(path) is over \(limit / 1024 / 1024) MB") }
+            }
+        })
+        _ = try? await hands.request("close", ["handle": handle])
+        return try read.get()
+    }
+
     static func listing(_ reply: HandsConnection.Reply, root: String) -> String {
         // Records: kind byte (f/d/l), relative path, NUL.
         var lines: [String] = []

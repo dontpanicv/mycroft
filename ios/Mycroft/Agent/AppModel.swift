@@ -92,7 +92,7 @@ final class AppModel {
         do {
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension()],
+                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension(), ShowTools.makeExtension()],
                 settings: Self.settings)
         } catch {
             let state = await generations.state
@@ -101,7 +101,7 @@ final class AppModel {
             notices.append("Generation \(failed) failed to load (\(error.localizedDescription)); running the last good one.")
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension()],
+                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension(), ShowTools.makeExtension()],
                 settings: Self.settings)
         }
     }

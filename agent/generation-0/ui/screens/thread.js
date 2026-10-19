@@ -3,7 +3,7 @@
 // While a run works, a capsule above the composer shows its time and the queue, and new messages queue or steer.
 // `id` null is a new thread's draft: nothing exists until the first message is sent.
 
-import { html, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
+import { html, render, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Markdown, Spinner, Sheet, pad, duration, summarize, haptic } from '../lib.js'
 import { Composer } from './composer.js'
 
@@ -231,7 +231,7 @@ function Transcript({ view, thread, onError, onRetry }) {
 	for (const message of [...entries.map((e) => e.model?.[0]), streaming]) {
 		if (message?.role !== 'assistant') continue
 		for (const block of message.content ?? []) {
-			if (block.type === 'toolCall' && !(block.id in numbers)) numbers[block.id] = Object.keys(numbers).length + 1
+			if (block.type === 'toolCall' && block.name !== 'show' && !(block.id in numbers)) numbers[block.id] = Object.keys(numbers).length + 1
 		}
 	}
 	const liveTools = view.live?.tools ?? []
@@ -272,7 +272,10 @@ function FinishedRun({ turn, thread, props, onError }) {
 	const finalMessage = final.model[0]
 	const answer = textOf(finalMessage)
 	const work = [...replies.slice(0, -1).map((e) => e.model[0]), { ...finalMessage, content: (finalMessage.content ?? []).filter((b) => b.type !== 'text') }]
-	const steps = work.flatMap((m) => m.content ?? []).filter((b) => b.type === 'toolCall').length
+	const calls = work.flatMap((m) => m.content ?? []).filter((b) => b.type === 'toolCall')
+	const steps = calls.filter((b) => b.name !== 'show').length
+	// What the agent showed stays in view when the working folds away.
+	const shown = calls.filter((b) => b.name === 'show')
 	const start = timeOf(turn.user?.model?.[0])
 	const end = (timeOf(finalMessage) ?? 0) + (finalMessage.durationMs ?? 0)
 	const folds = steps > 0 || replies.length > 1
@@ -298,7 +301,8 @@ function FinishedRun({ turn, thread, props, onError }) {
 					<${Icon} name=${open ? 'down' : 'chevron'} size=${12} />
 					<${Label} tone="faint" size=${9.5}>${finalMessage.stopReason === 'aborted' ? 'Stopped after' : 'Worked for'} ${start && end > start ? duration(end - start) : '…'}${steps ? ` · ${steps} step${steps > 1 ? 's' : ''}` : ''}<//>
 				</button>
-				${open && work.map((message, i) => html`<${AssistantTurn} key=${i} message=${message} ...${props} />`)}`
+				${open && work.map((message, i) => html`<${AssistantTurn} key=${i} message=${message} ...${props} hideShown />`)}
+				${shown.map((block) => html`<${Shown} key=${block.id} call=${block} result=${props.results[block.id]} />`)}`
 			: work.map((message, i) => html`<${AssistantTurn} key=${i} message=${message} ...${props} />`)}
 		${answer && html`<${Markdown} text=${answer} />`}
 		${answer && thread && html`<div class="answer-actions">
@@ -318,11 +322,13 @@ function UserTurn({ message }) {
 	return html`<div class="card user-turn"><p class="user-text">${textOf(message)}</p></div>`
 }
 
-function AssistantTurn({ message, results, numbers, live }) {
+function AssistantTurn({ message, results, numbers, live, hideShown }) {
 	return html`<div class="assistant-turn">
 		${(message.content ?? []).map((block, i) => {
 			if (block.type === 'text' && block.text) return html`<${Markdown} key=${i} text=${block.text} />`
 			if (block.type === 'thinking' && block.thinking) return html`<${Thinking} key=${i} text=${block.thinking} />`
+			if (block.type === 'toolCall' && block.name === 'show')
+				return hideShown ? null : html`<${Shown} key=${block.id} call=${block} result=${results[block.id]} />`
 			if (block.type === 'toolCall')
 				return html`<${ToolRow} key=${block.id} index=${numbers[block.id] ?? 0} call=${block} result=${results[block.id]}
 					live=${live.find((slot) => slot.callId === block.id)} />`
@@ -364,4 +370,98 @@ function ToolRow({ index, call, result, live }) {
 				</div>`
 			: null}
 	</div>`
+}
+
+// MARK: Shown
+
+/** An image or a piece of HTML the agent showed with its `show` tool. */
+function Shown({ call, result }) {
+	// In the screen's store: the run ending re-renders this turn, and an open viewer stays open.
+	const [viewed, setViewed] = useUI('viewing', null)
+	const viewing = viewed === call.id
+	const setViewing = (on) => setViewed(on ? call.id : null)
+	const args = call.arguments ?? {}
+	const caption = args.caption && html`<figcaption class="faint small">${args.caption}</figcaption>`
+	if (result?.isError) return null
+	if (args.html) {
+		return html`<figure class="shown">
+			<${HtmlFrame} html=${args.html} />
+			<div class="row between">${caption ?? html`<span></span>`}
+				<button class="answer-action" aria-label="Full screen" onClick=${() => setViewing(true)}><${Icon} name="expand" size=${14} /></button></div>
+			${viewing && html`<${Viewer} onClose=${() => setViewing(false)}><${HtmlFrame} html=${args.html} full /><//>`}
+		</figure>`
+	}
+	const image = result?.details?.image
+	if (!image?.data) {
+		return result ? null : html`<figure class="shown"><div class="shown-pending row gap soft"><${Spinner} /><${Label} tone="soft">Getting the image<//></div></figure>`
+	}
+	const src = `data:${image.mimeType};base64,${image.data}`
+	return html`<figure class="shown">
+		<img class="shown-image" src=${src} alt=${args.caption ?? 'Image'} onClick=${() => setViewing(true)} />
+		${caption}
+		${viewing && html`<${Viewer} onClose=${() => setViewing(false)}><${ZoomImage} src=${src} /><//>`}
+	</figure>`
+}
+
+/** A full-screen layer over everything (the header and the composer too), closed with ✕. */
+function Viewer({ children, onClose }) {
+	return html`<${Portal}><div class="viewer" role="dialog">
+		<div class="viewer-body">${children}</div>
+		<button class="icon-button glass viewer-close" aria-label="Close" onClick=${onClose}><${Icon} name="close" /></button>
+	</div><//>`
+}
+
+/** Renders its children at the end of the page's body, above every screen. */
+function Portal({ children }) {
+	const [host] = useState(() => document.createElement('div'))
+	useEffect(() => {
+		document.body.appendChild(host)
+		return () => {
+			render(null, host)
+			host.remove()
+		}
+	}, [])
+	useEffect(() => render(children, host))
+	return null
+}
+
+/** Fits the screen; a tap shows it at full size, to pan around. */
+function ZoomImage({ src }) {
+	const [full, setFull] = useState(false)
+	return html`<div class=${`zoom ${full ? 'full' : ''}`} onClick=${() => setFull(!full)}><img src=${src} alt="Image" /></div>`
+}
+
+/** Content rules for shown HTML: inline styles and data: images only; no scripts, nothing from the network. */
+const frameHead = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">`
+const fragmentStyle = '<style>html,body{margin:0}body{padding:14px;font:15px/1.45 -apple-system,system-ui,sans-serif;color:#111;background:#fff}</style>'
+
+/** The agent's HTML as a document: a full page keeps its own head (with the rules added), a fragment gets a body. */
+function frameDocument(source) {
+	if (/<html[\s>]|<!doctype/i.test(source)) {
+		if (/<head[^>]*>/i.test(source)) return source.replace(/<head[^>]*>/i, (head) => head + frameHead)
+		return source.replace(/<html[^>]*>/i, (tag) => `${tag}<head>${frameHead}</head>`)
+	}
+	return `<!doctype html><html><head>${frameHead}${fragmentStyle}</head><body>${source}</body></html>`
+}
+
+/**
+ * The HTML in a sandboxed frame (no scripts). Same-origin only so its height can be read: the frame is as tall as its
+ * content, or fills the viewer.
+ */
+function HtmlFrame({ html: source, full }) {
+	const frame = useRef(null)
+	const [height, setHeight] = useState(140)
+	const measure = () => {
+		const doc = frame.current?.contentDocument
+		if (!doc?.documentElement) return
+		setHeight(Math.ceil(doc.documentElement.scrollHeight))
+		if (!frame.current.observer && window.ResizeObserver) {
+			frame.current.observer = new ResizeObserver(() => setHeight(Math.ceil(doc.documentElement.scrollHeight)))
+			frame.current.observer.observe(doc.documentElement)
+		}
+	}
+	useEffect(() => () => frame.current?.observer?.disconnect(), [])
+	return html`<iframe ref=${frame} class=${`shown-html ${full ? 'full' : ''}`} sandbox="allow-same-origin" srcdoc=${frameDocument(source)}
+		style=${full ? '' : `height:${height}px`} onLoad=${measure} title="Shown by Mycroft"></iframe>`
 }

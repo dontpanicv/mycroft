@@ -229,6 +229,19 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .draft-hero h1 { font: 600 24px/1.2 var(--mono); letter-spacing: -0.04em; margin-bottom: 8px; }
 button.bar-title:disabled { opacity: 1; }
 .worked { align-self: flex-start; }
+/* What the agent showed: an image or its HTML, in the flow of the thread. */
+.shown { display: flex; flex-direction: column; gap: 6px; }
+.shown-image { display: block; max-width: 100%; max-height: 60vh; width: auto; align-self: flex-start; object-fit: contain; border: 1px solid var(--hairline); -webkit-touch-callout: default; }
+.shown-html { display: block; width: 100%; border: 1px solid var(--hairline); background: white; }
+.shown-pending { padding: 14px 0; }
+.viewer { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.94); animation: fade 0.2s; }
+.viewer-body { position: absolute; inset: 0; padding: calc(var(--top) + 60px) 0 var(--bottom); display: flex; }
+.viewer-close { position: absolute; top: calc(var(--top) + 8px); right: 14px; }
+.viewer .shown-html.full { flex: 1; height: 100%; border: none; }
+.zoom { flex: 1; overflow: auto; display: grid; place-items: center; }
+.zoom img { max-width: 100%; max-height: 100%; -webkit-touch-callout: default; }
+.zoom.full { place-items: start; }
+.zoom.full img { max-width: none; max-height: none; }
 .forked-from { display: flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .forked-from .icon { flex: none; }
 .forked-from .ellipsis { overflow: hidden; text-overflow: ellipsis; }

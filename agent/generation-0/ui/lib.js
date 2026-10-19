@@ -176,6 +176,7 @@ const paths = {
 	pin: 'M9 4h6l-1 6 4 4H6l4-4Z M12 14v6',
 	archive: 'M4 5h16v4H4Z M5 9v10h14V9 M10 13h4',
 	pencil: 'M15 5l4 4L8 20H4v-4Z',
+	expand: 'M14 4h6v6 M20 4l-7 7 M10 20H4v-6 M4 20l7-7',
 }
 
 export function Icon({ name, size = 20, stroke = 1.8 }) {

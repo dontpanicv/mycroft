@@ -1,5 +1,7 @@
 import AVFoundation
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import Testing
 
 @testable import Mycroft
@@ -113,4 +115,37 @@ nonisolated private var isSimulator: Bool {
     #else
         false
     #endif
+}
+
+@Suite("Show")
+struct ShowToolsTests {
+    /// A big PNG comes back as a JPEG the screen can take (under 600 KB of base64), at most 2000 px on its long side.
+    @Test func encodesAnyImageSmallEnoughForTheScreen() throws {
+        let width = 3000, height = 1800
+        let context = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        // Noise, the worst case for compression.
+        var generator = SystemRandomNumberGenerator()
+        for y in stride(from: 0, to: height, by: 6) {
+            for x in stride(from: 0, to: width, by: 6) {
+                context.setFillColor(red: .random(in: 0...1, using: &generator), green: .random(in: 0...1, using: &generator),
+                                     blue: .random(in: 0...1, using: &generator), alpha: 1)
+                context.fill(CGRect(x: x, y: y, width: 6, height: 6))
+            }
+        }
+        let png = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(destination))
+
+        let picture = try ShowTools.encode(png as Data)
+        #expect(max(picture.width, picture.height) <= ShowTools.maxPixels)
+        #expect(picture.data.base64EncodedString().count < 600_000)
+        #expect(picture.data.starts(with: [0xFF, 0xD8]), "a JPEG")
+    }
+
+    @Test func refusesWhatIsNotAnImage() {
+        #expect(throws: (any Error).self) { try ShowTools.encode(Data("<html></html>".utf8)) }
+    }
 }

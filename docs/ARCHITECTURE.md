@@ -94,6 +94,8 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 
 ## 8. Threads
 
+- The agent can show as well as write: its `show` tool puts an image (one a tool returned, a file on a machine, or a URL) or its own HTML and CSS into the thread ([ADR 0013](decisions/0013-show-images-and-html.md)). Images ride on the tool result's `details`, which the model never sees again; HTML renders in a sandboxed frame without scripts or network.
+
 - The thread list is a session-scoped document. Each thread holds a conversation id, title, model, execution environment (phone-only, or a named `hands` host) and pin/archive state.
 - The environment is resolved per tool call from the thread's document (Pi Durable example 29), so a thread can move between machines mid-conversation (Mario's "Hetzner trick").
 
