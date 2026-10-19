@@ -110,12 +110,19 @@ b, .strong { font-weight: 600; }
 .bar-side { width: 40px; }
 .bar-title { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .bar-title .title { font-size: 13px; font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The run indicator under the bar: a faint track with a soft glow gliding across it, slowly, and fully off both
+   ends so the loop never jumps. */
 .progress {
 	position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden;
-	background: linear-gradient(90deg, transparent, var(--accent), var(--accent-soft), transparent) 0 0 / 40% 100% no-repeat;
-	animation: progress 1.3s linear infinite;
+	background: color-mix(in srgb, var(--accent) 16%, transparent);
+	animation: fade 0.5s ease-out;
 }
-@keyframes progress { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+.progress::after {
+	content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 45%; will-change: transform;
+	background: linear-gradient(90deg, transparent, var(--accent) 40%, var(--accent-soft) 60%, transparent);
+	animation: progress 2.8s cubic-bezier(.45, 0, .25, 1) infinite;
+}
+@keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(225%); } }
 
 /* Glass: blurred, lit from the top edge, presses in */
 .glass {

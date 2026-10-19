@@ -38,6 +38,7 @@ export function Thread({ id }) {
 	}, [])
 
 	const busy = view?.busy ?? false
+	const showProgress = useLinger(busy, 600)
 	return html`
 		<main class="screen thread">
 			<header class="bar glass-bar">
@@ -47,7 +48,7 @@ export function Thread({ id }) {
 					<span class=${`label tiny ${busy ? 'soft' : 'faint'}`} id="status">${busy ? 'Running' : 'Idle'}</span>
 				</div>
 				<span class="bar-side"></span>
-				${busy && html`<div class="progress"></div>`}
+				${showProgress && html`<div class="progress"></div>`}
 			</header>
 			<div class="scroll transcript" ref=${scroller} onScroll=${onScroll}>
 				${view ? html`<${Transcript} view=${view} />` : html`<div class="center"><${Spinner} /></div>`}
@@ -57,6 +58,17 @@ export function Thread({ id }) {
 			<${Composer} id=${id} busy=${busy} model=${view?.model} onError=${setError} />
 		</main>
 	`
+}
+
+/** `value`, but a `true` stays for `ms` after it turns false, so a run that pauses for a moment doesn't blink. */
+function useLinger(value, ms) {
+	const [shown, setShown] = useState(value)
+	useEffect(() => {
+		if (value) return setShown(true)
+		const timer = setTimeout(() => setShown(false), ms)
+		return () => clearTimeout(timer)
+	}, [value])
+	return shown
 }
 
 // MARK: Transcript
