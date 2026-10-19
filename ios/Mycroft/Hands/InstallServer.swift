@@ -9,10 +9,16 @@ import X509
 
 /// Serves the one-line `hands` install from the phone (hands/docs/pairing.md §1).
 ///
-/// While the Add Machine sheet is open, the phone runs a small HTTPS server on the LAN with a fresh self-signed
-/// certificate. The command it copies pins that certificate, so only this phone can answer it:
+/// While the Add Machine screen is open, the phone listens on every network it is on (Wi-Fi, Tailscale, NetBird…)
+/// for a short command that can be typed by hand:
 ///
-///     curl -fsSLk --pinnedpubkey sha256//PIN https://IP:PORT/SETUP | sh
+///     curl -fsS IP:8484/CODE | sh
+///
+/// That fetch is plain HTTP, so it trusts the network path. Everything after it (the binaries and the pairing) goes
+/// over HTTPS pinned to a fresh self-signed certificate, and the pinned form of the command is offered too, for
+/// networks you don't trust:
+///
+///     curl -fsSLk --pinnedpubkey sha256//PIN https://IP:8485/CODE | sh
 @Observable
 final class InstallServer {
     enum State: Equatable {
@@ -23,99 +29,160 @@ final class InstallServer {
     }
 
     private(set) var state: State = .starting
-    private(set) var command = ""
+    /// Where a computer could reach this phone, nearest first.
+    private(set) var addresses: [LocalNetwork.Address] = []
+    /// The address the commands use: the user's pick, else the first.
+    var chosen: String?
     private(set) var expiresAt = Date.now.addingTimeInterval(600)
 
-    @ObservationIgnored private var listener: NWListener?
-    @ObservationIgnored private var setupID = ""
+    @ObservationIgnored private var web: NWListener?
+    @ObservationIgnored private var secure: NWListener?
+    @ObservationIgnored private var code = ""
     @ObservationIgnored private var pin = ""
-    @ObservationIgnored private var host = ""
+    @ObservationIgnored private var misses = 0
     @ObservationIgnored private var used = false
     @ObservationIgnored private var onPair: ((Machine) async throws -> Void)?
     @ObservationIgnored private let log = Logger(subsystem: "dev.mycroft", category: "install")
     private let queue = DispatchQueue(label: "dev.mycroft.install")
 
+    /// No 0/o, 1/i/l: easy to read off the screen and type.
     static let alphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
+    static let codeLength = 6
+    /// Fixed so the command is easy to remember and a tailnet ACL can allow it; any free port if they're taken.
+    static let ports: (web: UInt16, secure: UInt16) = (8484, 8485)
+    /// Wrong codes tolerated before the server stops, so the code can't be guessed.
+    static let maxMisses = 100
 
-    /// Starts serving. `onPair` stores the machine; the server stops after the first successful pairing.
-    func start(onPair: @escaping (Machine) async throws -> Void) {
+    var address: LocalNetwork.Address? { addresses.first { $0.ip == chosen } ?? addresses.first }
+    private(set) var webPort: UInt16?
+    private(set) var securePort: UInt16?
+
+    /// The short command for `ip`, to paste or type.
+    func command(for ip: String) -> String {
+        guard state == .waiting, let webPort else { return "" }
+        return "curl -fsS \(Self.urlHost(ip)):\(webPort)/\(code) | sh"
+    }
+
+    /// The same install with curl pinned to this phone's certificate: safe on any network.
+    func pinnedCommand(for ip: String) -> String {
+        guard state == .waiting, let securePort else { return "" }
+        return "curl -fsSLk --pinnedpubkey sha256//\(pin) https://\(Self.urlHost(ip)):\(securePort)/\(code) | sh"
+    }
+
+    var command: String { address.map { command(for: $0.ip) } ?? "" }
+    var pinnedCommand: String { address.map { pinnedCommand(for: $0.ip) } ?? "" }
+
+    /// Starts serving. `prefer` picks the first address on that network (the user's last pick); `onPair` stores the
+    /// machine. The server stops after the first successful pairing.
+    func start(prefer network: String? = nil, onPair: @escaping (Machine) async throws -> Void) {
         self.onPair = onPair
         do {
-            guard let address = LocalNetwork.wifiAddress() else { throw InstallError("This iPhone has no Wi-Fi address. Join the same network as the computer.") }
-            host = address
-            setupID = String((0..<8).map { _ in Self.alphabet.randomElement()! })
+            addresses = LocalNetwork.addresses()
+            guard !addresses.isEmpty else {
+                throw InstallError("This iPhone isn't on a network a computer could reach. Join Wi-Fi, or turn on Tailscale or NetBird.")
+            }
+            chosen = addresses.first { $0.network == network }?.ip
+            code = String((0..<Self.codeLength).map { _ in Self.alphabet.randomElement()! })
             let identity = try InstallIdentity.make()
             pin = identity.pin
             let tls = NWProtocolTLS.Options()
             sec_protocol_options_set_local_identity(tls.securityProtocolOptions, sec_identity_create(identity.identity)!)
             sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
-            let listener = try NWListener(using: NWParameters(tls: tls, tcp: NWProtocolTCP.Options()))
-            listener.newConnectionHandler = { [weak self] connection in
-                Task { @MainActor in self?.accept(connection) }
-            }
-            listener.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in self?.listenerChanged(state) }
-            }
-            listener.start(queue: queue)
-            self.listener = listener
+            listen(secure: false, port: Self.ports.web, parameters: .tcp)
+            listen(secure: true, port: Self.ports.secure, parameters: NWParameters(tls: tls, tcp: NWProtocolTCP.Options()))
         } catch {
             state = .failed(error.localizedDescription)
         }
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
+        web?.cancel()
+        secure?.cancel()
+        web = nil
+        secure = nil
     }
 
-    private func listenerChanged(_ newState: NWListener.State) {
-        switch newState {
-        case .ready:
-            guard let port = listener?.port?.rawValue else { return }
-            command = "curl -fsSLk --pinnedpubkey sha256//\(pin) https://\(host):\(port)/\(setupID) | sh"
-            expiresAt = .now.addingTimeInterval(600)
-            state = .waiting
-        case .failed(let error):
+    /// Listens on `port`, or on any free port when it's taken.
+    private func listen(secure isSecure: Bool, port: UInt16?, parameters: NWParameters) {
+        do {
+            let listener = try port.map { try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: $0)!) }
+                ?? NWListener(using: parameters)
+            listener.newConnectionHandler = { [weak self] connection in
+                Task { @MainActor in self?.accept(connection, secure: isSecure) }
+            }
+            listener.stateUpdateHandler = { [weak self, weak listener] newState in
+                Task { @MainActor in
+                    guard let self, let listener else { return }
+                    switch newState {
+                    case .ready:
+                        if isSecure { self.securePort = listener.port?.rawValue } else { self.webPort = listener.port?.rawValue }
+                        if self.webPort != nil, self.securePort != nil, self.state == .starting {
+                            self.expiresAt = .now.addingTimeInterval(600)
+                            self.state = .waiting
+                        }
+                    case .failed(let error) where port != nil:
+                        self.log.info("port \(port ?? 0) unavailable (\(error)); using any free port")
+                        listener.cancel()
+                        self.listen(secure: isSecure, port: nil, parameters: parameters)
+                    case .failed(let error):
+                        self.state = .failed(error.localizedDescription)
+                    default:
+                        break
+                    }
+                }
+            }
+            listener.start(queue: queue)
+            if isSecure { secure = listener } else { web = listener }
+        } catch {
             state = .failed(error.localizedDescription)
-        default:
-            break
         }
     }
 
     // MARK: HTTP
 
-    private func accept(_ connection: NWConnection) {
+    private func accept(_ connection: NWConnection, secure: Bool) {
         connection.start(queue: queue)
-        receive(connection, buffer: Data())
+        receive(connection, secure: secure, buffer: Data())
     }
 
-    private func receive(_ connection: NWConnection, buffer: Data) {
+    private func receive(_ connection: NWConnection, secure: Bool, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
             Task { @MainActor in
                 guard let self else { return }
                 var buffer = buffer
                 if let data { buffer.append(data) }
                 if let request = HTTPRequest(parsing: buffer) {
-                    let source = Self.sourceAddress(of: connection)
-                    let response = await self.handle(request, from: source)
+                    let response = await self.handle(request, secure: secure, on: connection)
                     Self.respond(response.serialized(), on: connection, queue: self.queue)
                 } else if complete || error != nil || buffer.count > 1_000_000 {
                     connection.cancel()
                 } else {
-                    self.receive(connection, buffer: buffer)
+                    self.receive(connection, secure: secure, buffer: buffer)
                 }
             }
         }
     }
 
-    private func handle(_ request: HTTPRequest, from source: String?) async -> HTTPResponse {
-        guard Date.now < expiresAt else { return .status(404) }
+    /// The plain-HTTP listener serves only the script; the rest needs the pinned one.
+    private func handle(_ request: HTTPRequest, secure: Bool, on connection: NWConnection) async -> HTTPResponse {
+        guard Date.now < expiresAt, state == .waiting || used else { return .status(404) }
         let parts = request.path.split(separator: "/").map(String.init)
-        guard parts.first == setupID else { return .status(404) }
+        guard parts.first == code else {
+            misses += 1
+            if misses >= Self.maxMisses, !used {
+                state = .failed("Too many wrong setup codes reached this iPhone, so it stopped serving the install. Start again.")
+                stop()
+            }
+            return .status(404)
+        }
         switch (request.method, parts.count > 1 ? parts[1] : nil) {
         case ("GET", nil):
-            guard let script = installScript() else { return .status(500, "install script missing from the app") }
+            // Point the script's downloads at the address the machine used: it's the one that works.
+            let host = request.host ?? Self.host(of: connection.currentPath?.localEndpoint) ?? address?.ip ?? ""
+            guard let script = installScript(host: host) else { return .status(500, "install script missing from the app") }
             return HTTPResponse(status: 200, contentType: "text/x-shellscript", body: Data(script.utf8))
+        case _ where !secure:
+            return .status(404, "use the address and port in the script")
         case ("GET", "MycroftHands.zip"):
             guard let url = HandsBinaries.desktopZip, let data = try? Data(contentsOf: url) else {
                 return .status(404, "this build of Mycroft has no desktop helper")
@@ -127,7 +194,7 @@ final class InstallServer {
             }
             return HTTPResponse(status: 200, contentType: "application/octet-stream", body: data)
         case ("POST", "pair"):
-            return await pair(request.body, from: source)
+            return await pair(request.body, from: Self.host(of: connection.endpoint))
         default:
             return .status(404)
         }
@@ -171,12 +238,12 @@ final class InstallServer {
         }
     }
 
-    private func installScript() -> String? {
+    private func installScript(host: String) -> String? {
         guard let url = Bundle.main.url(forResource: "phone-install", withExtension: "sh"),
             var script = try? String(contentsOf: url, encoding: .utf8),
-            let port = listener?.port?.rawValue
+            let securePort
         else { return nil }
-        script = script.replacingOccurrences(of: "@BASE@", with: "https://\(host):\(port)/\(setupID)")
+        script = script.replacingOccurrences(of: "@BASE@", with: "https://\(Self.urlHost(host)):\(securePort)/\(code)")
         script = script.replacingOccurrences(of: "@PIN@", with: pin)
         for target in HandsBinaries.targets {
             let hash = HandsBinaries.sha256(target) ?? "missing"
@@ -200,11 +267,16 @@ final class InstallServer {
         })
     }
 
-    nonisolated static func sourceAddress(of connection: NWConnection) -> String? {
-        guard case .hostPort(let host, _) = connection.endpoint else { return nil }
-        let text = "\(host)"
-        return text.split(separator: "%").first.map(String.init)
+    /// An endpoint's address as text, without an IPv6 zone, and IPv4-mapped addresses as plain IPv4.
+    nonisolated static func host(of endpoint: NWEndpoint?) -> String? {
+        guard case .hostPort(let host, _) = endpoint else { return nil }
+        var text = "\(host)".split(separator: "%").first.map(String.init) ?? ""
+        if text.hasPrefix("::ffff:"), text.contains(".") { text.removeFirst("::ffff:".count) }
+        return text.isEmpty ? nil : text
     }
+
+    /// An address as it goes in a URL: IPv6 in brackets.
+    nonisolated static func urlHost(_ ip: String) -> String { ip.contains(":") ? "[\(ip)]" : ip }
 }
 
 struct InstallError: LocalizedError {
@@ -299,26 +371,74 @@ nonisolated enum InstallIdentity {
     }
 }
 
-/// The phone's Wi-Fi IPv4 address, which the copied command points at.
+/// The phone's addresses a computer could reach it on.
 nonisolated enum LocalNetwork {
-    static func wifiAddress() -> String? {
-        var addresses: [(name: String, address: String)] = []
+    struct Address: Equatable, Sendable {
+        /// "Wi-Fi", "Tailscale", "NetBird", "VPN", "Personal Hotspot", "Ethernet", or the interface's name.
+        let network: String
+        let ip: String
+    }
+
+    /// IPv4 addresses, nearest network first: they're short enough to type. Cellular is left out (carriers don't
+    /// let connections in), and so are link-local and Apple's peer-to-peer interfaces.
+    static func addresses() -> [Address] {
+        var interfaces: [(name: String, ip: String, v6: Bool)] = []
         var list: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        guard getifaddrs(&list) == 0, let first = list else { return [] }
         defer { freeifaddrs(list) }
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let interface = pointer.pointee
-            guard let address = interface.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
+            guard let address = interface.ifa_addr,
+                [UInt8(AF_INET), UInt8(AF_INET6)].contains(address.pointee.sa_family),
                 interface.ifa_flags & UInt32(IFF_UP) != 0, interface.ifa_flags & UInt32(IFF_LOOPBACK) == 0
             else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0
             else { continue }
-            addresses.append((String(cString: interface.ifa_name), String(cString: host)))
+            interfaces.append((String(cString: interface.ifa_name), String(cString: host), address.pointee.sa_family == UInt8(AF_INET6)))
         }
-        // Wi-Fi is en0 on iPhone; the Simulator reports the Mac's interfaces.
-        return addresses.first(where: { $0.name == "en0" })?.address
-            ?? addresses.first(where: { $0.name.hasPrefix("en") && !$0.address.hasPrefix("169.254") })?.address
+        return classify(interfaces)
+    }
+
+    /// Names each IPv4 address after its network and sorts them. Tailscale and NetBird both use 100.64.0.0/10;
+    /// Tailscale's tunnel also carries an IPv6 address in fd7a:115c:a1e0::/48.
+    static func classify(_ interfaces: [(name: String, ip: String, v6: Bool)]) -> [Address] {
+        let order = ["Wi-Fi", "Ethernet", "Tailscale", "NetBird", "VPN", "Personal Hotspot"]
+        var found: [Address] = []
+        for (name, ip, v6) in interfaces where !v6 && !ip.hasPrefix("169.254.") && !found.contains(where: { $0.ip == ip }) {
+            let network: String
+            if name == "en0" {
+                network = "Wi-Fi"
+            } else if name.hasPrefix("en") {
+                network = "Ethernet"
+            } else if name.hasPrefix("bridge") {
+                network = "Personal Hotspot"
+            } else if name.hasPrefix("utun") {
+                if !isCarrierGrade(ip) {
+                    network = "VPN"
+                } else if interfaces.contains(where: { $0.name == name && $0.ip.lowercased().hasPrefix("fd7a:115c:a1e0:") }) {
+                    network = "Tailscale"
+                } else {
+                    network = "NetBird"
+                }
+            } else if ["pdp_ip", "awdl", "llw", "anpi", "ap", "ipsec"].contains(where: name.hasPrefix) {
+                // Cellular, Apple's peer-to-peer links, and the carrier's Wi-Fi calling tunnels.
+                continue
+            } else {
+                network = name
+            }
+            found.append(Address(network: network, ip: ip))
+        }
+        return found.enumerated().sorted { a, b in
+            let (x, y) = (order.firstIndex(of: a.element.network) ?? order.count, order.firstIndex(of: b.element.network) ?? order.count)
+            return x != y ? x < y : a.offset < b.offset
+        }.map(\.element)
+    }
+
+    /// 100.64.0.0/10, the shared address space Tailscale and NetBird hand out.
+    static func isCarrierGrade(_ ip: String) -> Bool {
+        let parts = ip.split(separator: ".").compactMap { Int($0) }
+        return parts.count == 4 && parts[0] == 100 && (64...127).contains(parts[1])
     }
 }
 
@@ -327,6 +447,8 @@ nonisolated enum LocalNetwork {
 nonisolated struct HTTPRequest {
     var method: String
     var path: String
+    /// The Host header without its port, when it is a plain hostname or IP address (it goes into the script).
+    var host: String?
     var body: Data
 
     init?(parsing data: Data) {
@@ -336,16 +458,33 @@ nonisolated struct HTTPRequest {
         let lines = head.components(separatedBy: "\r\n")
         let start = lines.first?.split(separator: " ") ?? []
         guard start.count >= 2 else { return nil }
-        let length = lines.dropFirst().compactMap { line -> Int? in
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
             let parts = line.split(separator: ":", maxSplits: 1)
-            guard parts.count == 2, parts[0].lowercased() == "content-length" else { return nil }
-            return Int(parts[1].trimmingCharacters(in: .whitespaces))
-        }.first ?? 0
+            guard parts.count == 2 else { continue }
+            headers[parts[0].lowercased()] = parts[1].trimmingCharacters(in: .whitespaces)
+        }
+        let length = headers["content-length"].flatMap { Int($0) } ?? 0
+        host = headers["host"].flatMap(Self.hostname)
         let bodyStart = end.upperBound
         guard data.count - (bodyStart - data.startIndex) >= length else { return nil }
         method = String(start[0])
         path = String(start[1].split(separator: "?").first ?? "")
         body = data.subdata(in: bodyStart..<(bodyStart + length))
+    }
+
+    /// `host`, `host:port`, `[v6]` or `[v6]:port` → the host, if it has nothing but letters, digits, `.`, `-` and `:`.
+    static func hostname(_ header: String) -> String? {
+        var host = Substring(header)
+        if host.hasPrefix("[") {
+            guard let close = host.firstIndex(of: "]") else { return nil }
+            host = host[host.index(after: host.startIndex)..<close]
+        } else if host.filter({ $0 == ":" }).count == 1 {
+            host = host.prefix { $0 != ":" }
+        }
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:")
+        guard !host.isEmpty, host.count <= 253, host.allSatisfy(allowed.contains), !host.hasPrefix("-") else { return nil }
+        return String(host)
     }
 }
 

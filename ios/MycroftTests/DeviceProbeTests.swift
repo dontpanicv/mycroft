@@ -48,7 +48,7 @@ nonisolated struct DeviceProbeTests {
     }
 }
 
-/// Runs the phone's install server for two minutes and prints its command, so downloads can be tested over Wi-Fi.
+/// Runs the phone's install server for two minutes and prints its command, so downloads can be tested over Wi-Fi, Tailscale or NetBird.
 @Suite("Install server probe")
 @MainActor
 struct InstallServerProbeTests {
@@ -57,7 +57,10 @@ struct InstallServerProbeTests {
         let server = InstallServer()
         server.start { _ in }
         for _ in 0..<50 where server.command.isEmpty { try await Task.sleep(for: .milliseconds(100)) }
-        print("INSTALL COMMAND: \(server.command)")
+        for address in server.addresses {
+            print("INSTALL COMMAND (\(address.network)): \(server.command(for: address.ip))")
+            print("INSTALL PINNED (\(address.network)): \(server.pinnedCommand(for: address.ip))")
+        }
         try await Task.sleep(for: .seconds(Double(ProcessInfo.processInfo.environment["MYCROFT_SERVE"] ?? "") ?? 120))
         server.stop()
     }

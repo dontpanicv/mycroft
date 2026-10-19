@@ -77,7 +77,7 @@ Other events:
 
 - `dictation`: `{ state: 'idle'|'preparing'|'listening'|'failed', text, level, message? }`
 - `voice`: `{ status, live, speaking, level, failure, engine, lines: [{ id, speaker: 'user'|'mycroft'|'step', text }] }`
-- `pairing`: `{ state: 'starting'|'waiting'|'paired'|'failed', command, copied, localNetwork, machine?, message? }`
+- `pairing`: `{ state: 'starting'|'waiting'|'paired'|'failed', command, pinned, copied, localNetwork, addresses: [{ network, ip }], chosen, machine?, message? }`. `addresses` are where a computer could reach the phone, nearest first; `network` is `Wi-Fi`, `Ethernet`, `Tailscale`, `NetBird`, `VPN`, `Personal Hotspot` or an interface name. `command` (short, on the clipboard) and `pinned` use the `chosen` one.
 
 ## Ops
 
@@ -93,7 +93,8 @@ Other events:
 | `keys.save` | `name: 'openai'\|'jev', value` | empty value removes the key |
 | `machines.check` | | `{ name: 'online' \| reason }` |
 | `machines.forget` | `name` | |
-| `pairing.start` / `pairing.stop` | | install server for a new machine; `pairing` events |
+| `pairing.start` / `pairing.stop` | `prefer?` (a network name) | install server for a new machine; `pairing` events |
+| `pairing.choose` | `ip` | which address the commands use; the new command is copied |
 | `dictation.start` / `dictation.stop` | | on-device speech to text; `stop` returns `{ text }` |
 | `voice.start` / `voice.stop` | | the voice conversation; `voice` events |
 | `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |

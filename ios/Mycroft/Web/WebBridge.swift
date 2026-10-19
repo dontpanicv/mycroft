@@ -128,7 +128,9 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             try await app.removeMachine(machine)
         case "pairing.start":
             try writable()
-            await startPairing()
+            await startPairing(prefer: args.string("prefer"))
+        case "pairing.choose":
+            server?.chosen = args.string("ip")
         case "pairing.stop":
             stopPairing()
 
@@ -344,15 +346,18 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         voice = nil
     }
 
-    private func startPairing() async {
+    private func startPairing(prefer: String?) async {
         stopPairing()
         // Ask iOS for local-network access first: until it is granted, the computer's download is refused.
         let network = await LocalNetworkPermission.request(wait: 4)
         let server = InstallServer()
         self.server = server
-        server.start { machine in try await AppModel.shared.addMachine(machine) }
+        server.start(prefer: prefer) { machine in try await AppModel.shared.addMachine(machine) }
         feed("pairing", every: .milliseconds(250)) { [weak self] in
-            var state: [String: Any] = ["command": server.command, "localNetwork": network == .denied ? "denied" : "ok"]
+            var state: [String: Any] = [
+                "command": server.command, "pinned": server.pinnedCommand, "localNetwork": network == .denied ? "denied" : "ok",
+                "addresses": server.addresses.map { ["network": $0.network, "ip": $0.ip] }, "chosen": server.address?.ip ?? NSNull(),
+            ]
             switch server.state {
             case .starting: state["state"] = "starting"
             case .waiting: state["state"] = "waiting"

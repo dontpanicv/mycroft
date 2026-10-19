@@ -9,22 +9,51 @@ All hashes are SHA-256. `base64` is standard base64 with padding. `hex` is lower
 
 When the user taps **Add machine**, the app:
 
-1. Creates a one-time setup id `S`. It is 8 characters from `abcdefghjkmnpqrstuvwxyz23456789`, is valid for 10 minutes, and can complete pairing exactly once.
-2. Starts an HTTPS server on a random port `P`, using a self-signed ECDSA P-256 certificate.
-   - The certificate pin is `PIN = base64(sha256(SubjectPublicKeyInfo DER))`, which is curl's `--pinnedpubkey sha256//` format.
-3. Copies this command to the clipboard (`IP` is the phone's Wi-Fi address):
+1. Creates a one-time setup code `S`: 6 characters from `abcdefghjkmnpqrstuvwxyz23456789` (no `0`/`o` or `1`/`i`/`l`,
+   so it can be read off the screen and typed). It is valid for 10 minutes and can complete pairing exactly once.
+   After 100 requests with a wrong code the phone stops serving, so `S` can't be guessed.
+2. Listens on every network the phone is on, on two ports:
+   - **`W`** (plain HTTP, `8484`): serves only the install script, at `GET /S`.
+   - **`P`** (HTTPS, `8485`): everything, using a self-signed ECDSA P-256 certificate. Its pin is
+     `PIN = base64(sha256(SubjectPublicKeyInfo DER))`, which is curl's `--pinnedpubkey sha256//` format.
+
+   The ports are fixed so the command is easy to remember and a tailnet ACL or NetBird policy can allow them. If one is
+   taken, any free port is used instead.
+3. Lists the addresses a computer could reach it on, IPv4 only (they're short enough to type), nearest first, named
+   after their network:
+
+   | Interface | Name |
+   |---|---|
+   | `en0` | Wi-Fi |
+   | other `en*` | Ethernet |
+   | `utun*` in `100.64.0.0/10` whose tunnel also has an address in `fd7a:115c:a1e0::/48` | Tailscale |
+   | other `utun*` in `100.64.0.0/10` | NetBird |
+   | other `utun*` | VPN |
+   | `bridge*` | Personal Hotspot |
+   | cellular (`pdp_ip*`), `awdl*`, `llw*`, `anpi*`, `ap*`, `ipsec*`, link-local | left out |
+   | anything else | the interface's name |
+
+   iOS runs one VPN at a time, so at most one of Tailscale and NetBird is listed. The user picks the network the
+   machine shares with the phone; the app remembers the choice by name.
+4. Copies the short command for the chosen `IP` to the clipboard, and offers the pinned one:
 
    ```sh
-   curl -fsSLk --pinnedpubkey sha256//PIN https://IP:P/S | sh
+   curl -fsS IP:W/S | sh                                     # short: type it by hand if need be
+   curl -fsSLk --pinnedpubkey sha256//PIN https://IP:P/S | sh   # pinned
    ```
 
-`-k` only skips CA verification. curl still enforces the pin, so the command cannot be served by anyone else.
+**What each form trusts.** The short form fetches the script over plain HTTP, so it trusts the network path. Over
+Tailscale or NetBird that path is WireGuard, which only the phone's own key can answer for. On a shared Wi-Fi, a
+machine on that Wi-Fi able to intercept traffic could swap the script within the 10 minutes. The script itself carries
+`PIN`, so everything after it (the binaries, verified by SHA-256, and the pairing) is pinned to the phone either way.
+The pinned form also pins the script: `-k` only skips CA verification, curl still enforces the pin, so no one else can
+answer it. Use it on networks you don't trust.
 
-### Phone endpoints (under `https://IP:P/S`)
+### Phone endpoints (under `https://IP:P/S`; port `W` serves `GET /S` only)
 
 | Method and path | Response |
 |---|---|
-| `GET /S` | `text/x-shellscript`: the install script, with `BASE`, `PIN` and the binaries' SHA-256 filled in |
+| `GET /S` | `text/x-shellscript`: the install script, with `BASE`, `PIN` and the binaries' SHA-256 filled in. `BASE` is `https://HOST:P/S`, where `HOST` is the request's `Host` header (the address the machine used), or the address the request arrived on when that header isn't a plain host |
 | `GET /S/hands-<os>-<arch>` | the binary. `os`: `darwin` or `linux`. `arch`: `arm64` or `x86_64` on darwin, `aarch64` or `x86_64` on linux (`uname -m` names) |
 | `GET /S/MycroftHands.zip` | `application/zip`: Mycroft Hands.app, the macOS desktop helper (see [§1.1](#11-the-desktop-helper-mycrofthandszip)). `404` when this build of the app has none |
 | `POST /S/pair` | JSON pairing request (below). `200` with the phone's identity. `410` once `S` has been used or has expired. `400` on bad input |

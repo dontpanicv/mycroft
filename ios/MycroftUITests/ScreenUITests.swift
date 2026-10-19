@@ -63,6 +63,38 @@ final class ScreenUITests: XCTestCase {
         snap(app, "voice")
     }
 
+    /// Add machine: the short command, and the network picker switching it to another of the phone's addresses.
+    func testPairScreen() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
+        app.buttons["Settings"].tap()
+        let add = app.buttons["Add machine"]
+        for _ in 0..<6 where !add.isHittable { app.swipeUp() }
+        add.tap()
+        let command = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'curl -fsS '")).firstMatch
+        XCTAssertTrue(command.waitForExistence(timeout: 20))
+        let first = command.label
+        XCTAssertTrue(first.range(of: #"^curl -fsS [0-9.]+:\d+/[a-z2-9]{6} \| sh$"#, options: .regularExpression) != nil, first)
+        sleep(1)
+        snap(app, "pair")
+
+        let picker = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Network'")).firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.tap()
+        sleep(1)
+        snap(app, "pair-picker")
+        let option = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'NetBird' OR label BEGINSWITH 'Tailscale'")).firstMatch
+        guard option.waitForExistence(timeout: 5) else { return print("PAIR: no VPN address on this Mac to switch to") }
+        option.tap()
+        let switched = NSPredicate(format: "label != %@", first)
+        expectation(for: switched, evaluatedWith: command)
+        waitForExpectations(timeout: 5)
+        print("PAIR: \(first) → \(command.label)")
+        snap(app, "pair-vpn")
+    }
+
     private func snap(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name

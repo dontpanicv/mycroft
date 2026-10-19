@@ -8,13 +8,13 @@
 
 ## Install
 
-**From the phone.** In Mycroft, tap **Add machine**. The app copies a command like this:
+**From the phone.** In Mycroft, tap **Add machine** and pick the network the machine shares with the phone: Wi-Fi, Tailscale, NetBird, or the phone's hotspot. The app copies a command short enough to type:
 
 ```sh
-curl -fsSLk --pinnedpubkey sha256//PIN https://IP:P/S | sh
+curl -fsS 100.92.235.118:8484/k7m2qx | sh
 ```
 
-Paste it into a terminal on the Mac or Linux machine, on the same network as the phone. The phone serves the install script ([scripts/phone-install.sh](scripts/phone-install.sh)) and the binary for this OS and architecture. curl accepts only the phone's pinned key, and the script checks the binary's SHA-256. The script then runs `hands install --pair`, which:
+Paste or type it into a terminal on the Mac or Linux machine. The phone serves the install script ([scripts/phone-install.sh](scripts/phone-install.sh)), then the binary for this OS and architecture over HTTPS pinned to the phone's key. The script checks the binary's SHA-256. On a network you don't trust, use **Copy pinned command** instead (`curl -fsSLk --pinnedpubkey sha256//PIN https://IP:8485/S | sh`), which pins the script too. The script then runs `hands install --pair`, which:
 - installs the binary and the service;
 - pairs the machine with the phone;
 - prints `Paired with <phone>. Mycroft can use this Mac now.`
@@ -130,7 +130,7 @@ The key, the certificate, `listener.json` and `paired.json` are mode 0600. `HAND
 ## Security
 
 - **One listening port, closed to anyone unpaired.** The listener accepts TLS 1.3 only. Until a peer proves it holds a paired phone's Ed25519 key, it accepts nothing but the `auth` message. The signature covers the listener's certificate hash and a fresh nonce, so it can't be replayed or relayed through another certificate. `--bind` limits the listener to one interface, such as the Tailscale one.
-- **Pairing trusts the channel and the code.** The install command pins the phone's public key (curl `--pinnedpubkey`, and `hands` with rustls). `hands` sends nothing to a certificate that doesn't match the pin. The one-time setup id expires after 10 minutes. The phone pins the listener's `certSha256` from then on.
+- **Pairing trusts the channel and the code.** The short install command fetches the script over plain HTTP, so it trusts the network path: WireGuard on Tailscale and NetBird, the Wi-Fi otherwise. Everything after that is pinned to the phone's public key (curl `--pinnedpubkey`, and `hands` with rustls), and the pinned command pins the script as well. `hands` sends nothing to a certificate that doesn't match the pin. The one-time setup code expires after 10 minutes, and the phone stops serving after 100 wrong codes. The phone pins the listener's `certSha256` from then on.
 - **Same user.** The supervisor's Unix socket is user-only, in the user-only state dir. Over SSH (`hands serve --stdio`), the phone pins the host key as before.
 - **No credentials.** No model credentials or API keys ever reach `hands`. Jev and the LLMs are called from the phone.
 - **What is stored.** Jobs inherit `serve`'s environment, which may contain secrets, but the environment is never written to disk. `job.json` records only the command or argv, `cwd`, state and timing. Job output is stored as is in the user-only state dir, so a command that prints a secret leaves it in `output.log` until retention deletes it.

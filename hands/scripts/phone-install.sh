@@ -1,8 +1,11 @@
 #!/bin/sh
 # Mycroft: install hands on this machine and pair it with the phone that served this script (hands/docs/pairing.md).
-# The app fills in the BASE, PIN and SHA-256 placeholders and serves it to:
+# The app fills in the BASE, PIN and SHA-256 placeholders and serves it to either of:
 #
-#   curl -fsSLk --pinnedpubkey sha256//PIN https://IP:P/S | sh
+#   curl -fsS IP:8484/S | sh
+#   curl -fsSLk --pinnedpubkey sha256//PIN https://IP:8485/S | sh
+#
+# Either way, BASE is the pinned HTTPS address, so the downloads and the pairing below are pinned to the phone.
 #
 # On macOS it also fetches MycroftHands.zip, the desktop helper, when the phone serves it, and hands it to
 # `hands install --desktop-zip`. A phone that does not (its desktop SHA-256 is left unfilled) installs hands alone.
