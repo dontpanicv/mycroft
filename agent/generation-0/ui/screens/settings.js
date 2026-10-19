@@ -1,7 +1,8 @@
-// Settings: the ChatGPT sign-in, the dictation model, API keys, Mycroft's generations, paired machines, notices.
+// Settings: the ChatGPT sign-in, the dictation model, sending while Mycroft works, API keys, Mycroft's generations,
+// paired machines, notices.
 
 import { html, useEffect, useState } from '/lib/preact.js'
-import { useData, useCall, useNavigation, Icon, Label, Tag, Spinner, pad, ago, haptic } from '../lib.js'
+import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Spinner, pad, ago, haptic } from '../lib.js'
 
 function Page({ title, children }) {
 	const { back } = useNavigation()
@@ -25,6 +26,7 @@ export function Settings() {
 	return html`<${Page} title="Settings">
 		<${Section} title="Model"><${SignIn} /><//>
 		<${Section} title="Dictation"><${Dictation} dictation=${state?.dictation} /><//>
+		<${Section} title="While Mycroft works"><${WhileWorking} /><//>
 		<${Section} title="Desktop control · Jev">
 			<${KeyField} name="jev" saved=${state?.keys?.jev}
 				about="Jev (typesafe.ai) picks the next action on your Mac from its accessibility tree." />
@@ -77,19 +79,42 @@ const engines = [
 function Dictation({ dictation }) {
 	const call = useCall()
 	if (!dictation) return null
-	const choose = (engine) => {
-		if (engine === dictation.engine) return
-		haptic(call)
-		call('dictation.engine', { engine })
-	}
-	return html`<div class="card list-card" role="radiogroup" aria-label="Dictation model">
-		${engines.map((engine) => html`<button class="choice-row" role="radio" aria-checked=${engine.id === dictation.engine}
-			aria-label=${engine.name} disabled=${engine.id === 'parakeet' && !dictation.parakeet} onClick=${() => choose(engine.id)}>
-			<span class="grow"><span class="mono strong block">${engine.name}</span><span class="faint small about">${engine.about}</span></span>
-			${engine.id === dictation.engine && html`<${Icon} name="check" size=${18} stroke=${2.4} />`}
-		</button>`)}
+	const options = engines.map((engine) => ({ ...engine, disabled: engine.id === 'parakeet' && !dictation.parakeet }))
+	return html`<${Choices} label="Dictation model" options=${options} chosen=${dictation.engine}
+		onChoose=${(engine) => call('dictation.engine', { engine })}>
 		${!dictation.parakeet && html`<p class="faint small">This build doesn't include Parakeet.</p>`}
 		<p class="faint small">Both run on this iPhone; your voice never leaves it.</p>
+	<//>`
+}
+
+const ways = [
+	{ id: 'queue', name: 'Queue', about: 'Your message waits and is sent when the current run finishes.' },
+	{ id: 'steer', name: 'Steer', about: 'Your message reaches Mycroft at its next step, changing what it is working on.' },
+]
+
+/** What send does while a run is going. Holding send offers the other way. */
+function WhileWorking() {
+	const [way, setWay] = useUI('whileWorking', 'queue')
+	return html`<${Choices} label="While Mycroft works" options=${ways} chosen=${way} onChoose=${setWay}>
+		<p class="faint small">Hold the send button to do the other.</p>
+	<//>`
+}
+
+/** A card of options, one chosen (a check), with notes under them. */
+function Choices({ label, options, chosen, onChoose, children }) {
+	const call = useCall()
+	const choose = (id) => {
+		if (id === chosen) return
+		haptic(call)
+		onChoose(id)
+	}
+	return html`<div class="card list-card" role="radiogroup" aria-label=${label}>
+		${options.map((option) => html`<button class="choice-row" role="radio" aria-checked=${option.id === chosen}
+			aria-label=${option.name} disabled=${option.disabled} onClick=${() => choose(option.id)}>
+			<span class="grow"><span class="mono strong block">${option.name}</span><span class="faint small about">${option.about}</span></span>
+			${option.id === chosen && html`<${Icon} name="check" size=${18} stroke=${2.4} />`}
+		</button>`)}
+		${children}
 	</div>`
 }
 

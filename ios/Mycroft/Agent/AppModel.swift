@@ -24,6 +24,9 @@ final class AppModel {
 
     private(set) var phase: Phase = .starting
     private(set) var threads: [ThreadMeta] = []
+    private(set) var archivedThreads: [ThreadMeta] = []
+    /// Threads with a run going, as RunMonitor last saw them.
+    private(set) var busyThreads: Set<ConversationID> = []
     private(set) var signIn: SignIn = .unknown
     private(set) var generation = GenerationStore.State()
     private(set) var hasJevKey = Keychain.read(Secret.jev) != nil
@@ -124,7 +127,9 @@ final class AppModel {
         watchers.append(Task { [weak self] in
             do {
                 for try await list in harness.values(of: Threads.document) {
-                    self?.threads = list.items.filter { !$0.archived }.sorted { $0.updatedAt > $1.updatedAt }
+                    let sorted = list.items.sorted { $0.updatedAt > $1.updatedAt }
+                    self?.threads = sorted.filter { !$0.archived }
+                    self?.archivedThreads = sorted.filter(\.archived)
                 }
             } catch {
                 self?.log.error("thread list stream ended: \(error)")
@@ -194,33 +199,103 @@ final class AppModel {
         return meta
     }
 
-    func send(_ text: String, to thread: ThreadMeta, steer: Bool = false, requestId: String? = nil) async throws {
+    /// Creates a thread with its first message: until then a new thread is only a draft on the screen.
+    func startThread(with text: String) async throws -> ThreadMeta {
+        let meta = try await newThread()
+        do {
+            try await send(text, to: meta)
+        } catch {
+            // Nothing was said in it: put it away, and the screen keeps the draft.
+            try? await edit(meta.id) { $0.archived = true }
+            throw error
+        }
+        return threads.first { $0.id == meta.id } ?? meta
+    }
+
+    /// Sends `text`. While a run is going, `.followUp` queues it for after the run and `.steer` hands it to the run at
+    /// its next step.
+    func send(
+        _ text: String, to thread: ThreadMeta, whenBusy: Conversation.WhenBusy = .followUp, requestId: String? = nil
+    ) async throws {
         guard let harness, let conversation = try await harness.conversation(thread.id) else { throw StartError.notReady }
-        _ = try await conversation.submit(text, whenBusy: steer ? .steer : .followUp, requestId: requestId)
+        _ = try await conversation.submit(text, whenBusy: whenBusy, requestId: requestId)
         let title = thread.title == ThreadMeta.untitled ? Threads.title(from: text) : nil
-        try await harness.update(Threads.document) { list in
-            guard let index = list.items.firstIndex(where: { $0.id == thread.id }) else { return }
-            list.items[index].updatedAt = .now
-            if let title { list.items[index].title = title }
+        try await edit(thread.id) { meta in
+            meta.updatedAt = .now
+            meta.settledAt = nil
+            if let title { meta.title = title }
         }
         var current = thread
         if let title { current.title = title }
         RunMonitor.shared.runSubmitted(current)
     }
 
+    /// Changes a thread's list metadata.
+    func edit(_ id: ConversationID, _ change: @escaping @Sendable (inout ThreadMeta) -> Void) async throws {
+        guard let harness else { throw StartError.notReady }
+        try await harness.update(Threads.document) { list in
+            guard let index = list.items.firstIndex(where: { $0.id == id }) else { return }
+            change(&list.items[index])
+        }
+    }
+
+    /// A new thread with `thread`'s history up to and including `entry` (an answer), named "Fork · <title>" (a
+    /// prefix, so it shows in a narrow row).
+    func fork(_ thread: ThreadMeta, at entry: EntryID) async throws -> ThreadMeta {
+        guard let harness, let conversation = try await harness.conversation(thread.id) else { throw StartError.notReady }
+        let fork = try await conversation.fork(at: entry)
+        var meta = ThreadMeta(id: fork.id, title: "Fork · \(thread.title)", createdAt: .now, updatedAt: .now)
+        meta.machine = thread.machine
+        meta.parent = thread.id
+        try await harness.update(Threads.document) { [meta] in $0.items.append(meta) }
+        return meta
+    }
+
+    /// Withdraws a queued message.
+    func unqueue(_ thread: ThreadMeta, _ submission: SubmissionID) async throws {
+        _ = try await harness?.abortSubmission(submission, in: thread.id)
+    }
+
+    /// Hands a queued message to the run now, as a steer.
+    func steerNow(_ thread: ThreadMeta, _ submission: SubmissionID) async throws {
+        guard let harness, let conversation = try await harness.conversation(thread.id),
+            let item = try await conversation.inbox().first(where: { $0.id == submission })
+        else { return }
+        guard try await harness.abortSubmission(submission, in: thread.id) == .aborted else { return }
+        try await send(item.text, to: thread, whenBusy: .steer)
+    }
+
+    /// Sends the messages a stop left queued, in order: the first starts a run, the rest follow it.
+    func resumeQueue(_ thread: ThreadMeta) async throws {
+        guard let harness, let conversation = try await harness.conversation(thread.id) else { return }
+        for item in try await conversation.inbox() where item.mode != .write {
+            guard try await harness.abortSubmission(item.id, in: thread.id) == .aborted else { continue }
+            try await send(item.text, to: thread, whenBusy: .followUp)
+        }
+    }
+
+    /// RunMonitor saw which threads are running.
+    func runsChanged(_ busy: Set<ConversationID>) {
+        if busy != busyThreads { busyThreads = busy }
+    }
+
+    /// RunMonitor saw a run end.
+    func runFinished(_ id: ConversationID, _ outcome: ThreadMeta.Outcome) async {
+        try? await edit(id) { meta in
+            meta.finishedAt = .now
+            meta.outcome = outcome
+        }
+    }
+
     func isBusy(_ thread: ThreadMeta) async -> Bool {
         ((try? await harness?.conversation(thread.id)?.liveState())?.run) != nil
     }
 
-    /// The newest answer in the thread, as text: what reading aloud reads.
+    /// Stops the run. Queued messages stay queued (paused) until `resumeQueue`.
     func stop(_ thread: ThreadMeta) async throws {
-        try await harness?.conversation(thread.id)?.abort()
-    }
-
-    func archive(_ thread: ThreadMeta) async throws {
-        try await harness?.update(Threads.document) { list in
-            guard let index = list.items.firstIndex(where: { $0.id == thread.id }) else { return }
-            list.items[index].archived = true
+        guard let harness, let conversation = try await harness.conversation(thread.id) else { return }
+        if let run = try await conversation.liveState().run {
+            _ = try await harness.abortTask(run.taskId)
         }
     }
 

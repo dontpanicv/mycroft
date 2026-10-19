@@ -1,6 +1,7 @@
 # 0011 · Dictation with Parakeet v3, bundled; read aloud removed
 
-**Status:** accepted, implemented (19 Oct 2026). Amends [0010](0010-voice-in-every-thread.md).
+**Status:** accepted, implemented (19 Oct 2026). Amends [0010](0010-voice-in-every-thread.md). Amended by
+[0012](0012-threads-like-t3.md): no turn ends on a pause; the user starts and stops dictation.
 
 **Context.**
 - Dictation on the iPhone was noticeably worse than FluidVoice on a Mac, which runs NVIDIA's Parakeet TDT 0.6B v3.

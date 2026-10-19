@@ -30,8 +30,7 @@ struct AskMycroftIntent: LongRunningIntent, CancellableIntent {
         let app = AppModel.shared
         await app.start()
         guard let harness = app.harness else { throw AppModel.StartError.notReady }
-        let thread = try await app.newThread()
-        try await app.send(request, to: thread)
+        let thread = try await app.startThread(with: request)
         guard let conversation = try await harness.conversation(thread.id) else { return "" }
         progress.totalUnitCount = 100
         // Long-running intents are cancelled when they stop reporting progress; tick while the model works.

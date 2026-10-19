@@ -26,10 +26,11 @@ Two references, one rule: **the content is a terminal; the chrome is glass.**
 
 ## Screens
 
-- **Threads.** A list of hairline rows. Each row shows the title in mono, the last line in grotesk, a status tag (`RUNNING`, `WAITING`, `DONE`) and the machine badge (`PHONE`, `HETZNER`, `MAC`). The tab bar and a floating **+** are glass.
+- **Threads.** A list of hairline rows: an unsent draft, pinned threads, active threads, then a collapsed "Settled (N)" shelf of slim rows. Each row shows the title in mono, when it last moved, the machine badge (`PHONE`, `HETZNER`, `MAC`) and what needs the user (`WORKING`, receding; `FAILED`; `DONE`, unread). Swipe left to settle, long-press for pin, rename and archive. A floating **+** opens a new thread's draft.
 - **Thread.**
   - The transcript is the terminal: user turns are bordered blocks, assistant prose is grotesk, and tool calls are mono rows such as `01 bash  ls -la  ✓ 0.4s` that expand into output.
-  - The composer is a glass capsule at the bottom with model and machine chips, the mic and send. While listening, the chips give way to one line saying what to do ("Release to send · slide ↑ to lock · ← to cancel"), the words appear live in the field, and a ring fills around send before a paused turn sends itself.
+  - The composer is a glass capsule at the bottom with model and machine chips, the mic and send. While listening, the chips give way to a red dot, a timer and one line saying what to do ("‹ Slide to cancel" while held, with a lock above the mic to slide up to); the words appear live in the field, and ✕ clears it. While a run works, a glass capsule above shows "Working 1m 05s" and "N queued", and send queues (or steers).
+  - A finished run folds into "Worked for 1m 05s · 4 steps"; the answer keeps Copy, Fork and its time.
   - A run shows a thin indigo progress line under the nav bar and a Live Activity on the lock screen.
 - **Machines.** Hands hosts as square cards showing hostname, OS, latency and running jobs. Pairing is a glass sheet.
 - **Self.** The agent's generations: diff, self-test result, active, rollback. In mono, like a git log.

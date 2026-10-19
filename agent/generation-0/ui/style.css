@@ -16,6 +16,7 @@
 	--hairline: rgba(255, 255, 255, 0.11);
 	--success: #4ADE80;
 	--danger: #F87171;
+	--warning: #FBBF24;
 	--gutter: 20px;
 	--mono: 'JetBrains Mono', ui-monospace, monospace;
 	--sans: 'Schibsted Grotesk', -apple-system, system-ui, sans-serif;
@@ -71,6 +72,7 @@ b, .strong { font-weight: 600; }
 .tag.soft { color: var(--accent-soft); }
 .tag.danger { color: var(--danger); }
 .tag.success { color: var(--success); }
+.tag.warning { color: var(--warning); }
 .index { font: 11px var(--mono); color: var(--accent-soft); flex: none; }
 
 /* Layout */
@@ -157,10 +159,17 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .mic.held { transform: scale(1.12); color: var(--accent-soft); }
 .field.live { color: var(--ink-muted); caret-color: transparent; }
 /* The send button's ring while a paused turn counts down to sending itself. */
-.send { position: relative; }
-.countdown { position: absolute; inset: -4px; width: calc(100% + 8px); height: calc(100% + 8px); transform: rotate(-90deg); pointer-events: none; }
-.countdown circle { fill: none; stroke: var(--accent-soft); stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; animation: countdown linear forwards; }
-@keyframes countdown { to { stroke-dashoffset: 0; } }
+/* Dictation: the recording row, the lock that sliding up reaches, the clear button inside the field. */
+.recording { align-items: center; }
+.rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; animation: blink 1.6s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+.small-icon { width: 32px; height: 32px; }
+.icon-button.danger { color: var(--danger); }
+.mic-wrap { position: relative; flex: none; }
+.lock-hint { position: absolute; left: 50%; bottom: calc(100% + 14px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 7px; border-radius: 18px; color: var(--ink-muted); animation: rise 0.2s ease-out; }
+.field-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.field-wrap .field { padding-right: 38px; }
+.clear { position: absolute; right: 8px; bottom: 9px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-muted); background: rgba(255, 255, 255, 0.08); }
 .round { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .button { border-radius: 999px; padding: 10px 16px; font: 500 12px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .button.small { padding: 6px 12px; font-size: 10.5px; }
@@ -181,6 +190,23 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .thread-row:active { background: rgba(255, 255, 255, 0.04); }
 .thread-row .title { display: block; font: 500 15px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thread-row .meta { display: flex; gap: 8px; align-items: center; margin-top: 5px; font-size: 13px; color: var(--ink-muted); }
+.thread-row .title .icon { display: inline-block; vertical-align: -1px; color: var(--accent-soft); }
+.thread-row { position: relative; background: var(--canvas); transition: transform 0.2s ease-out; }
+.thread-row.slim { padding: 11px var(--gutter); align-items: center; }
+.thread-row.slim .title { font-size: 13.5px; color: var(--ink-muted); }
+/* Working threads step back, so the ones that need the user stand out. */
+.thread-row.recede .grow { opacity: 0.55; }
+.row-status { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 6px; font: 600 10px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.row-status.soft { color: var(--accent-soft); }
+.row-status.danger { color: var(--danger); }
+.row-status.success { color: var(--success); }
+.swipe-row { position: relative; overflow: hidden; }
+.swipe-action { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: var(--gutter); background: var(--raised); font: 600 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-muted); }
+.swipe-action.armed { background: var(--accent); color: white; }
+.shelf { width: 100%; display: flex; align-items: center; gap: 10px; padding: 22px var(--gutter) 10px; color: var(--ink-faint); }
+.shelf .rule { flex: 1; height: 1px; background: var(--hairline); }
+.more { display: block; margin: 12px var(--gutter) 0; width: calc(100% - 2 * var(--gutter)); padding: 11px; border: 1px dashed var(--hairline); font: 11px var(--mono); letter-spacing: 0.06em; color: var(--ink-faint); }
+.archived-open { text-align: left; min-width: 0; }
 .how { display: flex; flex-direction: column; padding-top: 8px; }
 .how .label { margin-bottom: 8px; }
 .step { display: flex; gap: 14px; align-items: baseline; padding: 12px 0; border-top: 1px solid var(--hairline); font-size: 15px; color: var(--ink-muted); }
@@ -196,7 +222,28 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 
 /* Thread */
 .transcript { flex: 1; display: flex; flex-direction: column; gap: 18px; padding: calc(var(--top) + 68px) var(--gutter) 0; -webkit-user-select: text; user-select: text; }
-.composer-space { flex: none; height: calc(130px + var(--bottom)); }
+.composer-space { flex: none; height: calc(170px + var(--bottom)); }
+.draft-hero { padding-top: 24vh; }
+.draft-hero h1 { font: 600 24px/1.2 var(--mono); letter-spacing: -0.04em; margin-bottom: 8px; }
+button.bar-title:disabled { opacity: 1; }
+.worked { align-self: flex-start; }
+.forked-from { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; }
+.answer-actions { display: flex; align-items: center; gap: 4px; margin-top: -4px; }
+.answer-action { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--ink-faint); }
+.answer-action:active { background: rgba(255, 255, 255, 0.08); color: var(--ink); }
+.run-status { display: flex; align-items: center; justify-content: center; gap: 8px; position: relative; min-height: 36px; }
+.capsule { display: flex; align-items: center; border-radius: 999px; padding: 0 4px; font: 11px var(--mono); }
+.capsule .segment { display: inline-flex; align-items: center; gap: 6px; padding: 9px 10px; }
+.capsule .segment + .segment { border-left: 1px solid var(--hairline); }
+.capsule .segment.link { color: var(--accent-soft); }
+.to-end { position: absolute; right: 0; }
+.queue-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--hairline); flex-wrap: wrap; }
+.queue-item .grow { min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.queue-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; }
+.queue-item .row { width: 100%; justify-content: flex-end; }
+.sheet-action.choice { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.sheet-action:disabled { opacity: 0.45; }
+.title-input { font-size: 16px; width: 100%; }
 .user-turn { background: var(--raised); display: flex; flex-direction: column; gap: 8px; }
 .user-text { white-space: pre-wrap; }
 .assistant-turn { display: flex; flex-direction: column; gap: 10px; }
@@ -273,5 +320,4 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 	.page.forward, .page.back, .sheet { animation-name: fade; }
 	.page { transition: none; }
 	button.glass:active:not(:disabled) { transform: none; }
-	.countdown circle { animation: none; stroke-dashoffset: 0; }
 }

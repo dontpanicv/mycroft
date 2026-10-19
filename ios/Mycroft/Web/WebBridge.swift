@@ -78,26 +78,62 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         // Threads
         case "state.get":
             return stateObject()
-        case "thread.new":
+        case "thread.create":
             try writable()
-            let thread = try await app.newThread()
+            let thread = try await app.startThread(with: try args.require("text"))
             created[thread.id.rawValue] = thread
             return Self.object(thread)
         case "thread.open":
-            openView(try args.require("id"))
+            let id: Int = try args.require("id")
+            openView(id)
+            try? await app.edit(ConversationID(id)) { $0.visitedAt = .now }
             Listener.warm(app)
         case "thread.close":
-            viewFeeds.removeValue(forKey: try args.require("id"))?.cancel()
+            let id: Int = try args.require("id")
+            viewFeeds.removeValue(forKey: id)?.cancel()
+            try? await app.edit(ConversationID(id)) { $0.visitedAt = .now }
         case "thread.send":
             try writable()
-            let thread = try thread(args)
-            try await app.send(try args.require("text"), to: thread, steer: await app.isBusy(thread))
+            let how: Conversation.WhenBusy = args.string("how") == "steer" ? .steer : .followUp
+            try await app.send(try args.require("text"), to: try thread(args), whenBusy: how)
         case "thread.stop":
             try writable()
             try await app.stop(try thread(args))
+        case "thread.resume":
+            try writable()
+            try await app.resumeQueue(try thread(args))
+        case "thread.unqueue":
+            try writable()
+            try await app.unqueue(try thread(args), SubmissionID(try args.require("submission") as Int))
+        case "thread.steerNow":
+            try writable()
+            try await app.steerNow(try thread(args), SubmissionID(try args.require("submission") as Int))
+        case "thread.fork":
+            try writable()
+            let fork = try await app.fork(try thread(args), at: EntryID(try args.require("entry") as Int))
+            created[fork.id.rawValue] = fork
+            return Self.object(fork)
+        case "thread.rename":
+            try writable()
+            let title = (args.string("title") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { throw BridgeError("A thread needs a title.") }
+            try await app.edit(try thread(args).id) { $0.title = title }
+        case "thread.pin":
+            try writable()
+            let on = args.bool("on") ?? true
+            try await app.edit(try thread(args).id) { $0.pinned = on ? true : nil }
+        case "thread.settle":
+            try writable()
+            let on = args.bool("on") ?? true
+            try await app.edit(try thread(args).id) { meta in
+                meta.settledAt = on ? .now : nil
+                meta.unsettledAt = on ? nil : .now
+                if on { meta.pinned = nil }
+            }
         case "thread.archive":
             try writable()
-            try await app.archive(try thread(args))
+            let on = args.bool("on") ?? true
+            try await app.edit(try thread(args).id) { $0.archived = on }
 
         // Sign-in and keys
         case "signin.start":
@@ -133,21 +169,17 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "pairing.stop":
             stopPairing()
 
-        // Voice: one turn of speech in a thread (Voice/Listener.swift)
+        // Dictation into a composer (Voice/Listener.swift)
         case "listen.start":
             try writable()
-            let mode = Listener.Mode(rawValue: args.string("mode") ?? "") ?? .auto
-            await listener.start(try thread(args), mode: mode, prefix: args.string("prefix") ?? "", app: app)
+            await listener.start(try args.require("owner"), prefix: args.string("prefix") ?? "", dictation: app.dictation)
             followListener()
-        case "listen.mode":
-            listener.setMode(Listener.Mode(rawValue: args.string("mode") ?? "") ?? .auto)
-        case "listen.send":
-            try writable()
-            await listener.send()
         case "listen.stop":
             return ["text": await listener.stop()]
         case "listen.cancel":
             listener.cancel()
+        case "listen.clear":
+            listener.clear()
         case "listen.close":
             listener.shutDown()
         case "dictation.engine":
@@ -184,7 +216,9 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     private func thread(_ args: Args) throws -> ThreadMeta {
         let id: Int = try args.require("id")
-        if let thread = app.threads.first(where: { $0.id.rawValue == id }) ?? created[id] { return thread }
+        if let thread = (app.threads + app.archivedThreads).first(where: { $0.id.rawValue == id }) ?? created[id] {
+            return thread
+        }
         throw BridgeError("No thread \(id)")
     }
 
@@ -220,6 +254,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         return phase.merging([
             "generation": Self.object(app.generation) ?? NSNull(),
             "threads": Self.object(app.threads) ?? [],
+            "archived": Self.object(app.archivedThreads) ?? [],
+            "busy": app.busyThreads.map(\.rawValue).sorted(),
             "signIn": signIn,
             "keys": ["jev": app.hasJevKey],
             "dictation": ["engine": app.dictation.rawValue, "parakeet": Parakeet.isBundled],
@@ -259,7 +295,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
                     guard let self, !Task.isCancelled else { return }
                     let ids = view.entries.map(\.id)
                     var payload: [String: Any] = [
-                        "thread": id, "busy": view.isBusy, "queued": view.inbox.count,
+                        "thread": id, "busy": view.isBusy,
+                        "queued": view.inbox.filter { $0.mode != .write }.map { ["id": $0.id.rawValue, "mode": $0.mode.rawValue, "text": $0.text] },
                         "model": view.agent.model?.modelId ?? NSNull(),
                         "live": view.documents["pi.live"].flatMap(Self.object) ?? NSNull(),
                     ]

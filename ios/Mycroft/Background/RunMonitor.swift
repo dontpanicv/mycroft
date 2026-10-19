@@ -63,6 +63,7 @@ final class RunMonitor {
         while !Task.isCancelled, let app {
             let snapshots = await app.busySnapshots()
             let busy = Set(snapshots.map(\.thread.id))
+            app.runsChanged(busy)
             let seen = "\(snapshots.count)/\(tracks.count)"
             if seen != lastPoll {
                 lastPoll = seen
@@ -147,6 +148,7 @@ final class RunMonitor {
         var final = track.state
         let stopReason = await app.lastStopReason(id)
         final.phase = stopReason == .error ? .failed : stopReason == .aborted ? .stopped : .done
+        await app.runFinished(id, stopReason == .error ? .failed : stopReason == .aborted ? .stopped : .done)
         final.headline = ActivitySummary.closing(track.steps)
         final.machine = nil
         final.endedAt = .now

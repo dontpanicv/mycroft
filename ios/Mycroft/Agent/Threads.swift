@@ -10,6 +10,24 @@ nonisolated struct ThreadMeta: Codable, Sendable, Hashable, Identifiable {
     var archived = false
     /// The hands host this thread works on; nil means the phone only.
     var machine: String?
+    /// Kept at the top of the list.
+    var pinned: Bool?
+    /// Put away in the list's Settled shelf: by hand, or (on the screen) after three idle days. Sending a message
+    /// takes it out again.
+    var settledAt: Date?
+    /// Taken out of Settled by hand: the idle days count from here.
+    var unsettledAt: Date?
+    /// When the user last had the thread open, and when its last run ended and how: an answer newer than the visit is
+    /// unread ("Done").
+    var visitedAt: Date?
+    var finishedAt: Date?
+    var outcome: Outcome?
+    /// The thread this one was forked from.
+    var parent: ConversationID?
+
+    enum Outcome: String, Codable, Sendable {
+        case done, failed, stopped
+    }
 
     static let untitled = "New thread"
 }

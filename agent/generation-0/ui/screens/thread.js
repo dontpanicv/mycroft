@@ -1,20 +1,29 @@
-// One thread: the transcript as a console (user turns as bordered blocks, prose, numbered tool rows) and the
-// glass composer with voice, send, steer and stop. Voice is the app's on-device listener (the `listen` events): hold
-// the mic to talk and let go to send, or tap it and pause.
+// One thread: the transcript as a console (user turns as bordered blocks, prose, numbered tool rows) and the composer
+// (screens/composer.js). A finished run folds its working into "Worked for 1m 05s"; its answer keeps Copy and Fork.
+// While a run works, a capsule above the composer shows its time and the queue, and new messages queue or steer.
+// `id` null is a new thread's draft: nothing exists until the first message is sent.
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
-import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Markdown, Spinner, pad, duration, summarize, haptic } from '../lib.js'
+import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Markdown, Spinner, Sheet, pad, duration, summarize, haptic } from '../lib.js'
+import { Composer } from './composer.js'
 
 export function Thread({ id }) {
 	const call = useCall()
-	const { back } = useNavigation()
-	const view = useData((d) => d.views[id])
-	const meta = useData((d) => d.state?.threads?.find((t) => t.id === id))
+	const { back, go, replace } = useNavigation()
+	const draft = id == null
+	const view = useData((d) => (draft ? null : d.views[id]))
+	const meta = useData((d) => (draft ? null : [...(d.state?.threads ?? []), ...(d.state?.archived ?? [])].find((t) => t.id === id)))
+	const parent = useData((d) => (meta?.parent ? [...(d.state?.threads ?? []), ...(d.state?.archived ?? [])].find((t) => t.id === meta.parent) : null))
+	const [, setDrafts] = useUI('drafts', {})
+	const [whileWorking] = useUI('whileWorking', 'queue')
 	const [error, setError] = useState(null)
+	const [sheet, setSheet] = useState(null)
 	const scroller = useRef(null)
 	const pinned = useRef(true)
+	const [atEnd, setAtEnd] = useState(true)
 
 	useEffect(() => {
+		if (draft) return () => call('listen.close').catch(() => {})
 		call('thread.open', { id }).catch((e) => setError(e.message))
 		return () => {
 			call('thread.close', { id }).catch(() => {})
@@ -26,6 +35,14 @@ export function Thread({ id }) {
 	const onScroll = () => {
 		const el = scroller.current
 		pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+		if (pinned.current !== atEnd) setAtEnd(pinned.current)
+	}
+	const toEnd = () => {
+		const el = scroller.current
+		if (!el) return
+		el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+		pinned.current = true
+		setAtEnd(true)
 	}
 	useLayoutEffect(() => {
 		const el = scroller.current
@@ -42,25 +59,53 @@ export function Thread({ id }) {
 	}, [])
 
 	const busy = view?.busy ?? false
+	const queued = view?.queued ?? []
 	const showProgress = useLinger(busy, 600)
+
+	const submit = async (text, how) => {
+		if (draft) {
+			const thread = await call('thread.create', { text })
+			return replace(`#/t/${thread.id}`)
+		}
+		await call('thread.send', { id, text, how: how === 'steer' ? 'steer' : 'queue' })
+		toEnd()
+	}
+	/** Puts a queued message back into the composer, to change and send again. */
+	const editQueued = async (item) => {
+		await call('thread.unqueue', { id, submission: item.id })
+		setDrafts((all) => ({ ...all, [id]: [all[id], item.text].filter(Boolean).join('\n') }))
+		setSheet(null)
+	}
+
 	return html`
 		<main class="screen thread">
 			<header class="bar glass-bar">
 				<button class="icon-button glass" aria-label="Back" onClick=${back}><${Icon} name="back" /></button>
-				<div class="bar-title">
-					<span class="title mono">${meta?.title ?? 'Thread'}</span>
-					<span class=${`label tiny ${busy ? 'soft' : 'faint'}`} id="status">${busy ? 'Running' : 'Idle'}</span>
-				</div>
+				<button class="bar-title" disabled=${draft} onClick=${() => setSheet('rename')}>
+					<span class="title mono">${draft ? 'New thread' : meta?.title ?? 'Thread'}</span>
+					<span class=${`label tiny ${busy ? 'soft' : 'faint'}`} id="status">${draft ? 'Draft' : busy ? 'Running' : 'Idle'}</span>
+				</button>
 				<span class="bar-side"></span>
 				${showProgress && html`<div class="progress"></div>`}
 			</header>
 			<div class="scroll transcript" ref=${scroller} onScroll=${onScroll}>
-				${view ? html`<${Transcript} view=${view} />` : html`<div class="center"><${Spinner} /></div>`}
+				${draft
+					? html`<section class="draft-hero"><h1>What should Mycroft do?</h1><p class="muted">Type, or hold the mic and talk. The thread starts when you send.</p></section>`
+					: view ? html`${parent && html`<button class="forked-from faint small" onClick=${() => go(`#/t/${parent.id}`)}><${Icon} name="fork" size=${13} /> Forked from ${parent.title}</button>`}
+						<${Transcript} view=${view} thread=${meta} onError=${setError} onRetry=${(text) => submit(text, 'send')} />`
+					: html`<div class="center"><${Spinner} /></div>`}
 				${(error || view?.error) && html`<p class="card danger mono small">${error || view.error}</p>`}
 				<div class="composer-space"></div>
 			</div>
-			<${Composer} id=${id} busy=${busy} model=${view?.model} onError=${setError} />
+			<${Composer} owner=${draft ? 'new' : id} busy=${busy} preferred=${whileWorking}
+				placeholder=${draft ? 'Ask Mycroft anything…' : busy ? (whileWorking === 'steer' ? 'Steer the run…' : 'Queue a message…') : 'Message Mycroft'}
+				chips=${html`<${Tag}>${view?.model ?? 'gpt-6.1-sol'}<//><${Tag}>${meta?.machine ?? 'Phone'}<//>`}
+				above=${!draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
+					onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`}
+				onSubmit=${submit} onStop=${() => call('thread.stop', { id })} onError=${setError} />
 		</main>
+		${sheet === 'queue' && html`<${QueueSheet} id=${id} items=${queued} busy=${busy} onEdit=${editQueued} onError=${setError} onClose=${() => setSheet(null)} />`}
+		${sheet === 'rename' && meta && html`<${RenameSheet} thread=${meta} onClose=${() => setSheet(null)} />`}
 	`
 }
 
@@ -75,9 +120,107 @@ function useLinger(value, ms) {
 	return shown
 }
 
+/** The capsule above the composer: "Working 1m 05s", the queue, and a way back to the latest. */
+function RunStatus({ view, atEnd, onEnd, onQueue, onResume }) {
+	const busy = view?.busy ?? false
+	const queued = view?.queued?.length ?? 0
+	const since = lastUserTime(view?.entries ?? [])
+	const now = useNow(busy)
+	if (!busy && !queued && atEnd) return null
+	return html`<div class="run-status">
+		${(busy || queued > 0) && html`<div class="capsule glass">
+			${busy && html`<span class="segment soft"><${Spinner} /> Working${since ? ` ${duration(Math.max(0, now - since))}` : ''}</span>`}
+			${!busy && queued > 0 && html`<span class="segment">Queue paused</span>`}
+			${queued > 0 && html`<button class="segment link" onClick=${onQueue}><${Icon} name="queue" size=${14} /> ${queued} queued</button>`}
+			${!busy && queued > 0 && html`<button class="segment link" onClick=${onResume}><${Icon} name="play" size=${13} /> Resume</button>`}
+		</div>`}
+		${!atEnd && html`<button class="icon-button glass small-icon to-end" aria-label="Scroll to end" onClick=${onEnd}><${Icon} name="down" size=${16} /></button>`}
+	</div>`
+}
+
+/** The current time, ticking every second while `on`. */
+function useNow(on) {
+	const [now, setNow] = useState(Date.now())
+	useEffect(() => {
+		if (!on) return
+		const timer = setInterval(() => setNow(Date.now()), 1000)
+		return () => clearInterval(timer)
+	}, [on])
+	return on ? now : Date.now()
+}
+
+const timeOf = (message) => (message?.timestamp ? new Date(message.timestamp).getTime() : null)
+function lastUserTime(entries) {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const message = entries[i].model?.[0]
+		if (message?.role === 'user') return timeOf(message)
+	}
+	return null
+}
+
+/** Queued messages: steer one into the run now, edit it (back into the composer), or remove it. */
+function QueueSheet({ id, items, busy, onEdit, onError, onClose }) {
+	const call = useCall()
+	const act = (op, item) => call(op, { id, submission: item.id }).catch((e) => onError(e.message))
+	useEffect(() => {
+		if (!items.length) onClose()
+	}, [items.length])
+	return html`<${Sheet} onClose=${onClose}>
+		<${Label}>Queued · sent in order after the run<//>
+		${items.map((item, index) => html`<div class="queue-item">
+			<span class="index">${pad(index + 1)}</span>
+			<span class="grow"><span class="queue-text">${item.text}</span>${item.mode === 'steer' && html`<${Tag} tone="soft">Steer<//>`}</span>
+			<div class="row gap">
+				${busy && item.mode !== 'steer' && html`<button class="button small glass" onClick=${() => { haptic(call); act('thread.steerNow', item) }}>Steer now</button>`}
+				<button class="button small glass" onClick=${() => onEdit(item)}>Edit</button>
+				<button class="button small glass danger" aria-label="Remove" onClick=${() => { haptic(call, 'medium'); act('thread.unqueue', item) }}><${Icon} name="trash" size=${15} /></button>
+			</div>
+		</div>`)}
+		<button class="sheet-action" onClick=${onClose}>Done</button>
+	<//>`
+}
+
+/** Renames a thread. Also used from the thread list. */
+export function RenameSheet({ thread, onClose }) {
+	const call = useCall()
+	const [title, setTitle] = useState(thread.title)
+	const [error, setError] = useState(null)
+	const save = async (event) => {
+		event?.preventDefault()
+		try {
+			await call('thread.rename', { id: thread.id, title })
+			haptic(call, 'success')
+			onClose()
+		} catch (e) {
+			setError(e.message)
+		}
+	}
+	return html`<${Sheet} onClose=${onClose}>
+		<${Label}>Rename thread<//>
+		<form class="stack" onSubmit=${save}>
+			<input class="input title-input" value=${title} autofocus aria-label="Thread title" onInput=${(e) => setTitle(e.target.value)} />
+			${error && html`<p class="danger small">${error}</p>`}
+			<button class="button glass prominent wide" type="submit" disabled=${!title.trim()}>Save</button>
+		</form>
+		<button class="sheet-action" onClick=${onClose}>Cancel</button>
+	<//>`
+}
+
 // MARK: Transcript
 
-function Transcript({ view }) {
+/** The entries as turns: each user message with the work and the answer that followed it. */
+function turnsOf(entries) {
+	const turns = []
+	for (const entry of entries) {
+		const message = entry.model?.[0]
+		if (!message) continue
+		if (message.role === 'user' || !turns.length) turns.push({ user: message.role === 'user' ? entry : null, replies: [] })
+		if (message.role !== 'user') turns[turns.length - 1].replies.push(entry)
+	}
+	return turns
+}
+
+function Transcript({ view, thread, onError, onRetry }) {
 	const entries = view.entries ?? []
 	const results = {}
 	for (const entry of entries) {
@@ -93,22 +236,80 @@ function Transcript({ view }) {
 		}
 	}
 	const liveTools = view.live?.tools ?? []
-	const last = [...entries].reverse().find((e) => e.model?.[0]?.role === 'assistant')?.model?.[0]
+	const turns = turnsOf(entries)
+	const lastAnswer = [...entries].reverse().find((e) => e.model?.[0]?.role === 'assistant')?.model?.[0]
+	const lastUser = [...entries].reverse().find((e) => e.model?.[0]?.role === 'user')?.model?.[0]
+	const props = { results, numbers, live: liveTools }
 
 	return html`
-		${entries.map((entry) => {
-			const message = entry.model?.[0]
-			if (message?.role === 'user') return html`<${UserTurn} key=${entry.id} message=${message} />`
-			if (message?.role === 'assistant')
-				return html`<${AssistantTurn} key=${entry.id} message=${message} results=${results} numbers=${numbers} live=${liveTools} />`
-			return null
+		${turns.map((turn, index) => {
+			const current = index === turns.length - 1 && view.busy
+			return html`
+				${turn.user && html`<${UserTurn} key=${turn.user.id} message=${turn.user.model[0]} />`}
+				${current
+					? turn.replies.map((entry) => entry.model[0].role === 'assistant' && html`<${AssistantTurn} key=${entry.id} message=${entry.model[0]} ...${props} />`)
+					: html`<${FinishedRun} key=${`run-${turn.user?.id ?? index}`} turn=${turn} thread=${thread} props=${props} onError=${onError} />`}`
 		})}
 		${streaming
-			? html`<${AssistantTurn} message=${streaming} results=${results} numbers=${numbers} live=${liveTools} />`
+			? html`<${AssistantTurn} message=${streaming} ...${props} />`
 			: view.busy && html`<div class="row gap soft working"><${Spinner} /><${Label} tone="soft">${liveTools.length ? 'Working' : 'Thinking'}<//></div>`}
-		${!view.busy && last?.errorMessage && html`<p class="card danger mono small">${last.errorMessage}</p>`}
-		${view.queued > 0 && html`<p class="faint mono small">${view.queued} message${view.queued > 1 ? 's' : ''} queued</p>`}
+		${!view.busy && lastAnswer?.errorMessage && html`<div class="card danger stack">
+			<p class="mono small">${lastAnswer.errorMessage}</p>
+			${lastUser && html`<button class="button small glass" onClick=${() => onRetry(textOf(lastUser))}><${Icon} name="retry" size=${14} /> Retry</button>`}
+		</div>`}
 	`
+}
+
+/**
+ * A run that ended: its working (thinking, tool calls, the messages in between) folds into "Worked for …", and the
+ * final answer stays, with Copy, Fork and its time.
+ */
+function FinishedRun({ turn, thread, props, onError }) {
+	const call = useCall()
+	const { go } = useNavigation()
+	const [open, setOpen] = useState(false)
+	const [copied, setCopied] = useState(false)
+	const replies = turn.replies.filter((e) => e.model[0].role === 'assistant')
+	const final = replies[replies.length - 1]
+	if (!final) return null
+	const finalMessage = final.model[0]
+	const answer = textOf(finalMessage)
+	const work = [...replies.slice(0, -1).map((e) => e.model[0]), { ...finalMessage, content: (finalMessage.content ?? []).filter((b) => b.type !== 'text') }]
+	const steps = work.flatMap((m) => m.content ?? []).filter((b) => b.type === 'toolCall').length
+	const start = timeOf(turn.user?.model?.[0])
+	const end = (timeOf(finalMessage) ?? 0) + (finalMessage.durationMs ?? 0)
+	const folds = steps > 0 || replies.length > 1
+
+	const copy = () => {
+		call('clipboard.copy', { text: answer })
+		haptic(call)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 1500)
+	}
+	const fork = async () => {
+		haptic(call, 'medium')
+		try {
+			const forked = await call('thread.fork', { id: thread.id, entry: final.id })
+			go(`#/t/${forked.id}`)
+		} catch (e) {
+			onError(e.message)
+		}
+	}
+	return html`<div class="assistant-turn">
+		${folds
+			? html`<button class="disclosure worked" aria-expanded=${open} onClick=${() => setOpen(!open)}>
+					<${Icon} name=${open ? 'down' : 'chevron'} size=${12} />
+					<${Label} tone="faint" size=${9.5}>${finalMessage.stopReason === 'aborted' ? 'Stopped after' : 'Worked for'} ${start && end > start ? duration(end - start) : '…'}${steps ? ` · ${steps} step${steps > 1 ? 's' : ''}` : ''}<//>
+				</button>
+				${open && work.map((message, i) => html`<${AssistantTurn} key=${i} message=${message} ...${props} />`)}`
+			: work.map((message, i) => html`<${AssistantTurn} key=${i} message=${message} ...${props} />`)}
+		${answer && html`<${Markdown} text=${answer} />`}
+		${answer && thread && html`<div class="answer-actions">
+			<button class="answer-action" aria-label="Copy answer" onClick=${copy}><${Icon} name=${copied ? 'check' : 'copy'} size=${14} /></button>
+			<button class="answer-action" aria-label="Fork from this answer" onClick=${fork}><${Icon} name="fork" size=${14} /></button>
+			${end > 0 && html`<span class="faint mono tiny">${new Date(end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>`}
+		</div>`}
+	</div>`
 }
 
 function textOf(message) {
@@ -169,160 +370,4 @@ function ToolRow({ index, call, result, live }) {
 				</div>`
 			: null}
 	</div>`
-}
-
-// MARK: Voice
-
-/** The listener's state when it is listening for this thread. */
-function useListen(id) {
-	const listen = useData((d) => d.listen)
-	return listen?.thread === id ? listen : null
-}
-
-/** What the listener is doing, in a few words. */
-function voiceHint(listen, holding) {
-	if (!listen) return null
-	if (listen.state === 'preparing') return 'Starting the microphone…'
-	if (holding === 'hold') return 'Release to send · slide ↑ to lock · ← to cancel'
-	if (listen.loading) return 'Loading Parakeet · keep talking'
-	if (listen.sendsIn != null) return 'Sending · tap the mic to keep it'
-	if (listen.state === 'on') return listen.text ? 'Pause to send, or say "send it"' : 'Listening'
-	return null
-}
-
-// MARK: Composer
-
-function Composer({ id, busy, model, onError }) {
-	const call = useCall()
-	const [drafts, setDrafts] = useUI('drafts', {})
-	const listen = useListen(id)
-	const active = listen?.state === 'on' || listen?.state === 'preparing'
-	const [holding, setHolding] = useState(null)
-	const press = useRef(null)
-	const field = useRef(null)
-	const draft = drafts[id] ?? ''
-	const text = active ? [listen.prefix, listen.text].filter(Boolean).join(' ') : draft
-	const empty = !text.trim()
-	const setDraft = (value) => setDrafts((all) => ({ ...all, [id]: value }))
-
-	useLayoutEffect(() => {
-		const el = field.current
-		if (!el) return
-		el.style.height = 'auto'
-		el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-	}, [text])
-
-	// The listener sent a turn (with the typed draft before it): the draft is gone.
-	const sent = useRef(listen?.sent)
-	useEffect(() => {
-		if (listen && sent.current != null && listen.sent > sent.current) setDraft('')
-		sent.current = listen?.sent
-	}, [listen?.sent])
-	useEffect(() => {
-		if (listen?.error) onError(listen.error)
-	}, [listen?.error])
-
-	/** Stops listening and keeps what was said in the draft, to edit. */
-	const keep = async () => {
-		const { text: kept } = await call('listen.stop')
-		if (kept) setDraft(kept)
-	}
-
-	const send = async () => {
-		if (active) {
-			haptic(call)
-			return call('listen.send').catch((error) => onError(error.message))
-		}
-		const value = text.trim()
-		if (!value) return
-		setDraft('')
-		haptic(call)
-		try {
-			await call('thread.send', { id, text: value })
-			onError(null)
-		} catch (error) {
-			setDraft(value)
-			onError(error.message)
-		}
-	}
-
-	// The mic: hold to talk and let go to send; slide up to lock, left to cancel. A quick tap listens until a pause
-	// sends it. Tapping while it listens stops and keeps the words.
-	const down = (event) => {
-		event.currentTarget.setPointerCapture?.(event.pointerId)
-		if (active) {
-			press.current = { stop: true }
-			return
-		}
-		press.current = { x: event.clientX, y: event.clientY, at: Date.now() }
-		setHolding('hold')
-		haptic(call)
-		call('listen.start', { id, mode: 'hold', prefix: draft.trim() }).catch((error) => {
-			setHolding(null)
-			onError(error.message)
-		})
-	}
-	const move = (event) => {
-		const p = press.current
-		if (!p || p.stop || p.done) return
-		if (event.clientY - p.y < -60) {
-			p.done = true
-			setHolding(null)
-			haptic(call)
-			call('listen.mode', { mode: 'auto' })
-		} else if (event.clientX - p.x < -80) {
-			p.done = true
-			setHolding(null)
-			haptic(call, 'medium')
-			call('listen.cancel')
-		}
-	}
-	const up = () => {
-		const p = press.current
-		press.current = null
-		setHolding(null)
-		if (!p || p.done) return
-		if (p.stop) return keep()
-		if (Date.now() - p.at < 350) return call('listen.mode', { mode: 'auto' })
-		call('listen.send').catch((error) => onError(error.message))
-	}
-
-	const hint = voiceHint(active ? listen : null, holding)
-	const counting = active && listen.sendsIn != null
-	return html`<div class="composer">
-		<div class="row gap chips">
-			${hint
-				? html`<${Tag} tone="soft">${hint}<//>`
-				: html`<${Tag}>${model ?? 'gpt-6.1-sol'}<//><${Tag}>Phone<//>`}
-			${busy && !hint && html`<${Tag} tone="soft">${empty ? 'Running' : 'Steer'}<//>`}
-		</div>
-		<div class="row gap end">
-			<textarea ref=${field} class=${`field glass ${active ? 'live' : ''}`} rows="1" aria-label="Message Mycroft"
-				placeholder=${active ? 'Listening…' : busy ? 'Steer the run…' : 'Message Mycroft'} value=${text}
-				readOnly=${active} onFocus=${active ? keep : undefined}
-				onInput=${(event) => setDraft(event.target.value)}></textarea>
-			<button class=${`icon-button glass tall mic ${active ? 'listening' : ''} ${holding ? 'held' : ''}`}
-				aria-label=${active ? 'Stop listening' : 'Talk'} style=${active ? `--level:${listen.level ?? 0}` : ''}
-				onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}
-				onContextMenu=${(event) => event.preventDefault()}>
-				<${Icon} name=${active ? 'wave' : 'mic'} />
-			</button>
-			${busy && empty && !active
-				? html`<button class="round glass" aria-label="Stop" onClick=${() => { haptic(call, 'medium'); call('thread.stop', { id }) }}><${Icon} name="stop" size=${16} stroke=${2.6} /></button>`
-				: html`<button class="round glass prominent send" aria-label=${busy ? 'Steer' : 'Send'} disabled=${empty} onClick=${send}>
-						${counting && html`<${Countdown} total=${listen.countdown} left=${listen.sendsIn} />`}
-						<${Icon} name="up" stroke=${2.4} />
-					</button>`}
-		</div>
-	</div>`
-}
-
-/** A ring that fills around the send button until a paused turn sends itself. */
-function Countdown({ total, left }) {
-	// Started once, with the time left then: later events only confirm it.
-	const [start] = useState(() => ({ delay: -(total - left) }))
-	return html`<svg class="countdown" viewBox="0 0 48 48" aria-hidden="true">
-		<circle cx="24" cy="24" r="22" pathLength="100"
-			style=${`animation-duration:${total}ms; animation-delay:${start.delay}ms`} />
-	</svg>`
 }

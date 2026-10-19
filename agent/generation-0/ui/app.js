@@ -4,16 +4,18 @@
 
 import { html, render, useEffect, useRef, useState } from '/lib/preact.js'
 import { Runtime, useNavigation, useData, useRuntime, Label, Spinner } from './lib.js'
-import { Threads } from './screens/threads.js'
+import { Threads, Archived } from './screens/threads.js'
 import { Thread } from './screens/thread.js'
 import { Settings, Notices } from './screens/settings.js'
 import { Pair } from './screens/pair.js'
 
-/** Routes: '#/' threads, '#/t/<id>' a thread, '#/settings', '#/notices', '#/pair'. */
+/** Routes: '#/' threads, '#/t/<id>' a thread, '#/new' a new thread's draft, '#/archived', '#/settings', '#/notices', '#/pair'. */
 function screenFor(route) {
 	const [, name, arg] = route.match(/^#\/([^/]*)\/?(.*)$/) ?? []
 	switch (name) {
 		case 't': return html`<${Thread} id=${Number(arg)} />`
+		case 'new': return html`<${Thread} id=${null} />`
+		case 'archived': return html`<${Archived} />`
 		case 'settings': return html`<${Settings} />`
 		case 'notices': return html`<${Notices} />`
 		case 'pair': return html`<${Pair} />`

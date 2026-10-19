@@ -1,7 +1,8 @@
 # 0010 · Voice in every thread, on the iPhone
 
 **Status:** accepted, implemented (19 Oct 2026). Supersedes [0007](0007-voice-gpt-live-client-delegation.md).
-Amended by [0011](0011-dictation-parakeet.md): Parakeet v3 is the default recognizer, and read aloud is gone.
+Amended by [0011](0011-dictation-parakeet.md): Parakeet v3 is the default recognizer, and read aloud is gone. Amended by
+[0012](0012-threads-like-t3.md): pauses no longer end a turn; the user starts and stops dictation.
 
 **Context.**
 - Voice had its own screen. With an OpenAI key it ran GPT-Live, at $0.05 a minute of open session, billed separately

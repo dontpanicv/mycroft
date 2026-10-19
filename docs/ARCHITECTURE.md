@@ -88,7 +88,7 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 
 ## 7. Voice
 
-- Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener serves the open thread: hold the mic to talk, or tap and pause; a pause ends the turn on the audio's own clock, and a short countdown sends it. Talking while a run works steers it.
+- Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener serves the open composer: hold the mic to talk and release to send, or tap to keep it on; the user starts and stops it, and the screen sends the words like typed text ([ADR 0012](decisions/0012-threads-like-t3.md)). While a run works, a message queues for after it or steers it.
 - The recognizer is chosen in Settings ([ADR 0011](decisions/0011-dictation-parakeet.md)): NVIDIA's Parakeet TDT 0.6B v3, bundled in the app and run through FluidAudio on the Neural Engine (the default; the turn is transcribed again every second and at each pause), or Apple's SpeechTranscriber (words as they are spoken).
 - The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with no voice processing, and the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
 

@@ -166,6 +166,16 @@ const paths = {
 	check: 'M5 12.5l4.5 4.5L19 7.5',
 	copy: 'M9 9h10v10H9Z M5 15V5h10',
 	machine: 'M4 5h16v10H4Z M9 19h6 M12 15v4',
+	trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v6 M14 11v6',
+	lock: 'M6 11h12v9H6Z M8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+	queue: 'M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01',
+	steer: 'M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+	play: 'M7 5v14l11-7Z',
+	retry: 'M4 12a8 8 0 1 0 2.4-5.7 M4 4v4h4',
+	fork: 'M7 3v6a5 5 0 0 0 5 5 M17 3v6a5 5 0 0 1-5 5v7',
+	pin: 'M9 4h6l-1 6 4 4H6l4-4Z M12 14v6',
+	archive: 'M4 5h16v4H4Z M5 9v10h14V9 M10 13h4',
+	pencil: 'M15 5l4 4L8 20H4v-4Z',
 }
 
 export function Icon({ name, size = 20, stroke = 1.8 }) {
@@ -192,4 +202,11 @@ export function Spinner() {
 /** Light haptic feedback through the app. */
 export function haptic(call, style = 'light') {
 	call('haptic', { style }).catch(() => {})
+}
+
+/** A glass action sheet from the bottom. */
+export function Sheet({ children, onClose }) {
+	return html`<div class="sheet-backdrop" onClick=${onClose}>
+		<div class="sheet glass" onClick=${(event) => event.stopPropagation()}>${children}</div>
+	</div>`
 }
