@@ -1,6 +1,7 @@
 # 0004 · Self-modification by generations
 
-**Status:** accepted, implemented (18 Oct 2026)
+**Status:** accepted, implemented (18 Oct 2026). Amended by [0015](0015-the-screen-calls-tools.md): a generation
+holds only the files the agent changed; the rest, and `SELF.md` and `ui/README.md`, are the app's.
 
 The agent never edits the generation that is running. It writes generation n+1 and self-tests it in a scratch `JSContext`. The host then atomically flips `active`, swaps the main context and Pi Durable resumes. A crash loop rolls back to the last good generation.
 

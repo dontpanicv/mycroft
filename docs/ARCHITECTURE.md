@@ -10,7 +10,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 │  │         + bridge to the app; native recovery screen (shake)           │
 │  ├─ RunController: BGContinuedProcessingTask / LongRunningIntent,        │
 │  │                 Live Activity progress, stall reporting               │
-│  ├─ Listener: on-device dictation in every thread (Parakeet or Apple)    │
+│  ├─ Listener: on-device dictation in every thread (Fluid or Apple)       │
 │  ├─ Bridges: SQLite · files · keychain · URLSession fetch/SSE · SSH      │
 │  └─ RuntimeHost: owns the JSContext, loads the active generation,        │
 │                  swaps it on self-edit, rolls back on crash loops        │
@@ -60,7 +60,7 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 
 ## 4. Self-modification
 
-As built (see ADRs 0004 and 0009): the agent rewrites `extension.js` and anything under `ui/`. `self_preview` shows it the draft screen. `self_activate` checks that the draft screen renders, installs `extension.js` into the running harness, and hot-swaps the screen in place. The steps below are the original plan; the TypeScript step was dropped because the agent writes plain JavaScript.
+As built (see ADRs 0004, 0009 and 0015): the agent rewrites `extension.js` and anything under `ui/`; a generation holds only the files it changed, the rest is the app's, and `SELF.md` and `ui/README.md` always come from the app. The screen calls the agent's tools (`tools.call`, code mode included) and runs quick commands on machines (`machines.exec`). `self_preview` shows it the draft screen. `self_activate` checks that the draft screen renders, installs `extension.js` into the running harness, and hot-swaps the screen in place. The steps below are the original plan; the TypeScript step was dropped because the agent writes plain JavaScript.
 
 1. The agent's source lives in `Documents/agent/generations/<n>/`. Generation 0 is copied from the app bundle on first launch.
 2. Self-edit tools (`self.read`, `self.edit`, `self.test`, `self.activate`) let the agent change a **new** generation, never the running one.
@@ -89,7 +89,7 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 ## 7. Voice
 
 - Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener serves the open composer: hold the mic to talk and release to send, or tap to keep it on; the user starts and stops it, and the screen sends the words like typed text ([ADR 0012](decisions/0012-threads-like-t3.md)). While a run works, a message queues for after it or steers it.
-- The recognizer is chosen in Settings ([ADR 0011](decisions/0011-dictation-parakeet.md)): NVIDIA's Parakeet TDT 0.6B v3, bundled in the app and run through FluidAudio on the Neural Engine (the default; the turn is transcribed again every second and at each pause), or Apple's SpeechTranscriber (words as they are spoken).
+- The recognizer is chosen in Settings ([ADR 0014](decisions/0014-dictation-fluid-speech-mini.md)): Fluid Speech Mini, bundled in the app and run through FluidAudio on the Neural Engine (the default; the turn is transcribed again every second and at each pause), or Apple's SpeechTranscriber (words as they are spoken). It loads when the app starts and when it is chosen; until it has loaded, dictation uses Apple's.
 - The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with no voice processing, and the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
 
 ## 8. Threads

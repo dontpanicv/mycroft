@@ -90,18 +90,21 @@ struct TranscriberTests {
         #expect(text.contains("mac"))
     }
 
-    /// Runs the bundled Parakeet model on the same clip. It runs in the Simulator too, on the CPU there.
-    @Test(.enabled(if: Parakeet.isBundled, "this build has no Parakeet model"), .timeLimit(.minutes(5)))
-    func parakeetTranscribesAClip() async throws {
+    /// Runs the bundled Fluid Speech Mini on the same clip. It runs in the Simulator too, on the CPU there.
+    @Test(.enabled(if: FluidSpeech.isBundled, "this build has no Fluid Speech Mini"), .timeLimit(.minutes(5)))
+    func fluidSpeechTranscribesAClip() async throws {
         let url = try #require(Bundle(for: BundleToken.self).url(forResource: "speech", withExtension: "wav"))
         let file = try AVAudioFile(forReading: url)
-        #expect(file.processingFormat.sampleRate == Parakeet.sampleRate)
+        #expect(file.processingFormat.sampleRate == FluidSpeech.sampleRate)
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
         try file.read(into: buffer)
         let samples = Array(UnsafeBufferPointer(start: try #require(buffer.floatChannelData?[0]), count: Int(buffer.frameLength)))
-        let started = Date.now
-        let text = try await Parakeet.shared.transcribe(samples).lowercased()
-        print("parakeet: \(text) (\(Date.now.timeIntervalSince(started)) s, loading included)")
+        var started = Date.now
+        try await FluidSpeech.shared.load()
+        let loading = Date.now.timeIntervalSince(started)
+        started = .now
+        let text = try await FluidSpeech.shared.transcribe(samples).lowercased()
+        print("fluid speech: \(text) (loading \(loading) s, transcribing \(Date.now.timeIntervalSince(started)) s)")
         #expect(text.contains("server"))
         #expect(text.contains("mac"))
     }

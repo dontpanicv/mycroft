@@ -64,7 +64,7 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
   busy: [threadId],                                 // threads with a run going
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
   keys: { jev: bool },
-  dictation: { engine: 'parakeet'|'apple', parakeet: bool },   // parakeet: this build bundles the model
+  dictation: { engine: 'fluid'|'apple', fluid: bool, ready: bool },   // fluid: Fluid Speech Mini is bundled; ready: loaded
   machines: [{ name, hostname, addresses, port, os, arch, version, pairedAt }],
   notices: [string], model: 'gpt-6.1-sol', screenErrors: [string] }
 ```
@@ -87,10 +87,10 @@ is the answer being written right now.
 Other events:
 
 - `listen`: the on-device dictation, for one composer at a time: `{ state: 'off'|'preparing'|'on'|'failed', owner,
-  engine: 'parakeet'|'apple', loading, text, prefix, level, elapsed, error }`. `owner` is the id the composer started
+  engine: 'fluid'|'apple', text, prefix, level, elapsed, error }`. `owner` is the id the composer started
   it with (a thread id as a string, or `'new'`), `text` what has been said and `prefix` the typed draft it goes after.
-  With Parakeet, `text` updates every second or so and at each pause (Apple's word by word); `loading` is Parakeet
-  still loading, while what is said is kept. Nothing is sent by the listener: `listen.stop` returns the words and the
+  With Fluid Speech Mini, `text` updates every second or so and at each pause (Apple's word by word). `engine` is
+  the model this dictation uses: Apple's while Fluid Speech Mini is still loading (`state.dictation.ready`). Nothing is sent by the listener: `listen.stop` returns the words and the
   page sends them. It runs natively, so it goes on with the screen locked.
 - `pairing`: `{ state: 'starting'|'waiting'|'paired'|'failed', command, pinned, copied, localNetwork, addresses: [{ network, ip }], chosen, machine?, message? }`. `addresses` are where a computer could reach the phone, nearest first; `network` is `Wi-Fi`, `Ethernet`, `Tailscale`, `NetBird`, `VPN`, `Personal Hotspot` or an interface name. `command` (short, on the clipboard) and `pinned` use the `chosen` one.
 
@@ -113,6 +113,9 @@ Other events:
 | `keys.save` | `name: 'jev', value` | empty value removes the key |
 | `machines.check` | | `{ name: 'online' \| reason }` |
 | `machines.forget` | `name` | |
+| `machines.exec` | `machine, command, cwd?, timeoutMs?` | runs a quick command (bash, at most 60 s, default 15) on a machine; returns `{ exitCode, output }` (stdout and stderr, the first 16 KB). Stores nothing: use it for reads the screen repeats |
+| `tools.list` | | every tool you (the agent) have: `[{ name, description, extension, parameters }]` |
+| `tools.call` | `name, arguments` or `calls: [{ name, arguments }]` | runs your tools for the screen; returns `{ name, ok, text, details, images? }` (a list for `calls`, run in parallel) |
 | `pairing.start` / `pairing.stop` | `prefer?` (a network name) | install server for a new machine; `pairing` events |
 | `pairing.choose` | `ip` | which address the commands use; the new command is copied |
 | `listen.start` | `owner, prefix?` | dictate into the composer `owner`; `listen` events |
@@ -120,13 +123,34 @@ Other events:
 | `listen.cancel` | | throw the words away and stop |
 | `listen.clear` | | throw away the prefix and the words so far, and keep listening |
 | `listen.close` | | stop everything (the screen went away) |
-| `dictation.engine` | `engine: 'parakeet'\|'apple'` | the model dictation uses from the next start; in `state.dictation` |
+| `dictation.engine` | `engine: 'fluid'\|'apple'` | the model dictation uses; in `state.dictation` |
 | `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |
 | `clipboard.copy` | `text` | |
 | `haptic` | `style: 'light'\|'medium'\|'success'\|'error'\|'selection'` | |
 | `open.url` | `url` | opens an http(s) page in-app |
 | `notices.thirdParty` | | the open source notices text |
 | `ui.theme` | colours | tells the app the screen's colours (app.js does this on mount) |
+
+## Tools and machines from the screen
+
+The screen can do what the agent does: `tools.call` runs any of the agent's tools (hands_*, ui_*, show, self_*, the
+JavaScript tools of `extension.js`, and `codemode`, whose `code` is a script that calls the other tools as
+`await tools.hands_exec({ … })`). A screen feature that needs live data from machines, files or tools therefore
+needs no app update: write the screen code and call them. For example:
+
+```js
+const cpu = await call('machines.exec', { machine: 'bender-2', command: "top -l 1 -n 0 | awk '/CPU usage/ {print $7}'" })
+const [disk, uptime] = await call('tools.call', { calls: [
+	{ name: 'hands_exec', arguments: { machine: 'bender-2', command: 'df -h /' } },
+	{ name: 'hands_exec', arguments: { machine: 'linux-box', command: 'uptime' } },
+] })
+```
+
+- `tools.call` runs each call the way the agent's calls run (durably, one request at a time) and keeps it in a
+  hidden conversation, so it suits actions and occasional reads. It takes a few hundred milliseconds or more.
+- For anything that refreshes (a meter, a dashboard), use `machines.exec`: it is direct, quick and stores nothing.
+  Cache on the screen with `useUI` and refresh on a timer only while the screen is shown.
+- Both run real commands on real machines: never run something destructive without the user asking for it.
 
 `ui.boot`, `ui.ready`, `ui.failed`, `ui.hot`, `ui.save` and `ui.log` are boot.js's handshake with the app. Leave
 them to boot.js.

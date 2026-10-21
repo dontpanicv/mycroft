@@ -31,10 +31,15 @@ final class AppModel {
     private(set) var generation = GenerationStore.State()
     private(set) var hasJevKey = Keychain.read(Secret.jev) != nil
     private(set) var machines: [Machine] = []
-    /// The model dictation uses (Voice/Parakeet.swift).
+    /// The model dictation uses (Voice/FluidSpeech.swift). A change applies to the next dictation; the model loads now.
     var dictation = Dictation.saved {
-        didSet { UserDefaults.standard.set(dictation.rawValue, forKey: Dictation.key) }
+        didSet {
+            UserDefaults.standard.set(dictation.rawValue, forKey: Dictation.key)
+            Listener.warm(self)
+        }
     }
+    /// Fluid Speech Mini is loaded: dictation with it starts at once (until then it uses Apple's model).
+    var fluidReady = false
     var notices: [String] = []
 
     let models = Models(credentials: .keychain(service: "dev.mycroft.credentials"))
@@ -58,6 +63,7 @@ final class AppModel {
 
     private func boot() async {
         protectDocuments()
+        Listener.warm(self)
         notices += await DevImport.run(models: models)
         hasJevKey = Keychain.read(Secret.jev) != nil
         do {
@@ -72,6 +78,7 @@ final class AppModel {
             let screen = await generations.state.active
             generation = await generations.state
             WebUI.shared.load(generation: screen)
+            try await ScreenTools.register(on: models)
             let harness = try await openHarness()
             self.harness = harness
             await refreshGeneration()
@@ -92,7 +99,7 @@ final class AppModel {
         do {
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension(), ShowTools.makeExtension()],
+                extensions: try await extensions(),
                 settings: Self.settings)
         } catch {
             let state = await generations.state
@@ -101,9 +108,18 @@ final class AppModel {
             notices.append("Generation \(failed) failed to load (\(error.localizedDescription)); running the last good one.")
             return try await Harness.open(
                 .sqlite(at: Self.databaseURL), models: models,
-                extensions: [try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension(), ShowTools.makeExtension()],
+                extensions: try await extensions(),
                 settings: Self.settings)
         }
+    }
+
+    /// The agent's extensions: the active generation's, then the native ones. Code mode lets a script call any of
+    /// their tools, for the agent and for the screen (ScreenTools).
+    private func extensions() async throws -> [Extension] {
+        [
+            try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension(),
+            ShowTools.makeExtension(), .codemode(),
+        ]
     }
 
     /// Tool calls of one step run in parallel, so work on several machines happens at the same time.

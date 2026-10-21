@@ -3,7 +3,7 @@ import Testing
 
 @testable import Mycroft
 
-/// When the user is talking, on the audio's clock: Parakeet transcribes again as soon as they pause.
+/// When the user is talking, on the audio's clock: Fluid Speech Mini transcribes again as soon as they pause.
 @Suite("Voice activity")
 struct VoiceActivityTests {
     @Test func speechMarksVoiceAndSilenceDoesnt() {

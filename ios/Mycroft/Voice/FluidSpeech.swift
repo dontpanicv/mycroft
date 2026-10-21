@@ -4,27 +4,28 @@ import Foundation
 
 /// Which model turns speech into text. Chosen in Settings, kept in UserDefaults.
 nonisolated enum Dictation: String, Sendable {
-    /// NVIDIA's Parakeet TDT 0.6B v3, bundled in the app: clearly better with accents and casual speech.
-    case parakeet
+    /// Fluid Speech Mini, bundled in the app: fewer mistakes, especially with other voices in the room.
+    case fluid
     /// Apple's SpeechTranscriber: words appear as they are spoken.
     case apple
 
     static let key = "mycroft.dictation"
 
-    /// The saved choice, or Parakeet when the app has it.
+    /// The saved choice, or Fluid Speech Mini when the app has it.
     static var saved: Dictation {
-        UserDefaults.standard.string(forKey: key).flatMap(Dictation.init) ?? (Parakeet.isBundled ? .parakeet : .apple)
+        UserDefaults.standard.string(forKey: key).flatMap(Dictation.init) ?? (FluidSpeech.isBundled ? .fluid : .apple)
     }
 }
 
-/// Parakeet TDT 0.6B v3 (CC-BY-4.0) through FluidAudio (Apache-2.0), on the Neural Engine. The model (~460 MB) is in
-/// the app bundle (ios/scripts/fetch-parakeet.sh); it loads once, on first use, and stays loaded.
-actor Parakeet {
-    static let shared = Parakeet()
+/// Fluid Speech Mini (CC-BY-4.0, FluidVoice): English dictation built on NVIDIA's Parakeet TDT 0.6B v3 and Moondream's
+/// Parakeet Ultra, a drop-in Parakeet v3 Core ML package run by FluidAudio (Apache-2.0) on the Neural Engine. The model
+/// (~240 MB) is in the app bundle (ios/scripts/fetch-fluid-speech.sh); it loads when the app starts and stays loaded.
+actor FluidSpeech {
+    static let shared = FluidSpeech()
 
     /// Audio it takes: 16 kHz mono.
     nonisolated static let sampleRate = 16_000.0
-    nonisolated static let directory = Bundle.main.url(forResource: "Parakeet", withExtension: nil)
+    nonisolated static let directory = Bundle.main.url(forResource: "FluidSpeech", withExtension: nil)
     nonisolated static var isBundled: Bool { directory != nil }
 
     private var manager: AsrManager?
@@ -32,16 +33,16 @@ actor Parakeet {
 
     var isLoaded: Bool { manager != nil }
 
-    /// Loads the model; the first load on a device takes a few seconds while CoreML prepares it for the Neural Engine.
+    /// Loads the model. The first load after an install takes longer, while Core ML prepares it for the Neural Engine.
     @discardableResult
     func load() async throws -> AsrManager {
         if let manager { return manager }
         if let loading { return try await loading.value }
         guard let directory = Self.directory else {
-            throw TranscriberError("This build of Mycroft doesn't include Parakeet (run ios/scripts/fetch-parakeet.sh).")
+            throw TranscriberError("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
         }
         let task = Task {
-            let models = try AsrModels.loadLocal(from: directory, version: .v3)
+            let models = try await AsrModels.loadLocal(from: directory, version: .v3)
             return AsrManager(models: models)
         }
         loading = task

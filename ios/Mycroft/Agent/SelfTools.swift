@@ -41,8 +41,12 @@ nonisolated enum SelfTools {
                 How: self_read the files you need, self_write each complete new file, self_preview to look at the \
                 draft screen (fix what's wrong), then self_activate with a short note. It is live at once — the screen \
                 reloads in place and the conversation continues. Say what changed and that "roll back" undoes it.
+                Your screen can do what you do: it calls any of your tools (`tools.call`, code mode included) and runs \
+                quick commands on machines (`machines.exec`), so a screen feature that needs live data from machines or \
+                tools needs no app update; ui/README.md shows how.
                 Fixed native parts (need an app update): background runs, the Live Activity layout, the keychain, the \
-                microphone and speech engines, the hands connection and the install server.
+                microphone and speech engines, the hands connection and the install server. Never edit the app's own \
+                source code on a machine to change yourself.
                 """)
 
             Tool(

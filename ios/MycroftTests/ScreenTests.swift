@@ -31,17 +31,15 @@ struct ScreenFileTests {
         return folder
     }
 
-    @Test func generationsWithoutAScreenInheritGenerationZerosAndDraftsCopyIt() async throws {
+    @Test func generationsInheritTheAppsScreenAndDraftsHoldOnlyChanges() async throws {
         let agent = root.appending(path: "agent")
         let store = GenerationStore(root: agent)
         try await store.bootstrap(bundled: try bundled())
-        // An older generation: only extension.js, like the ones made before the screen moved into generations.
-        try FileManager.default.removeItem(at: agent.appending(path: "generations/0/ui"))
         #expect(try await store.read("ui/screens/a.js") == "export const a = 1")
         #expect(try await store.list().contains("ui/index.html"))
 
         try await store.write("ui/screens/a.js", content: "export const a = 2")
-        #expect(FileManager.default.fileExists(atPath: agent.appending(path: "draft/ui/index.html").path), "the draft is a full tree")
+        #expect(!FileManager.default.fileExists(atPath: agent.appending(path: "draft/ui/index.html").path), "the draft holds only changes")
         #expect(await store.draftUIChanges() == ["screens/a.js"])
         #expect(try await store.diff().contains("+1: export const a = 2"))
 
@@ -91,7 +89,7 @@ struct ScreenCheckTests {
     }
 
     @Test func aWorkingDraftRendersWithAPicture() async throws {
-        try await withDraft(["SELF.md": "# unchanged screen"]) {
+        try await withDraft(["ui/unused.css": "/* the screen is unchanged */"]) {
             let result = await UIPreview.run(route: "#/settings", snapshot: true)
             #expect(result.outcome == .rendered, "\(result.summary)")
             #expect(result.problem == nil, "\(result.summary)")

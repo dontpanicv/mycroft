@@ -279,6 +279,18 @@ nonisolated enum HandsTools {
         return ToolResult(output: [.text("\(text(tail))\n[\(summary)]")], isError: code.map { $0 != 0 } ?? (state != "exited"))
     }
 
+    /// Runs a short command and returns its exit code and output (stdout and stderr, the first 64 KB), storing nothing:
+    /// the screen's quick reads (`machines.exec`). The agent's `hands_exec` runs a supervised job instead.
+    static func run(_ command: String, cwd: String?, on machine: Machine, timeout: TimeInterval) async throws -> (exitCode: Int?, output: String) {
+        try await HandsPool.shared.with(machine) { hands in
+            let fields: [String: Any] = [
+                "command": command, "cwd": try await absolute(cwd ?? "~", hands), "timeoutMs": Int(timeout * 1000),
+            ]
+            let reply = try await hands.request("exec", fields, collectOutput: true)
+            return (reply.int("exitCode"), String(decoding: reply.payload, as: UTF8.self))
+        }
+    }
+
     static func readText(_ path: String, on hands: HandsConnection) async throws -> String {
         let opened = try await hands.request("open", ["path": path, "mode": "read"])
         guard let handle = opened.int("handle") else { throw ToolError("could not open \(path)") }

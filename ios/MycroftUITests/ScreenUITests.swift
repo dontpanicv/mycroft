@@ -254,7 +254,7 @@ final class ScreenUITests: XCTestCase {
         snap(app, "voice-in-thread")
     }
 
-    /// Settings → Dictation: Parakeet (bundled) by default, and switching to Apple and back sticks.
+    /// Settings → Dictation: Fluid Speech Mini (bundled) by default, and switching to Apple and back sticks.
     func testDictationSetting() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -262,15 +262,15 @@ final class ScreenUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
         choose(app, dictation: "Apple")
         snap(app, "dictation-apple")
-        choose(app, dictation: "Parakeet v3")
-        snap(app, "dictation-parakeet")
+        choose(app, dictation: "Fluid Speech Mini")
+        snap(app, "dictation-fluid")
     }
 
     /// Opens Settings and picks a dictation model; it stays on the Settings screen.
     private func choose(_ app: XCUIApplication, dictation name: String) {
         if !app.staticTexts["DICTATION"].exists { app.buttons["Settings"].tap() }
         // WebKit reports role="radio" as a plain element whose value is 1 when checked.
-        let options = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Parakeet v3", "Apple"]))
+        let options = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Fluid Speech Mini", "Apple"]))
         let option = options[name]
         XCTAssertTrue(option.waitForExistence(timeout: 10), "Settings shows the \(name) option")
         option.tap()

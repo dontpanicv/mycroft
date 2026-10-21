@@ -32,6 +32,8 @@ actor HandsConnection {
 
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "dev.mycroft.hands")
+    /// Output collected for requests that asked for it, until their result.
+    private var output: [UInt32: Data] = [:]
     private var nextID: UInt32 = 1
     private var pending: [UInt32: CheckedContinuation<Reply, Error>] = [:]
     private var pinger: Task<Void, Never>?
@@ -189,8 +191,9 @@ actor HandsConnection {
 
     // MARK: Frames
 
-    /// Sends a request and waits for its result. Errors from the daemon throw ``RemoteError``.
-    func request(_ op: String, _ fields: sending [String: Any] = [:], payload: Data = Data()) async throws -> Reply {
+    /// Sends a request and waits for its result. Errors from the daemon throw ``RemoteError``. With `collectOutput`,
+    /// the result's payload is the output the request streamed (an `exec`'s stdout and stderr, the first 16 KB).
+    func request(_ op: String, _ fields: sending [String: Any] = [:], payload: Data = Data(), collectOutput: Bool = false) async throws -> Reply {
         guard !isClosed else { throw RemoteError(code: "unknown", message: "connection closed", lost: true) }
         let id = nextID
         nextID &+= 1
@@ -205,6 +208,7 @@ actor HandsConnection {
                     return
                 }
                 pending[id] = continuation
+                if collectOutput { output[id] = Data() }
                 Task {
                     do {
                         try await self.send(frame, opcode: .binary)
@@ -226,6 +230,7 @@ actor HandsConnection {
             cancelled.insert(id)
             return
         }
+        output.removeValue(forKey: id)
         continuation.resume(throwing: CancellationError())
         if let frame = try? HandsProtocol.Frame(type: .cancel, id: id).encoded() {
             try? await send(frame, opcode: .binary)
@@ -233,6 +238,7 @@ actor HandsConnection {
     }
 
     private func fail(_ id: UInt32, _ error: Error) {
+        output.removeValue(forKey: id)
         pending.removeValue(forKey: id)?.resume(throwing: error)
     }
 
@@ -261,8 +267,15 @@ actor HandsConnection {
         for frame in frames {
             switch frame.type {
             case .result:
-                pending.removeValue(forKey: frame.id)?.resume(returning: Reply(json: frame.json, payload: frame.payload))
+                pending.removeValue(forKey: frame.id)?.resume(returning: Reply(json: frame.json, payload: output.removeValue(forKey: frame.id) ?? frame.payload))
+            case .event:
+                // A request that collects its output (the screen's quick exec) keeps the first 16 KB of it.
+                if var collected = output[frame.id], frame.json["kind"] as? String == "output" {
+                    collected.append(frame.payload.prefix(max(0, 16_384 - collected.count)))
+                    output[frame.id] = collected
+                }
             case .error:
+                output.removeValue(forKey: frame.id)
                 let error = RemoteError(code: frame.json["code"] as? String ?? "unknown", message: frame.json["message"] as? String ?? "")
                 pending.removeValue(forKey: frame.id)?.resume(throwing: error)
             default:
@@ -280,6 +293,7 @@ actor HandsConnection {
             continuation.resume(throwing: RemoteError(code: "unknown", message: "connection to \(machine.name) lost", lost: true))
         }
         pending.removeAll()
+        output.removeAll()
     }
 
     // MARK: WebSocket I/O

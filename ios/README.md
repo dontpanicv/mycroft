@@ -4,5 +4,5 @@ The native iOS 27 app: the web view that shows the agent's own screen (`Mycroft/
 
 > Status: scaffolding in milestone M1. The project is generated with XcodeGen (`project.yml`).
 
-Run `scripts/fetch-parakeet.sh` once before building: it downloads the Parakeet speech model (~460 MB) into
+Run `scripts/fetch-fluid-speech.sh` once before building: it downloads the Fluid Speech Mini speech model (~240 MB) into
 `ios/Models`, outside git, and the build bundles it for dictation. Without it, dictation uses Apple's model only.

@@ -6,13 +6,13 @@ import PiDurableKit
 /// ```
 /// Documents/agent/
 ///   state.json             active, last good, boot attempts, history
-///   generations/<n>/       extension.js, SELF.md, ui/ — never edited once written
+///   generations/<n>/       the files the agent changed, as of generation n — never edited once written
 ///   draft/                 the next generation, being edited by the agent
 /// ```
 ///
 /// The agent edits the draft, `promoteDraft` freezes it as generation n+1. A generation that keeps failing to boot
-/// is rolled back to the last one that ran healthily. A file a generation doesn't have comes from the app's bundled
-/// generation 0, so generations made before the UI moved into them still show a screen. See
+/// is rolled back to the last one that ran healthily. A generation holds only what the agent changed; every other
+/// file is the app's own (its bundled generation 0), so an app update reaches every generation. See
 /// docs/decisions/0004-self-modification-by-generations.md and 0009-self-editable-web-ui.md.
 actor GenerationStore {
     struct Record: Codable, Sendable, Hashable, Identifiable {
@@ -53,14 +53,31 @@ actor GenerationStore {
 
     // MARK: Boot
 
-    /// Installs generation 0 from the app bundle the first time.
+    /// Starts the history the first time, with generation 0: the app's own files.
     func bootstrap(bundled: URL) throws {
         self.bundled = bundled
+        defer { pruneInherited() }
         guard !fm.fileExists(atPath: folder(0).path) else { return }
-        try fm.createDirectory(at: generations, withIntermediateDirectories: true)
-        try fm.copyItem(at: bundled, to: folder(0))
+        try fm.createDirectory(at: folder(0), withIntermediateDirectories: true)
         state = State(history: [Record(generation: 0, note: "Shipped with the app", createdAt: .now)])
         try save()
+    }
+
+    /// Generations used to hold full copies of the app's files, and an old copy hides the app's updates. Generation 0
+    /// and the host files are always the app's, and a copy identical to the app's adds nothing: they go.
+    private func pruneInherited() {
+        guard let bundled else { return }
+        let folders = ((try? fm.contentsOfDirectory(at: generations, includingPropertiesForKeys: nil)) ?? []) + [draft]
+        for folder in folders where fm.fileExists(atPath: folder.path) {
+            let appsOwn = folder.standardizedFileURL == self.folder(0).standardizedFileURL
+            for path in Self.files(in: folder) {
+                let own = folder.appending(path: path)
+                guard appsOwn || Self.hostFiles.contains(path)
+                    || fm.contentsEqual(atPath: own.path, andPath: bundled.appending(path: path).path)
+                else { continue }
+                try? fm.removeItem(at: own)
+            }
+        }
     }
 
     /// Counts a boot of the active generation. After too many boots that never became healthy, switches back to the
@@ -123,8 +140,15 @@ actor GenerationStore {
 
     // MARK: Files
 
+    /// Files that describe the app itself (its tools, the screen's data and ops). They change with the app, so every
+    /// generation reads the app's copy, and the agent can't write them.
+    nonisolated static let hostFiles: Set<String> = ["SELF.md", "ui/README.md"]
+
     /// Where a file of a generation folder really is: the folder's own copy, or the app's generation 0.
     nonisolated static func locate(_ path: String, in folder: URL, bundled: URL?) -> URL? {
+        if hostFiles.contains(path), let host = bundled?.appending(path: path), FileManager.default.fileExists(atPath: host.path) {
+            return host
+        }
         let own = folder.appending(path: path)
         if FileManager.default.fileExists(atPath: own.path) { return own }
         if let fallback = bundled?.appending(path: path), FileManager.default.fileExists(atPath: fallback.path) { return fallback }
@@ -176,7 +200,7 @@ actor GenerationStore {
     /// Writes into the draft, creating it as a complete copy of the active generation first.
     func write(_ path: String, content: String) throws {
         let clean = try sanitize(path)
-        guard !clean.hasPrefix("docs/") else { throw SelfError.readOnly(clean) }
+        guard !clean.hasPrefix("docs/"), !Self.hostFiles.contains(clean) else { throw SelfError.readOnly(clean) }
         try ensureDraft()
         let url = draft.appending(path: clean)
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -185,16 +209,14 @@ actor GenerationStore {
 
     var hasDraft: Bool { fm.fileExists(atPath: draft.path) }
 
-    /// Starts the draft as a full tree: the active generation plus what it inherits from generation 0.
+    /// Starts the draft from the active generation: the files the agent changed so far.
     private func ensureDraft() throws {
         guard !fm.fileExists(atPath: draft.path) else { return }
         let active = folder(state.active)
-        try fm.copyItem(at: active, to: draft)
-        for path in effectiveFiles(active) where !fm.fileExists(atPath: draft.appending(path: path).path) {
-            guard let source = Self.locate(path, in: active, bundled: bundled) else { continue }
-            let target = draft.appending(path: path)
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: source, to: target)
+        if fm.fileExists(atPath: active.path) {
+            try fm.copyItem(at: active, to: draft)
+        } else {
+            try fm.createDirectory(at: draft, withIntermediateDirectories: true)
         }
     }
 
@@ -290,7 +312,7 @@ nonisolated enum SelfError: LocalizedError {
         switch self {
         case .noDraft: "There is no draft. Use self_write to start one."
         case .notFound(let path): "No such file: \(path)"
-        case .readOnly(let path): "\(path) is read-only documentation."
+        case .readOnly(let path): "\(path) is read-only: it documents the app and changes with it."
         case .badPath(let path): "Invalid path: \(path)"
         case .unknownGeneration(let generation): "There is no generation \(generation)."
         }

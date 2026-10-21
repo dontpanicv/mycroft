@@ -155,6 +155,15 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             }
 
         // Machines
+        case "machines.exec":
+            try writable()
+            let name: String = try args.require("machine")
+            guard let machine = app.machines.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+                throw BridgeError("No machine named \(name)")
+            }
+            let timeout = min(60, max(1, Double(args.int("timeoutMs") ?? 15_000) / 1000))
+            let result = try await HandsTools.run(try args.require("command"), cwd: args.string("cwd"), on: machine, timeout: timeout)
+            return ["exitCode": result.exitCode.map { $0 as Any } ?? NSNull(), "output": result.output]
         case "machines.check":
             return await checkMachines()
         case "machines.forget":
@@ -168,6 +177,20 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             server?.chosen = args.string("ip")
         case "pairing.stop":
             stopPairing()
+
+        // The agent's tools (Agent/ScreenTools.swift)
+        case "tools.list":
+            return try await ScreenTools.shared.list(try ready())
+        case "tools.call":
+            try writable()
+            let calls: [ScreenTools.Call]
+            if let many = args.values["calls"] as? [[String: Any]] {
+                calls = try many.map { ScreenTools.Call(name: try Args($0).require("name"), arguments: try Self.json($0["arguments"])) }
+            } else {
+                calls = [ScreenTools.Call(name: try args.require("name"), arguments: try Self.json(args.values["arguments"]))]
+            }
+            let results = try await ScreenTools.shared.call(calls, harness: try ready())
+            return args.values["calls"] == nil ? results.first : results
 
         // Dictation into a composer (Voice/Listener.swift)
         case "listen.start":
@@ -185,9 +208,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "dictation.engine":
             try writable()
             guard let engine = args.string("engine").flatMap(Dictation.init) else { throw BridgeError("Unknown engine") }
-            if engine == .parakeet, !Parakeet.isBundled { throw BridgeError("This build of Mycroft doesn't include Parakeet.") }
+            if engine == .fluid, !FluidSpeech.isBundled { throw BridgeError("This build of Mycroft doesn't include Fluid Speech Mini.") }
             app.dictation = engine
-            if engine == .apple { Task { await Parakeet.shared.unload() } }
 
         // Self
         case "generation.rollback":
@@ -212,6 +234,11 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     private func writable() throws {
         if preview { throw BridgeError("Not available in a preview") }
+    }
+
+    private func ready() throws -> Harness {
+        guard let harness = app.harness else { throw BridgeError("Mycroft is still starting") }
+        return harness
     }
 
     private func thread(_ args: Args) throws -> ThreadMeta {
@@ -258,7 +285,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             "busy": app.busyThreads.map(\.rawValue).sorted(),
             "signIn": signIn,
             "keys": ["jev": app.hasJevKey],
-            "dictation": ["engine": app.dictation.rawValue, "parakeet": Parakeet.isBundled],
+            "dictation": ["engine": app.dictation.rawValue, "fluid": FluidSpeech.isBundled, "ready": app.fluidReady],
             "machines": Self.object(app.machines) ?? [],
             "notices": app.notices,
             "model": Provider.defaultModel.modelId,
@@ -444,6 +471,15 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     // MARK: JSON
 
+    /// A page value as a JSON object (tool arguments).
+    static func json(_ value: Any?) throws -> JSONObject {
+        guard let value, !(value is NSNull) else { return [:] }
+        guard JSONSerialization.isValidJSONObject(value),
+            case .object(let object) = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: value))
+        else { throw BridgeError("Tool arguments must be an object") }
+        return object
+    }
+
     static func object(_ value: some Encodable) -> Any? {
         guard let data = try? JSONEncoder.iso.encode(value) else { return nil }
         return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
@@ -476,9 +512,11 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         Mycroft's screen is built with Preact (MIT, © Jason Miller) and htm (Apache-2.0, © Google LLC), \
         bundled as htm's preact/standalone build.
 
-        Dictation uses FluidAudio (Apache-2.0, © FluidInference) and NVIDIA's Parakeet TDT 0.6B v3 \
-        (CC-BY-4.0, © NVIDIA), converted to CoreML by FluidInference: \
-        https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+        Dictation uses Fluid Speech Mini by FluidVoice (CC-BY-4.0), \
+        https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-coreml, built on NVIDIA's Parakeet TDT 0.6B v3 \
+        (CC-BY-4.0, © NVIDIA Corporation) and Moondream's Parakeet Ultra (CC-BY-4.0, © Moondream), with FluidInference's \
+        Parakeet v3 Core ML preprocessor (CC-BY-4.0). Mycroft runs it unchanged (its joint network file renamed for \
+        FluidAudio) through FluidAudio (Apache-2.0, © FluidInference). License: https://creativecommons.org/licenses/by/4.0/
 
         """ + PiDurable.thirdPartyNotices
 }

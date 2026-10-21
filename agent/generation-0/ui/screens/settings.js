@@ -71,7 +71,7 @@ export function SignIn() {
 }
 
 const engines = [
-	{ id: 'parakeet', name: 'Parakeet v3', about: 'Fewer mistakes, especially with accents. Text arrives in short steps.' },
+	{ id: 'fluid', name: 'Fluid Speech Mini', about: 'Fewer mistakes, even with other voices around. Text arrives in short steps.' },
 	{ id: 'apple', name: 'Apple', about: 'Words appear as you say them.' },
 ]
 
@@ -79,10 +79,11 @@ const engines = [
 function Dictation({ dictation }) {
 	const call = useCall()
 	if (!dictation) return null
-	const options = engines.map((engine) => ({ ...engine, disabled: engine.id === 'parakeet' && !dictation.parakeet }))
+	const options = engines.map((engine) => ({ ...engine, disabled: engine.id === 'fluid' && !dictation.fluid }))
 	return html`<${Choices} label="Dictation model" options=${options} chosen=${dictation.engine}
 		onChoose=${(engine) => call('dictation.engine', { engine })}>
-		${!dictation.parakeet && html`<p class="faint small">This build doesn't include Parakeet.</p>`}
+		${!dictation.fluid && html`<p class="faint small">This build doesn't include Fluid Speech Mini.</p>`}
+		${dictation.fluid && dictation.engine === 'fluid' && !dictation.ready && html`<p class="faint small">Fluid Speech Mini is loading; until then dictation uses Apple's model.</p>`}
 		<p class="faint small">Both run on this iPhone.</p>
 	<//>`
 }

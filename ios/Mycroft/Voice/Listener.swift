@@ -4,11 +4,11 @@ import Observation
 import Speech
 import os
 
-/// Dictation in every thread, on the iPhone itself (docs/decisions/0010-voice-in-every-thread.md, 0011).
+/// Dictation in every thread, on the iPhone itself (docs/decisions/0010-voice-in-every-thread.md, 0011, 0014).
 ///
 /// One listener, for one thread's composer at a time, with the model chosen in Settings ([`Dictation`]):
-/// - **Parakeet** (bundled): the words so far are transcribed again every second and at every pause, so the text
-///   arrives in short steps, and the final text is always one pass over everything said.
+/// - **Fluid Speech Mini** (bundled): the words so far are transcribed again every second and at every pause, so the
+///   text arrives in short steps, and the final text is always one pass over everything said.
 /// - **Apple** (SpeechTranscriber, English): words appear as they are spoken.
 ///
 /// The user starts and stops it; nothing is sent on a pause. The composer holds the mic (release sends) or taps it
@@ -28,8 +28,6 @@ final class Listener {
     private(set) var owner: String?
     /// The model this session listens with.
     private(set) var engine: Dictation = .apple
-    /// Parakeet is still loading; what is said meanwhile is kept and transcribed once it is ready.
-    private(set) var loadingModel = false
     /// What the user has said.
     private(set) var text = ""
     /// Typed text the words go after.
@@ -63,7 +61,7 @@ final class Listener {
     @ObservationIgnored private var finalized = ""
     @ObservationIgnored private var volatile = ""
 
-    // Parakeet
+    // Fluid Speech Mini
     /// The samples from `audioStart` (a frame index) on.
     @ObservationIgnored private var audio: [Float] = []
     @ObservationIgnored private var audioStart: Int64 = 0
@@ -74,8 +72,8 @@ final class Listener {
 
     /// The format the tone is played in.
     nonisolated static let playFormat = AVAudioFormat(standardFormatWithSampleRate: 22_050, channels: 1)!
-    nonisolated static let parakeetFormat = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32, sampleRate: Parakeet.sampleRate, channels: 1, interleaved: false)!
+    nonisolated static let modelFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: FluidSpeech.sampleRate, channels: 1, interleaved: false)!
 
     /// Audio seconds heard: the clock the words are measured on.
     private var now: Double { Double(framesFed) / sampleRate }
@@ -83,10 +81,27 @@ final class Listener {
 
     // MARK: Control
 
-    /// Loads Parakeet ahead of the first words, when a thread opens.
+    /// Loads Fluid Speech Mini when the app starts and when it is chosen, so dictation starts at once; frees it when
+    /// Apple's model is chosen instead. A load takes well under a second, except the first after an install or update
+    /// (about 10 s on an iPhone 17 Pro Max, while Core ML prepares it for the Neural Engine).
     static func warm(_ app: AppModel) {
-        guard app.dictation == .parakeet, Parakeet.isBundled else { return }
-        Task { try? await Parakeet.shared.load() }
+        guard FluidSpeech.isBundled else { return }
+        Task {
+            guard app.dictation == .fluid else {
+                await FluidSpeech.shared.unload()
+                app.fluidReady = false
+                return
+            }
+            let log = Logger(subsystem: "dev.mycroft", category: "listener")
+            let started = Date.now
+            do {
+                try await FluidSpeech.shared.load()
+                app.fluidReady = app.dictation == .fluid
+                log.notice("fluid speech loaded in \(Date.now.timeIntervalSince(started), format: .fixed(precision: 2)) s")
+            } catch {
+                log.error("fluid speech failed to load: \(error)")
+            }
+        }
     }
 
     /// Listens for `owner`'s composer, after the typed `prefix`.
@@ -136,7 +151,7 @@ final class Listener {
     /// What the page shows.
     func snapshot() -> [String: Any] {
         var state: [String: Any] = [
-            "owner": owner ?? NSNull(), "engine": engine.rawValue, "loading": loadingModel, "text": text,
+            "owner": owner ?? NSNull(), "engine": engine.rawValue, "text": text,
             "prefix": prefix, "level": (level * 100).rounded() / 100, "error": lastError ?? NSNull(),
             "elapsed": startedAt.map { Int(Date.now.timeIntervalSince($0) * 1000) } ?? 0,
         ]
@@ -176,11 +191,11 @@ final class Listener {
             try? await analyzer?.finalize(through: CMTime(seconds: cut, preferredTimescale: 48_000))
             // The final results for everything through the cut arrive right after.
             for _ in 0..<10 where !volatile.isEmpty { try? await Task.sleep(for: .milliseconds(30)) }
-        case .parakeet:
+        case .fluid:
             // The shown text already covers it all unless the user was still talking.
             if refreshedThrough < activity.lastVoice + 0.2 {
                 do {
-                    text = try await Parakeet.shared.transcribe(samples(through: cut))
+                    text = try await FluidSpeech.shared.transcribe(samples(through: cut))
                 } catch {
                     lastError = error.localizedDescription
                 }
@@ -190,9 +205,9 @@ final class Listener {
         return self.turn == turn ? text : ""
     }
 
-    /// Every tenth of a second: Parakeet's passes.
+    /// Every tenth of a second: Fluid Speech Mini's passes.
     private func tick() {
-        guard listening, engine == .parakeet else { return }
+        guard listening, engine == .fluid else { return }
         refreshIfDue()
     }
 
@@ -236,22 +251,11 @@ final class Listener {
         }
     }
 
-    // MARK: Parakeet
+    // MARK: Fluid Speech Mini
 
-    private func openParakeet() async {
-        format = Self.parakeetFormat
-        sampleRate = Parakeet.sampleRate
-        guard !(await Parakeet.shared.isLoaded) else { return }
-        loadingModel = true
-        Task { [weak self] in
-            do {
-                try await Parakeet.shared.load()
-            } catch {
-                self?.log.error("parakeet failed to load: \(error)")
-                self?.fail(error)
-            }
-            self?.loadingModel = false
-        }
+    private func openFluid() {
+        format = Self.modelFormat
+        sampleRate = FluidSpeech.sampleRate
     }
 
     /// This turn's samples, up to audio time `end`.
@@ -261,8 +265,8 @@ final class Listener {
         return from < to ? Array(audio[from..<to]) : []
     }
 
-    /// Parakeet has no live results: the turn so far is transcribed again every second or so, and as soon as the user
-    /// pauses, so the text is current before a pause ends the turn.
+    /// Fluid Speech Mini has no live results: the turn so far is transcribed again every second or so, and as soon as
+    /// the user pauses, so the text is current before a pause ends the turn.
     private func refreshIfDue() {
         guard refreshing == nil, now > turnStart + 0.5 else { return }
         let spoke = activity.lastVoice > refreshedThrough
@@ -278,9 +282,9 @@ final class Listener {
             let started = Date.now
             let words: String?
             do {
-                words = try await Parakeet.shared.transcribe(samples)
+                words = try await FluidSpeech.shared.transcribe(samples)
             } catch {
-                self?.log.error("parakeet: \(error)")
+                self?.log.error("fluid speech: \(error)")
                 words = nil
             }
             guard let self else { return }
@@ -296,7 +300,10 @@ final class Listener {
 
     private func open(_ dictation: Dictation) async {
         state = .preparing
-        engine = dictation == .parakeet && Parakeet.isBundled ? .parakeet : .apple
+        // Fluid Speech Mini once it has loaded (it loads at launch and when chosen); until then Apple's model, so dictation never
+        // waits for it.
+        let fluidLoaded = await FluidSpeech.shared.isLoaded
+        engine = dictation == .fluid && FluidSpeech.isBundled && fluidLoaded ? .fluid : .apple
         do {
             guard await AVAudioApplication.requestRecordPermission() else {
                 throw TranscriberError("Mycroft needs the microphone. Allow it in Settings → Mycroft.")
@@ -305,7 +312,7 @@ final class Listener {
             audio = []
             audioStart = 0
             refreshCost = 0
-            collectsSamples = engine == .parakeet
+            collectsSamples = engine == .fluid
             let stream: AsyncStream<AnalyzerInput>?
             switch engine {
             case .apple:
@@ -313,8 +320,8 @@ final class Listener {
                 let (sequence, continuation) = AsyncStream<AnalyzerInput>.makeStream()
                 input = continuation
                 stream = sequence
-            case .parakeet:
-                await openParakeet()
+            case .fluid:
+                openFluid()
                 stream = nil
             }
             try startAudio()

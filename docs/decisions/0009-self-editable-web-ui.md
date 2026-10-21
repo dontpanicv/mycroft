@@ -1,6 +1,7 @@
 # 0009 · The screen is part of the agent: a self-editable web UI with hot reload
 
 **Status:** accepted, implemented (19 Oct 2026). Supersedes the "shell in SwiftUI" half of [0002](0002-javascriptcore-agent-runtime.md).
+Amended by [0015](0015-the-screen-calls-tools.md): the screen calls the agent's tools and machines.
 
 **Context.** The first build drew every screen in SwiftUI. Only the agent's behaviour (`extension.js`) could change itself. Asked to "make Mycroft dark green", the agent could edit a colour file, but nothing else on screen. That misses the point of Pi Durable. Mario's pim reloads the screen as web code ("web > HMR") while durable state keeps the conversation alive. Mycroft should do the same: the agent should be able to change anything you see.
 

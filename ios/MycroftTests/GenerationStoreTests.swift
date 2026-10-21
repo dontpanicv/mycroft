@@ -53,6 +53,35 @@ struct GenerationStoreTests {
         await #expect(throws: SelfError.self) { try await store.write("docs/pi-durable/README.md", content: "") }
     }
 
+    /// A generation keeps what the agent changed; everything else, and the files that describe the app, follow the app.
+    @Test func appUpdatesReachEveryGeneration() async throws {
+        let agent = root.appending(path: "agent")
+        let bundled = try bundled()
+        try "screen v1".write(to: bundled.appending(path: "screen.js"), atomically: true, encoding: .utf8)
+        let store = GenerationStore(root: agent)
+        try await store.bootstrap(bundled: bundled)
+        try await store.write("extension.js", content: "module.exports = 1;")
+        _ = try await store.promoteDraft(note: "mine")
+        await #expect(throws: SelfError.self) { try await store.write("SELF.md", content: "# mine") }
+        // An older generation that copied the app's files, as generations used to: the copies go at the next start.
+        try "screen v1".write(to: agent.appending(path: "generations/1/screen.js"), atomically: true, encoding: .utf8)
+        try "# old self".write(to: agent.appending(path: "generations/1/SELF.md"), atomically: true, encoding: .utf8)
+        let reopened = GenerationStore(root: agent)
+        try await reopened.bootstrap(bundled: bundled)
+
+        // The app updates.
+        try "screen v2".write(to: bundled.appending(path: "screen.js"), atomically: true, encoding: .utf8)
+        try "# new self".write(to: bundled.appending(path: "SELF.md"), atomically: true, encoding: .utf8)
+        #expect(try await reopened.read("screen.js") == "screen v2")
+        #expect(try await reopened.read("SELF.md") == "# new self")
+        #expect(try await reopened.read("extension.js") == "module.exports = 1;")
+
+        // A new draft holds only what the agent writes.
+        try await reopened.write("other.js", content: "x")
+        #expect(!FileManager.default.fileExists(atPath: agent.appending(path: "draft/screen.js").path))
+        #expect(try await reopened.read("screen.js") == "screen v2")
+    }
+
     @Test func stateSurvivesReopening() async throws {
         let agent = root.appending(path: "agent")
         let store = GenerationStore(root: agent)

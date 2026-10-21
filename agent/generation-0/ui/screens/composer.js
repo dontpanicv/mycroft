@@ -160,7 +160,6 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 					<span class="rec-dot"></span><span class="mono small">${clock(listen?.elapsed ?? 0)}</span>
 					<${Tag} tone="soft">${holding ? '‹ Slide to cancel · ↑ to lock'
 						: !active || listen.state === 'preparing' ? 'Starting the microphone…'
-						: listen.loading ? 'Loading Parakeet · keep talking'
 						: 'Listening · tap ■ to edit'}<//>
 				</div>`
 			: chips && html`<div class="row gap chips">${chips}</div>`}

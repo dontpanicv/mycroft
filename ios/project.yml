@@ -95,18 +95,18 @@ targets:
           fi
           DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
           if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
-      - name: Bundle Parakeet
+      - name: Bundle Fluid Speech Mini
         basedOnDependencyAnalysis: false
         script: |
-          # Copies the Parakeet speech model (ios/scripts/fetch-parakeet.sh, ~460 MB) into the app. Without it, dictation
+          # Copies the dictation model (ios/scripts/fetch-fluid-speech.sh, ~240 MB) into the app. Without it, dictation
           # offers Apple's model only.
-          MODEL="${SRCROOT}/Models/parakeet-tdt-0.6b-v3"
+          MODEL="${SRCROOT}/Models/fluid-speech-mini"
           if [ -f "$MODEL/REVISION" ]; then
-            DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Parakeet"
+            DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/FluidSpeech"
             mkdir -p "$DEST"
-            rsync -a --delete --exclude REVISION "$MODEL/" "$DEST/"
+            rsync -a --delete "$MODEL/model/" "$DEST/"
           else
-            echo "warning: no Parakeet model in ios/Models (run ios/scripts/fetch-parakeet.sh); dictation will use Apple's model"
+            echo "warning: no Fluid Speech Mini in ios/Models (run ios/scripts/fetch-fluid-speech.sh); dictation will use Apple's model"
           fi
     settings:
       base:
