@@ -305,7 +305,7 @@ fn connection(context: &Context, tcp: TcpStream) {
     match result {
         Ok((socket, phone)) => {
             eprintln!("hands: {peer} authenticated as {phone}");
-            match proxy(socket) {
+            match proxy(socket, &phone) {
                 Ok(()) => eprintln!("hands: {peer} ({phone}) disconnected"),
                 Err(error) => eprintln!("hands: {peer} ({phone}) disconnected: {error}"),
             }
@@ -419,11 +419,13 @@ fn authenticate(context: &Context, nonce: &str, text: &str) -> Result<String, St
     Ok(phone)
 }
 
-/// Start `hands serve --token <random>` for this connection.
-fn start_serve() -> io::Result<(Child, String)> {
+/// Start `hands serve --token <random>` for this connection, naming the phone it serves (cua.rs keys its desktop
+/// session by it).
+fn start_serve(phone: &str) -> io::Result<(Child, String)> {
     let token = tls::hex(&tls::random::<16>());
     let child = Command::new(std::env::current_exe()?)
         .args(["serve", "--token", &token])
+        .env("HANDS_PEER", phone)
         .current_dir(crate::sys::home())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -467,8 +469,8 @@ fn read_frames(stdout: impl Read, token: &str, frames: std::sync::mpsc::SyncSend
 }
 
 /// Proxy pi-env frames between the authenticated socket and a `serve` child until either side ends.
-fn proxy(mut socket: Socket) -> Result<(), String> {
-    let (mut child, token) = start_serve().map_err(|error| format!("starting serve: {error}"))?;
+fn proxy(mut socket: Socket, phone: &str) -> Result<(), String> {
+    let (mut child, token) = start_serve(phone).map_err(|error| format!("starting serve: {error}"))?;
     let stdin = child.stdin.take();
     let stdout = child.stdout.take().expect("piped stdout");
     let (wake_sender, mut wake) = UnixStream::pair().map_err(|error| error.to_string())?;

@@ -11,11 +11,12 @@ The design builds on Mario Zechner's "pim" ([Pi Durable](https://github.com/eare
 ## What it will do
 
 - **Threads.** Multiple parallel conversations, each a durable Pi conversation with its own model, tools and execution environment.
-- **Talk or type, in any thread.** Hold the mic and let go to send, or tap it to keep it on; you start and stop it. While Mycroft works, messages queue or steer the run. Speech is recognized on the iPhone itself, by Fluid Speech Mini bundled in the app or Apple's model ([ADR 0010](docs/decisions/0010-voice-in-every-thread.md), [0012](docs/decisions/0012-threads-like-t3.md), [0014](docs/decisions/0014-dictation-fluid-speech-mini.md)).
+- **Talk or type, in any thread.** Hold the mic and let go to send, or tap it to keep it on; you start and stop it. While Mycroft works, messages queue or steer the run. Speech is recognized on the iPhone itself, by Fluid Speech Mini bundled in the app ([ADR 0010](docs/decisions/0010-voice-in-every-thread.md), [0012](docs/decisions/0012-threads-like-t3.md), [0014](docs/decisions/0014-dictation-fluid-speech-mini.md), [0017](docs/decisions/0017-fluid-speech-mini-only.md)).
+- **Or have a conversation.** The wave next to the mic turns a thread into a hands-free conversation: Mycroft answers aloud in Gradium's Phonon voice, on the iPhone, and says what it's doing while it works. Talk over it to cut in; end it and the thread carries on ([ADR 0016](docs/decisions/0016-conversation-mode.md)).
 - **ChatGPT subscription login.** Default model **Sol 6.1** via the `openai-codex` provider, signed in with the device-code flow (the same login Codex uses). Any other Pi provider can be selected per thread.
 - **Self-modification, screen included.** The agent's code (its behaviour in `extension.js`, and the whole screen in `ui/`, web code with Preact) lives in the app's Documents folder, not the signed bundle. The agent edits it, previews the screen off-screen, and activates it. The runtime swaps the code, the screen hot-reloads in place, and Pi Durable carries on. Known-good generations are kept for rollback. The screen can call every tool the agent has, so a new screen feature that needs data from machines needs no app update ([ADR 0015](docs/decisions/0015-the-screen-calls-tools.md)).
 - **Long-running background work.** User-started runs continue after you leave the app via `BGContinuedProcessingTask` and `LongRunningIntent` (both measured above 10 minutes on an iPhone with iOS 27.2; see the spike).
-- **Hands.** A small daemon for macOS and Linux (`hands/`). It gives the phone files, shell, PTY, supervised jobs that survive the phone going offline, and on macOS, Accessibility-tree desktop control driven by the Jev system-one model.
+- **Hands.** A small daemon for macOS and Linux (`hands/`). It gives the phone files, shell, PTY, supervised jobs that survive the phone going offline, and on macOS desktop control: [Cua Driver](https://github.com/trycua/cua) is linked into `hands`, and the phone's agent uses Cua's tools directly, asking you before risky actions such as deleting, sending or paying ([ADR 0018](docs/decisions/0018-computer-use-with-cua-driver.md)).
 
 ## Layout
 
@@ -40,7 +41,7 @@ The design builds on Mario Zechner's "pim" ([Pi Durable](https://github.com/eare
 - [Pi / Pi Durable / pi-env](https://github.com/earendil-works/pi) by Mario Zechner, Armin Ronacher and Earendil (MIT)
 - [PiDurableKit](https://github.com/finnvoor/PiDurableKit) (CC0) for showing Pi Durable on JavaScriptCore
 - [pi-phone](https://github.com/picassio/pi-phone) (MIT) for the Pi session hand-off pattern
-- [pi-computer-use](https://github.com/injaneity/pi-computer-use) (MIT) and [jev-use](https://github.com/savka777/jev-use) for the Accessibility → Jev → act → verify loop
+- [Cua Driver](https://github.com/trycua/cua) by Cua (MIT), linked into `hands` for desktop control
 
 ## License
 

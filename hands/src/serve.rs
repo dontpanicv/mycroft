@@ -1,12 +1,12 @@
 //! `hands serve`: the pi-env daemon (docs/protocol.md) on stdin/stdout, usually started through `ssh`. Requests run in
 //! this process, except the `job.*` operations, which go to the supervisor (supervisor.rs) so jobs outlive the
-//! connection, and `ui.*`, which go to the macOS desktop helper (ui/mod.rs).
+//! connection, and on macOS `cua.*`, which go to Cua Driver in the supervisor (cua.rs).
 
 use crate::errors::Failure;
 use crate::exec::{self, Control};
 use crate::frame::{self, CANCEL, ERROR, Frame, PING, REQUEST, RESULT};
 use crate::output::Output;
-use crate::{fs, list, pty, scan, supervisor, sys, ui, watch};
+use crate::{cua, fs, list, pty, scan, supervisor, sys, watch};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::env;
@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const PROTOCOL: u64 = 1;
 /// Operations added after protocol 1's first release; clients check `hello.features` before using them. `listFiles`
-/// is pi-env's; the `job.*` operations are hands' (docs/jobs.md). `ui::OPS` are added while a desktop helper answers.
+/// is pi-env's; the `job.*` operations are hands' (docs/jobs.md). On macOS, `cua::OPS` follow.
 const FEATURES: &[&str] = &[
     "listFiles",
     "job.start",
@@ -81,8 +81,8 @@ struct Server {
 
 fn features() -> Vec<&'static str> {
     let mut features = FEATURES.to_vec();
-    if ui::helper().is_some() {
-        features.extend_from_slice(ui::OPS);
+    if cfg!(target_os = "macos") {
+        features.extend_from_slice(cua::OPS);
     }
     features
 }
@@ -163,6 +163,7 @@ impl Server {
                 "driveCwds": sys::drive_cwds(),
                 "pid": std::process::id(),
                 "features": features(),
+                "cua": cua::version().map(|version| json!({ "version": version })),
             }))),
             "lstat" => plain(fs::lstat(field(json, "path")?)),
             "realpath" => plain(fs::realpath(field(json, "path")?)),
@@ -277,7 +278,7 @@ impl Server {
             "job.start" => plain(supervisor::call(&job_start_request(json)).map(|(value, _)| value)),
             "job.wait" => plain(job_wait(json, control)),
             "job.status" | "job.output" | "job.cancel" | "job.list" => supervisor::call(json),
-            "ui.observe" | "ui.act" | "ui.screenshot" => ui::dispatch(op, json, control),
+            "cua.tools" | "cua.call" => cua::dispatch(op, json, control),
             _ => Err(Failure::new("EINVAL", format!("unknown operation {op}"))),
         }
     }
@@ -475,12 +476,9 @@ fn serve_frames(server: &Arc<Server>, input: &mut impl Read) -> io::Result<()> {
                 // Registered before the request runs, so a cancel right behind it is not lost.
                 let control = Arc::new(Control::default());
                 server.controls.lock().unwrap().insert(id, control.clone());
-                // Commands and watchers last, and desktop requests wait on the helper; they get their own threads
+                // Commands and watchers last, and desktop calls wait on the desktop; they get their own threads
                 // (watchers recurse through trees).
-                if matches!(
-                    request.json["op"].as_str(),
-                    Some("exec" | "watch" | "pty" | "job.wait" | "ui.observe" | "ui.act" | "ui.screenshot")
-                ) {
+                if matches!(request.json["op"].as_str(), Some("exec" | "watch" | "pty" | "job.wait" | "cua.call")) {
                     let worker = server.clone();
                     let spawned = thread::Builder::new()
                         .stack_size(16 * 1024 * 1024)

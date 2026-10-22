@@ -1,5 +1,4 @@
-//! `hands install [--pair BASE --pin PIN] [--desktop-zip PATH] [--no-service] [--bind ADDR] [--dry-run]
-//! [--uninstall]`: put this binary at `~/.local/bin/hands` and run `hands supervise --listen` as a user service, a
+//! `hands install [--pair BASE --pin PIN] [--no-service] [--bind ADDR] [--dry-run] [--uninstall]`: put this binary at `~/.local/bin/hands` and run `hands supervise --listen` as a user service, a
 //! systemd user unit on Linux or a LaunchAgent on macOS, so jobs have a supervisor and the phone a listener that
 //! start with the user and survive SSH sessions. Running it again converges to the same state. `--dry-run` only
 //! prints the steps; `--uninstall` reverses them but keeps the state dir (job records and output, the certificate
@@ -9,14 +8,12 @@
 //! the result. If the service cannot start (no GUI login on a Mac, no user systemd), or with `--no-service`, the
 //! listener runs detached until the machine restarts.
 //!
-//! On macOS, given `--desktop-zip` (or with `MycroftHands.zip` next to this binary), it also installs the desktop
-//! helper (ui/app.rs): `~/Applications/Mycroft Hands.app`, replaced only when the version differs, and its
-//! LaunchAgent `dev.mycroft.hands-desktop`. A failure there never fails the install.
+//! On macOS the service also runs desktop control (cua.rs). Install and uninstall remove the separate desktop helper
+//! earlier versions installed (`~/Applications/Mycroft Hands.app` and its LaunchAgent).
 //!
 //! Then, on macOS, it walks through the permissions Mycroft needs, one at a time, when it has a terminal to talk to
 //! (permissions.rs); otherwise it prints how to get to that walkthrough.
 
-use crate::ui::app;
 use crate::{listener, pairing, state, supervisor, sys};
 use std::net::IpAddr;
 use serde_json::json;
@@ -29,6 +26,9 @@ use std::time::{Duration, Instant};
 
 pub const LABEL: &str = "dev.mycroft.hands";
 const UNIT: &str = "hands.service";
+/// The desktop helper earlier versions installed, and its LaunchAgent.
+const OLD_HELPER: &str = "Applications/Mycroft Hands.app";
+const OLD_HELPER_LABEL: &str = "dev.mycroft.hands-desktop";
 
 enum Step {
     StateDir,
@@ -47,13 +47,7 @@ enum Step {
     StopSupervisor,
     /// Stop a running listener (perhaps one `hands pair` started detached), so the service's own takes over.
     StopListener,
-    /// Unpack Mycroft Hands.app from the zip, unless the installed copy has the same version.
-    InstallApp { zip: PathBuf, to: PathBuf },
     RemoveDir(PathBuf),
-    /// `launchctl bootstrap`, retried briefly: right after `bootout`, launchd may still be removing the old job.
-    Bootstrap { domain: String, plist: PathBuf },
-    /// A step of the desktop helper's: its failure is a warning, and skips the desktop steps after it.
-    Desktop(Box<Step>),
 }
 
 impl Step {
@@ -66,35 +60,12 @@ impl Step {
             Step::Run { argv, .. } => format!("run {}", argv.join(" ")),
             Step::StopSupervisor => "stop a running supervisor (jobs keep running)".into(),
             Step::StopListener => "stop a running listener".into(),
-            Step::InstallApp { zip, to } => {
-                let offered = match app::zip_info(zip) {
-                    Ok((version, _)) => version,
-                    Err(_) => "?".into(),
-                };
-                let current = app::installed_version(to).unwrap_or_else(|| "none".into());
-                format!(
-                    "install {} {offered} from {} to {} (installed: {current}; replaced only when the version differs)",
-                    app::APP_NAME,
-                    zip.display(),
-                    to.display()
-                )
-            }
             Step::RemoveDir(path) => format!("remove {}", path.display()),
-            Step::Bootstrap { domain, plist } => format!("run launchctl bootstrap {domain} {}", plist.display()),
-            Step::Desktop(step) => step.describe(),
-        }
-    }
-
-    /// A desktop step's own step.
-    fn inner(&self) -> &Step {
-        match self {
-            Step::Desktop(step) => step,
-            step => step,
         }
     }
 
     fn optional(&self) -> bool {
-        matches!(self, Step::Run { optional: true, .. } | Step::Desktop(_))
+        matches!(self, Step::Run { optional: true, .. })
     }
 
     /// Apply the step; `Ok` carries a note on what happened. `quiet` captures the output of commands, which is
@@ -123,20 +94,6 @@ impl Step {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("not present".into()),
                 Err(error) => Err(error.to_string()),
             },
-            Step::InstallApp { zip, to } => app::install(zip, to),
-            Step::Bootstrap { domain, plist } => {
-                let mut tries = 0;
-                loop {
-                    let argv = ["launchctl", "bootstrap", domain, &plist.to_string_lossy()].map(String::from);
-                    let result = Step::Run { argv: argv.to_vec(), optional: false, starts: false }.apply(true);
-                    tries += 1;
-                    if result.is_ok() || tries == 4 {
-                        return result;
-                    }
-                    thread::sleep(Duration::from_millis(500));
-                }
-            }
-            Step::Desktop(step) => step.apply(quiet),
             Step::Run { argv, .. } => {
                 let mut command = Command::new(&argv[0]);
                 command.args(&argv[1..]);
@@ -357,29 +314,16 @@ fn start(argv: &[&str], optional: bool) -> Step {
     }
 }
 
-/// The desktop helper's steps: the app and its LaunchAgent (with the service).
-fn desktop_steps(zip: &Path, with_service: bool) -> Vec<Step> {
-    let app_path = app::app_path();
-    let agent = app::agent_path();
-    // SAFETY: getuid cannot fail.
-    let domain = format!("gui/{}", unsafe { libc::getuid() });
-    let mut steps = vec![Step::InstallApp {
-        zip: zip.to_path_buf(),
-        to: app_path.clone(),
-    }];
-    if with_service {
-        steps.push(Step::Write {
-            path: agent.clone(),
-            contents: app::launch_agent(&app::app_binary(&app_path), &state::dir()),
-        });
-        steps.push(run(&["launchctl", "bootout", &format!("{domain}/{}", app::LABEL)], true));
-        // Fails without a GUI login session (SSH only); the agent then loads at the next login.
-        steps.push(Step::Bootstrap { domain, plist: agent });
-    }
-    steps.into_iter().map(|step| Step::Desktop(Box::new(step))).collect()
+/// Stop and remove the desktop helper earlier versions installed; desktop control now runs in the service.
+fn old_helper_steps(domain: &str) -> Vec<Step> {
+    vec![
+        run(&["launchctl", "bootout", &format!("{domain}/{OLD_HELPER_LABEL}")], true),
+        Step::Remove(home().join(format!("Library/LaunchAgents/{OLD_HELPER_LABEL}.plist"))),
+        Step::RemoveDir(home().join(OLD_HELPER)),
+    ]
 }
 
-fn install_steps(with_service: bool, bind: Option<IpAddr>, desktop_zip: Option<&Path>) -> Result<Vec<Step>, String> {
+fn install_steps(with_service: bool, bind: Option<IpAddr>) -> Result<Vec<Step>, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let binary = binary_path();
     let service = service_path();
@@ -396,6 +340,7 @@ fn install_steps(with_service: bool, bind: Option<IpAddr>, desktop_zip: Option<&
     } else if cfg!(target_os = "macos") {
         // SAFETY: getuid cannot fail.
         let domain = format!("gui/{}", unsafe { libc::getuid() });
+        steps.extend(old_helper_steps(&domain));
         steps.push(Step::Write {
             path: service.clone(),
             contents: launch_agent(&binary, bind),
@@ -425,9 +370,6 @@ fn install_steps(with_service: bool, bind: Option<IpAddr>, desktop_zip: Option<&
         // Keeps the user's service manager, and so the supervisor, running without a login session.
         steps.push(run(&["loginctl", "enable-linger"], true));
     }
-    if let Some(zip) = desktop_zip {
-        steps.extend(desktop_steps(zip, with_service));
-    }
     Ok(steps)
 }
 
@@ -436,9 +378,7 @@ fn uninstall_steps() -> Vec<Step> {
     if cfg!(target_os = "macos") {
         // SAFETY: getuid cannot fail.
         let domain = format!("gui/{}", unsafe { libc::getuid() });
-        steps.push(run(&["launchctl", "bootout", &format!("{domain}/{}", app::LABEL)], true));
-        steps.push(Step::Remove(app::agent_path()));
-        steps.push(Step::RemoveDir(app::app_path()));
+        steps.extend(old_helper_steps(&domain));
         let target = format!("{domain}/{LABEL}");
         steps.push(run(&["launchctl", "bootout", &target], true));
         steps.push(Step::Remove(service_path()));
@@ -453,8 +393,8 @@ fn uninstall_steps() -> Vec<Step> {
     steps
 }
 
-const USAGE: &str = "usage: hands install [--pair <BASE> --pin <PIN>] [--desktop-zip <PATH>] [--no-service] [--bind <ADDR>] \
-                     [--dry-run] [--uninstall]";
+const USAGE: &str =
+    "usage: hands install [--pair <BASE> --pin <PIN>] [--no-service] [--bind <ADDR>] [--dry-run] [--uninstall]";
 
 struct Options {
     dry_run: bool,
@@ -462,7 +402,6 @@ struct Options {
     service: bool,
     bind: Option<IpAddr>,
     pair: Option<(pairing::Base, [u8; 32])>,
-    desktop_zip: Option<PathBuf>,
 }
 
 fn options(args: &[String]) -> Result<Options, String> {
@@ -472,7 +411,6 @@ fn options(args: &[String]) -> Result<Options, String> {
         service: true,
         bind: None,
         pair: None,
-        desktop_zip: None,
     };
     let (mut base, mut pin) = (None, None);
     let mut args = args.iter();
@@ -485,16 +423,9 @@ fn options(args: &[String]) -> Result<Options, String> {
             ("--pair", Some(value)) => base = Some(pairing::parse_base(value)?),
             ("--pin", Some(value)) => pin = Some(pairing::parse_pin(value)?),
             ("--bind", Some(value)) => options.bind = Some(pairing::parse_bind(value)?),
-            ("--desktop-zip", Some(value)) => {
-                let path = PathBuf::from(value);
-                if !path.is_file() {
-                    return Err(format!("--desktop-zip: no file at {value}"));
-                }
-                options.desktop_zip = Some(fs::canonicalize(&path).unwrap_or(path));
-            }
             _ => return Err(String::new()),
         }
-        if matches!(arg.as_str(), "--pair" | "--pin" | "--bind" | "--desktop-zip") {
+        if matches!(arg.as_str(), "--pair" | "--pin" | "--bind") {
             args.next();
         }
     }
@@ -520,23 +451,10 @@ pub fn main(args: &[String]) -> i32 {
     let dry_run = options.dry_run;
     // The phone's install script prints one line: pairing prints only the result, and failures.
     let quiet = options.pair.is_some() && !dry_run;
-    let desktop_zip = match (&options.desktop_zip, cfg!(target_os = "macos")) {
-        (Some(_), false) => {
-            eprintln!("hands install: --desktop-zip ignored; desktop control needs macOS");
-            None
-        }
-        (Some(zip), true) => Some(zip.clone()),
-        // MycroftHands.zip shipped next to this binary.
-        (None, true) => std::env::current_exe()
-            .ok()
-            .and_then(|exe| Some(exe.parent()?.join(app::ZIP_NAME)))
-            .filter(|zip| zip.is_file()),
-        (None, false) => None,
-    };
     let steps = if options.uninstall {
         uninstall_steps()
     } else {
-        match install_steps(options.service, options.bind, desktop_zip.as_deref()) {
+        match install_steps(options.service, options.bind) {
             Ok(steps) => steps,
             Err(error) => {
                 eprintln!("hands install: {error}");
@@ -547,18 +465,10 @@ pub fn main(args: &[String]) -> i32 {
     // Whether the service started, so pairing can wait for its listener instead of starting one.
     let mut service_started = options.service;
     let mut service_failure = None;
-    let mut desktop_failed = false;
     for step in &steps {
-        let desktop = matches!(step, Step::Desktop(_));
-        if desktop && desktop_failed {
-            if !quiet {
-                println!("{}: skipped", step.describe());
-            }
-            continue;
-        }
         if dry_run {
             println!("would {}", step.describe());
-            if let Step::Write { contents, .. } = step.inner() {
+            if let Step::Write { contents, .. } = step {
                 for line in contents.lines() {
                     println!("    | {line}");
                 }
@@ -571,11 +481,6 @@ pub fn main(args: &[String]) -> i32 {
                 if !quiet {
                     println!("{}: {note}", step.describe());
                 }
-            }
-            Err(error) if desktop && !step.inner().optional() => {
-                // The desktop helper is optional: hands itself is installed either way.
-                desktop_failed = true;
-                eprintln!("hands: desktop control is not set up: {}: {error}", step.describe());
             }
             Err(error) if starts && quiet => {
                 // Pairing does not need the service: the listener then runs detached.

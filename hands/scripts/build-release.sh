@@ -4,8 +4,9 @@
 #
 #   darwin-arm64, darwin-x86_64     cargo build, on macOS (they need the macOS SDK), signed as dev.mycroft.hands
 #                                   with an Apple Development identity (or CODESIGN_IDENTITY), so macOS keeps the
-#                                   permissions granted to hands (folders, Local Network, Full Disk Access) across
-#                                   updates. Ad hoc when there is none: those are then asked for again after each update.
+#                                   permissions granted to hands (Accessibility, Screen Recording, folders, Local
+#                                   Network, Full Disk Access) across updates. Ad hoc when there is none: those are
+#                                   then asked for again after each update.
 #   linux-x86_64, linux-aarch64     static musl binaries, with cargo zigbuild (or cross)
 #
 # Usage: build-release.sh [--partial]

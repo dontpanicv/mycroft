@@ -104,11 +104,46 @@ job that was signalled ends as `cancelled`.
 
 → `{ jobs: [status record, ...] }`, newest first. Finished jobs are included until retention removes them.
 
-### Desktop control: `ui.observe`, `ui.act`, `ui.screenshot`
+### Desktop control: `cua.tools`, `cua.call`
 
-macOS only. `hands` forwards them to the Mycroft Hands helper and lists them in `features` while it answers.
-[docs/desktop-protocol.md](../../docs/desktop-protocol.md) specifies the fields, results (`ui.screenshot` returns the
-PNG as the payload) and error codes (`not_trusted`, `not_permitted`, `stale`, `not_found`, `invalid`, `failed`).
+macOS only, listed in `features` there. They carry [Cua Driver](https://github.com/trycua/cua)'s MCP tools (MIT),
+which `hands` links in: per-window accessibility tree and screenshot reads with `element_token`s, background input
+that doesn't move the user's pointer or switch apps, `run_steps` batches, `verify_state`. `hello` also returns
+`cua: { version }`, the linked driver's release.
+
+The driver runs in the supervisor that launchd started (the service), because macOS gives Accessibility and Screen
+Recording to that process: "hands". `hands serve` forwards both operations to it over `supervisor.sock`, as it does
+`job.*`.
+
+#### `cua.tools {}`
+
+→ `{ version, instructions, tools }`. `tools` are Cua's MCP `tools/list` entries as Cua describes them (`name`,
+`description`, `inputSchema`, `annotations`, ...), and `instructions` is the text of Cua's MCP server
+`instructions`. Both are unchanged, except that the tools `hands` does not offer are left out, with the instructions'
+sentence about them: `parse_visual_regions` (it needs Cua's perception model, which `hands` doesn't link) and the
+Computer History tools (`history_*`; History is off).
+
+#### `cua.call { name, [arguments] }`
+
+| field | default | meaning |
+|---|---|---|
+| `name` | required | a tool from `cua.tools` |
+| `arguments` | `{}` | the tool's arguments, an object, as its `inputSchema` describes |
+
+→ Cua's MCP `CallToolResult`, unchanged: `{ content: [...], [structuredContent], [isError] }`. Each `content` item
+is `{ type: "text", text }` or `{ type: "image", data, mimeType }` (base64). A tool that runs but fails returns a
+normal result with `isError: true`; the error codes below are for calls that don't run.
+
+- **What the supervisor gets.** `serve` checks `name` and `arguments`, and adds `client` and `call`: `client` is the
+  paired phone's name (`HANDS_PEER`, which the listener sets) or `ssh`, and `call` is a random id.
+- **Cancellation.** A pi-env cancel frame stops the request with `aborted`, and `serve` sends the supervisor
+  `cua.cancel { call }`, which aborts the driver call.
+- **Sessions.** Each client has one Cua trusted session (standard permission mode). It is kept across reconnects, so
+  element tokens from earlier reads stay valid. Cua ends a session after 24 hours, or after an hour without a call;
+  `hands` starts a fresh one a minute before either.
+
+The supervisor's own `hello` reports `desktop: { version }` while the driver runs, or `desktop: { off: why }`.
+`hands doctor` shows it in its `desktop` row.
 
 ## Errors
 
@@ -120,9 +155,15 @@ Errors use pi-env's shape `{ code, message, ... }`. Only `code` is part of the c
 | `not_found` | no job with this key (never started, or deleted by retention) |
 | `spawn_error` | `cwd` does not exist, `argv` is empty, or the runner could not be started. No job is recorded, so the key stays free. |
 | `shell_unavailable` | `shellPath` does not exist |
-| `aborted` | a `job.wait` was cancelled by the client |
+| `aborted` | a `job.wait` or `cua.call` was cancelled by the client |
 | `supervisor_unavailable` | `hands serve` could not reach or start the supervisor |
-| `not_supported` | `ui.*` on Linux, or when no desktop helper answers |
+| `not_supported` | `cua.*` on Linux |
+| `not_service` | `cua.*` when the supervisor wasn't started by launchd (it was started on demand by `serve`): `hands install` sets the service up |
+| `unavailable` | Cua Driver could not start in the supervisor |
+| `EINVAL` | also: `cua.call` without `name`, with `arguments` that aren't an object, with an unknown tool or one `hands` leaves out, or with arguments Cua finds invalid |
+| `interrupted` | Cua interrupted the action (its `ActionInterrupted`) |
+| Cua's code | Cua refused the tool call; the code is Cua's own |
+| `failed` | any other driver error |
 
 ## The supervisor
 

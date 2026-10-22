@@ -109,6 +109,8 @@ async function hot({ generation, changed }) {
 		// Load (and fail on syntax errors) before touching what is on screen.
 		await import(`/g/${generation}/app.js`)
 		if (changed.some((file) => file.endsWith('.css'))) await swapStyles(generation)
+		// Screens unmount only to come back: what lives in the app (a conversation) must not end with them.
+		runtime.swapping = true
 		previous?.module.unmount?.(root)
 		runtime.generation = generation
 		await mount(`/g/${generation}/app.js`, generation)
@@ -125,6 +127,8 @@ async function hot({ generation, changed }) {
 			}
 		} catch {}
 		native('ui.hot', { generation, error: describe(error) })
+	} finally {
+		runtime.swapping = false
 	}
 }
 

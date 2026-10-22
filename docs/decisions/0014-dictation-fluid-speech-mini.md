@@ -1,7 +1,8 @@
 # 0014 · Dictation with Fluid Speech Mini, loaded at launch
 
 **Status:** accepted, implemented (21 Oct 2026). Replaces the model choice of [0011](0011-dictation-parakeet.md);
-dictation still works as [0012](0012-threads-like-t3.md) describes.
+dictation still works as [0012](0012-threads-like-t3.md) describes. Amended by [0017](0017-fluid-speech-mini-only.md):
+Fluid Speech Mini is the only model, and there is no Apple fallback while it loads.
 
 **Context.** Parakeet v3 made the app about 575 MB, and switching models in Settings seemed to need a restart: a model
 loaded only when dictation started, so the first dictation after a switch waited for the load. The goal was the

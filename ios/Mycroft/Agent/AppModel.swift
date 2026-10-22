@@ -29,17 +29,14 @@ final class AppModel {
     private(set) var busyThreads: Set<ConversationID> = []
     private(set) var signIn: SignIn = .unknown
     private(set) var generation = GenerationStore.State()
-    private(set) var hasJevKey = Keychain.read(Secret.jev) != nil
     private(set) var machines: [Machine] = []
-    /// The model dictation uses (Voice/FluidSpeech.swift). A change applies to the next dictation; the model loads now.
-    var dictation = Dictation.saved {
-        didSet {
-            UserDefaults.standard.set(dictation.rawValue, forKey: Dictation.key)
-            Listener.warm(self)
-        }
+    /// Fluid Speech Mini (Voice/FluidSpeech.swift) is loaded: dictation is transcribed at once. Until then the audio is
+    /// kept and transcribed when it is.
+    var dictationReady = false
+    /// The model new threads think with (Agent/Brain.swift).
+    var brain = Brain.saved {
+        didSet { UserDefaults.standard.set(brain.rawValue, forKey: Brain.key) }
     }
-    /// Fluid Speech Mini is loaded: dictation with it starts at once (until then it uses Apple's model).
-    var fluidReady = false
     var notices: [String] = []
 
     let models = Models(credentials: .keychain(service: "dev.mycroft.credentials"))
@@ -65,7 +62,6 @@ final class AppModel {
         protectDocuments()
         Listener.warm(self)
         notices += await DevImport.run(models: models)
-        hasJevKey = Keychain.read(Secret.jev) != nil
         do {
             guard let bundled = Bundle.main.url(forResource: "generation-0", withExtension: nil) else {
                 throw StartError.missingGeneration0
@@ -78,7 +74,16 @@ final class AppModel {
             let screen = await generations.state.active
             generation = await generations.state
             WebUI.shared.load(generation: screen)
+            #if DEBUG
+            // UI tests: the brain wakes up well after the screen (as on an iPhone with a big database).
+            if CommandLine.arguments.contains("--slow-brain") { try? await Task.sleep(for: .seconds(4)) }
+            #endif
             try await ScreenTools.register(on: models)
+            do {
+                try await models.register(FoundationModelsProvider(models: [.onDevice()]))
+            } catch {
+                log.error("Apple's model failed to register: \(error)")
+            }
             let harness = try await openHarness()
             self.harness = harness
             await refreshGeneration()
@@ -114,16 +119,24 @@ final class AppModel {
     }
 
     /// The agent's extensions: the active generation's, then the native ones. Code mode lets a script call any of
-    /// their tools, for the agent and for the screen (ScreenTools).
+    /// their tools, for the agent and for the screen (ScreenTools); tool search finds the ones kept from the model until
+    /// needed (most of Cua Driver's).
     private func extensions() async throws -> [Extension] {
         [
-            try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), DesktopTools.makeExtension(),
-            ShowTools.makeExtension(), .codemode(),
+            try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), CuaTools.makeExtension(),
+            ShowTools.makeExtension(), .toolSearch(), .codemode(),
         ]
     }
 
     /// Tool calls of one step run in parallel, so work on several machines happens at the same time.
-    nonisolated static let settings = Settings(toolExecution: .parallel)
+    ///
+    /// Partial answers are committed every 40 ms (pi-durable's default is 100), so a conversation speaks them sooner.
+    /// Compaction is sized for Apple's on-device model (a few thousand tokens): pi-durable's defaults keep 16,384
+    /// tokens free and would never compact such a window before it overflows. The thresholds are counted from each
+    /// model's own window, so Sol's threads still compact only when nearly full, keeping less verbatim.
+    nonisolated static let settings = Settings(
+        compaction: .forContextWindow(Brain.appleContextWindow), progress: .init(partialInterval: .milliseconds(40)),
+        toolExecution: .parallel)
 
     private func selfExtension() -> Extension {
         SelfTools.makeExtension(store: generations, host: .init(
@@ -208,17 +221,18 @@ final class AppModel {
 
     func newThread() async throws -> ThreadMeta {
         guard let harness else { throw StartError.notReady }
-        let conversation = try await harness.createConversation(
-            agent: AgentChange(model: Provider.defaultModel, thinkingLevel: .medium))
+        let conversation = try await harness.createConversation(agent: brain.agent)
         let meta = ThreadMeta(id: conversation.id, title: ThreadMeta.untitled, createdAt: .now, updatedAt: .now)
         try await harness.update(Threads.document) { $0.items.append(meta) }
         return meta
     }
 
-    /// Creates a thread with its first message: until then a new thread is only a draft on the screen.
-    func startThread(with text: String) async throws -> ThreadMeta {
+    /// Creates a thread with its first message: until then a new thread is only a draft on the screen. `voice`: it
+    /// starts in a conversation.
+    func startThread(with text: String, voice: Bool = false) async throws -> ThreadMeta {
         let meta = try await newThread()
         do {
+            if voice { try await setVoice(true, in: meta.id) }
             try await send(text, to: meta)
         } catch {
             // Nothing was said in it: put it away, and the screen keeps the draft.
@@ -244,6 +258,17 @@ final class AppModel {
         var current = thread
         if let title { current.title = title }
         RunMonitor.shared.runSubmitted(current)
+    }
+
+    /// Asks the thread's agent to talk (or stops asking): the thread's instructions, with the note its model needs.
+    func setVoice(_ on: Bool, in id: ConversationID) async throws {
+        guard let conversation = try await conversation(id) else { return }
+        let apple = try await conversation.agentState().model?.provider == .apple
+        if let instructions = Instructions.compose(apple: apple, voice: on) {
+            try await conversation.configure(AgentChange(instructions: instructions))
+        } else {
+            try await conversation.configure(AgentChange(reset: [.instructions]))
+        }
     }
 
     /// Changes a thread's list metadata.
@@ -416,18 +441,6 @@ final class AppModel {
     func signOut() async {
         try? await models.logout(from: Provider.codex)
         signIn = .signedOut
-    }
-
-    // MARK: Jev
-
-    func saveJevKey(_ key: String) throws {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            Keychain.delete(Secret.jev)
-        } else {
-            try Keychain.write(trimmed, for: Secret.jev)
-        }
-        hasJevKey = !trimmed.isEmpty
     }
 
     enum StartError: LocalizedError {

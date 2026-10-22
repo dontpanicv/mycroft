@@ -183,11 +183,6 @@ final class InstallServer {
             return HTTPResponse(status: 200, contentType: "text/x-shellscript", body: Data(script.utf8))
         case _ where !secure:
             return .status(404, "use the address and port in the script")
-        case ("GET", "MycroftHands.zip"):
-            guard let url = HandsBinaries.desktopZip, let data = try? Data(contentsOf: url) else {
-                return .status(404, "this build of Mycroft has no desktop helper")
-            }
-            return HTTPResponse(status: 200, contentType: "application/zip", body: data)
         case ("GET", let name?) where name.hasPrefix("hands-"):
             guard let url = HandsBinaries.url(name), let data = try? Data(contentsOf: url) else {
                 return .status(404, "no \(name) in this build of Mycroft")
@@ -249,10 +244,6 @@ final class InstallServer {
             let hash = HandsBinaries.sha256(target) ?? "missing"
             script = script.replacingOccurrences(of: "@SHA256_\(target.replacingOccurrences(of: "-", with: "_"))@", with: hash)
         }
-        // Left unfilled when the app has no desktop helper: the script then skips it.
-        if let zip = HandsBinaries.desktopZip, let data = try? Data(contentsOf: zip) {
-            script = script.replacingOccurrences(of: "@SHA256_desktop@", with: data.sha256Hex)
-        }
         return script
     }
 
@@ -292,11 +283,6 @@ nonisolated enum HandsBinaries {
     static func url(_ name: String) -> URL? {
         guard name.hasPrefix("hands-"), targets.contains(String(name.dropFirst("hands-".count))) else { return nil }
         return Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "hands-dist")
-    }
-
-    /// Mycroft Hands.app, the macOS desktop helper (desktop/scripts/build.sh), zipped.
-    static var desktopZip: URL? {
-        Bundle.main.url(forResource: "MycroftHands", withExtension: "zip", subdirectory: "hands-dist")
     }
 
     static func sha256(_ target: String) -> String? {

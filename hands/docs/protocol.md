@@ -1,8 +1,8 @@
 # pi-env wire protocol
 
 > Copied unchanged from pi-env (MIT, see [../NOTICE](../NOTICE)). `hands serve` speaks this protocol as is;
-> `hands` adds the operations in [jobs.md](jobs.md), and on macOS `ui.observe`, `ui.act` and `ui.screenshot`
-> ([desktop-protocol.md](../../docs/desktop-protocol.md)).
+> `hands` adds the operations in [jobs.md](jobs.md): `job.*`, and on macOS `cua.tools` and `cua.call` (Cua Driver's
+> tools).
 
 Version 1. The client starts `pi-env serve --token <hex>` (over `ssh`, or directly in tests) and talks to it over the
 process's stdin and stdout. stderr is diagnostic text for logs only.

@@ -6,12 +6,15 @@
 //! One supervisor runs per state dir: it holds `supervisor.lock`. Started by launchd or systemd (`hands install`),
 //! it waits for the lock, taking over when an earlier supervisor exits. Started on demand by `serve` (`--detached`),
 //! it exits at once if another supervisor holds the lock.
+//!
+//! Started by launchd, it also runs Cua Driver for `cua.*` (cua.rs); the driver's agent cursor then takes the main
+//! thread, and connections are accepted on another.
 
 use crate::errors::Failure;
 use crate::frame::{self, ERROR, Frame, REQUEST, RESULT};
 use crate::jobs::Jobs;
 use crate::serve::{PROTOCOL, VERSION};
-use crate::state;
+use crate::{cua, state};
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
 use std::io;
@@ -59,11 +62,18 @@ pub fn run(detached: bool) -> io::Result<()> {
             }
         });
     }
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let jobs = jobs.clone();
-        thread::spawn(move || handle(&jobs, stream));
+    let accept = move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            let jobs = jobs.clone();
+            thread::spawn(move || handle(&jobs, stream));
+        }
+    };
+    if crate::permissions::in_service() && cua::start() {
+        thread::spawn(accept);
+        cua::run_main_loop();
     }
+    accept();
     Ok(())
 }
 
@@ -96,6 +106,7 @@ fn dispatch(jobs: &Arc<Jobs>, op: &str, json: &Value) -> Result<(Value, Vec<u8>)
                 "running": running,
                 // Started by launchd or systemd: what macOS asks about is hands itself (permissions.rs).
                 "service": crate::permissions::in_service(),
+                "desktop": cua::status(),
             })))
         }
         // Blocks this connection's thread while macOS asks the user, the first time.
@@ -106,6 +117,8 @@ fn dispatch(jobs: &Arc<Jobs>, op: &str, json: &Value) -> Result<(Value, Vec<u8>)
         "job.wait" => plain(jobs.wait(json)),
         "job.cancel" => plain(jobs.cancel(json)),
         "job.list" => plain(Ok(jobs.list())),
+        // Calls wait on the desktop; each connection has its own thread.
+        "cua.tools" | "cua.call" | "cua.cancel" => plain(cua::supervise(op, json)),
         // Jobs keep running without a supervisor; the next one adopts them.
         "shutdown" => plain(Ok(json!({}))),
         _ => Err(Failure::new("EINVAL", format!("unknown operation {op}"))),

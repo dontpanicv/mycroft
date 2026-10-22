@@ -5,6 +5,7 @@
 // - a quick tap also locks it on. While locked: the trash cancels, the mic stops and keeps the words in the field to
 //   edit, send sends.
 // Nothing is sent on a pause; the user starts and stops. ✕ in the field clears it, also while listening (start over).
+// The wave next to the mic starts a conversation in the thread instead (screens/talk.js).
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, Icon, Label, Tag, Sheet, haptic } from '../lib.js'
@@ -21,9 +22,9 @@ const clock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) 
 /**
  * `owner` keys the draft and the listener (a thread id, or 'new'). `onSubmit(text, how)` sends; `how` is 'send', or
  * 'queue' / 'steer' while `busy` (`preferred` is the setting; a long press on send offers the other). `onStop` stops
- * the run. `above` sits over the composer (the run's status).
+ * the run. `onTalk` starts a conversation (no button without it). `above` sits over the composer (the run's status).
  */
-export function Composer({ owner, busy, preferred = 'queue', chips, above, placeholder, onSubmit, onStop, onError }) {
+export function Composer({ owner, busy, preferred = 'queue', chips, above, placeholder, onSubmit, onStop, onTalk, onError }) {
 	const call = useCall()
 	const [drafts, setDrafts] = useUI('drafts', {})
 	const listen = useListen(owner)
@@ -171,6 +172,8 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 					onInput=${(event) => setDraft(event.target.value)}></textarea>
 				${!empty && html`<button class="clear" aria-label="Clear" onClick=${clear}><${Icon} name="close" size=${14} stroke=${2.2} /></button>`}
 			</div>
+			${onTalk && !recording && html`<button class="icon-button glass tall talk-button" aria-label="Talk with Mycroft"
+				onClick=${() => { haptic(call, 'medium'); onTalk() }}><${Icon} name="wave" /></button>`}
 			<div class="mic-wrap">
 				${holding && html`<div class="lock-hint glass" aria-hidden="true"><${Icon} name="lock" size=${15} /><${Icon} name="up" size=${13} /></div>`}
 				<button class=${`icon-button glass tall mic ${recording ? 'listening' : ''} ${holding ? 'held' : ''}`}

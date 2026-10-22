@@ -240,14 +240,6 @@ pub fn doctor() -> i32 {
             },
         );
     }
-    if cfg!(target_os = "macos") {
-        row("desktop", crate::ui::app::describe(&crate::ui::ping()));
-        let app = crate::ui::app::app_path();
-        let version = crate::ui::app::installed_version(&app).map(|version| format!(", {version}")).unwrap_or_default();
-        row("desktop app", format!("{}{version}", present(&app)));
-        row("desktop svc", present(&crate::ui::app::agent_path()));
-    } else {
-        row("desktop", "not supported on this OS (ui.* answer not_supported)".into());
-    }
+    row("desktop", crate::cua::describe());
     0
 }

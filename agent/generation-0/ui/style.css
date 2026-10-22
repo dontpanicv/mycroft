@@ -298,6 +298,26 @@ button.bar-title:disabled { opacity: 1; }
 .field::placeholder { color: var(--ink-faint); }
 .field:focus { border-color: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
 
+/* Conversation mode: the dock in the composer's place. The orb swells with whoever speaks (--level, 0…1), and breathes
+   slowly while Mycroft works. */
+.composer-space.talking { height: calc(250px + var(--bottom)); }
+.talk-dock { border-radius: 28px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+.talk-caption { display: flex; flex-direction: column; gap: 6px; min-height: 64px; }
+.talk-words { font-size: 16px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.talk-controls { display: flex; align-items: center; justify-content: space-between; }
+.orb { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; flex: none; touch-action: manipulation; }
+.orb-core {
+	width: 52px; height: 52px; border-radius: 50%;
+	background: radial-gradient(circle at 35% 30%, var(--accent-soft), var(--accent) 60%, color-mix(in srgb, var(--accent) 60%, black));
+	box-shadow: 0 0 0 calc(var(--level, 0) * 14px) color-mix(in srgb, var(--accent) 28%, transparent), 0 10px 30px color-mix(in srgb, var(--accent) 40%, transparent);
+	transform: scale(calc(1 + var(--level, 0) * 0.25));
+	transition: transform 0.08s linear, box-shadow 0.08s linear;
+}
+.orb.hearing .orb-core { background: radial-gradient(circle at 35% 30%, white, var(--accent-soft) 55%, var(--accent)); }
+.orb.working .orb-core, .orb.starting .orb-core { animation: breathe 2.8s ease-in-out infinite; }
+.orb:active .orb-core { transform: scale(0.92); }
+@keyframes breathe { 50% { transform: scale(0.86); opacity: 0.75; } }
+
 /* Settings */
 .input { background: var(--raised); border: 1px solid var(--hairline); padding: 10px 12px; font: 13px var(--mono); outline: none; min-width: 0; }
 .list-card { display: flex; flex-direction: column; gap: 0; padding: 4px 12px 12px; }
@@ -305,6 +325,15 @@ button.bar-title:disabled { opacity: 1; }
 .gen-row, .machine-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
 .machine-row { flex-direction: column; align-items: stretch; gap: 6px; }
 .gen-row .block { font-size: 14px; }
+.gen-row { align-items: flex-start; }
+.gen-row > .index, .gen-row > .tag, .gen-row > .button { margin-top: 3px; }
+/* The graph runs through the rows' padding, so its lanes join from row to row. The row sets its height: an SVG
+   sized by its content would be 150px tall. */
+.gen-graph { position: relative; flex: none; align-self: stretch; margin: -10px -4px -10px 0; }
+.gen-graph svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.gen-graph line { stroke: var(--accent-soft); stroke-width: 1.5; }
+.gen-graph circle { fill: var(--canvas); stroke: var(--accent-soft); stroke-width: 1.5; }
+.gen-graph circle.active { fill: var(--accent); stroke: var(--accent); }
 .list-card > p { margin-top: 10px; }
 .link-row { width: 100%; }
 .choice-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 0; text-align: left; border-bottom: 1px solid var(--hairline); }

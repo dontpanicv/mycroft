@@ -191,6 +191,29 @@ final class ScreenUITests: XCTestCase {
         app.buttons["Back"].tap()
     }
 
+    /// Settings: machines first, the generations last, drawn as a tree.
+    func testSettingsOrderAndGenerationTree() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
+        app.buttons["Settings"].tap()
+        let machines = app.buttons["Add machine"], model = app.descendants(matching: .any)["Sol 6.1"]
+        XCTAssertTrue(machines.waitForExistence(timeout: 10))
+        XCTAssertTrue(model.exists)
+        XCTAssertLessThan(machines.frame.minY, model.frame.minY, "Machines come before the model")
+        snap(app, "settings-top")
+        let notices = app.buttons["Open source notices"]
+        for _ in 0..<12 where !app.buttons["Shake the phone"].exists && !notices.isHittable { app.swipeUp() }
+        app.swipeUp()
+        let older = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show '")).firstMatch
+        if older.exists { older.tap() }
+        sleep(1)
+        snap(app, "settings-generations")
+        app.swipeUp()
+        snap(app, "settings-generations-2")
+    }
+
     /// Add machine: the short command, and the network picker switching it to another of the phone's addresses.
     func testPairScreen() throws {
         let app = XCUIApplication()
@@ -223,60 +246,97 @@ final class ScreenUITests: XCTestCase {
         snap(app, "pair-vpn")
     }
 
-    /// Voice lives in every thread: the mic in the composer. With Apple's model chosen, the Simulator has no speech
-    /// models, so starting fails, and says why.
+    /// Voice lives in every thread: the mic and the conversation's wave in the composer, in a new thread and an existing
+    /// one. One dictation model, so Settings has no choice of it. (The microphone isn't started: this Simulator's audio
+    /// server aborts the app when anything opens it.)
     func testVoiceControls() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
-        XCTAssertTrue(app.buttons["New thread"].waitForExistence(timeout: 30))
-        choose(app, dictation: "Apple")
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.staticTexts["CONVERSATION VOICE"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["DICTATION"].exists, "dictation has one model: nothing to choose")
         app.buttons["Back"].tap()
-        XCTAssertFalse(app.buttons["Talk to Mycroft"].exists, "the separate voice screen is gone")
         app.buttons["New thread"].tap()
         XCTAssertTrue(app.buttons["Talk"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Talk with Mycroft"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["Read aloud"].exists, "reading aloud is gone")
         snap(app, "voice-controls")
-        app.buttons["Talk"].tap()
-        let failure = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'speech'")).firstMatch
-        XCTAssertTrue(failure.waitForExistence(timeout: 15), "starting the mic without speech models says why")
-        snap(app, "voice-unavailable")
-        XCTAssertTrue(app.buttons["Talk"].exists, "the mic is back to its resting state")
-
-        // The same in an existing thread, whose id is a number (the listener reports it as a string).
         app.buttons["Back"].tap()
         let first = app.buttons.matching(Self.threadRow).firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 10))
         first.tap()
         XCTAssertTrue(app.buttons["Talk"].waitForExistence(timeout: 10))
-        app.buttons["Talk"].tap()
-        XCTAssertTrue(failure.waitForExistence(timeout: 15), "a thread's composer hears from the listener too")
-        snap(app, "voice-in-thread")
+        XCTAssertTrue(app.buttons["Talk with Mycroft"].exists)
     }
 
-    /// Settings → Dictation: Fluid Speech Mini (bundled) by default, and switching to Apple and back sticks.
-    func testDictationSetting() throws {
+    /// The app reopens on the thread that was open: the screen restores it while the brain is still waking up, and it
+    /// must wait for the brain rather than call the thread missing.
+    func testRelaunchIntoThread() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-ui"]
+        app.launch()
+        let first = app.buttons.matching(Self.threadRow).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 30), "needs a thread")
+        first.tap()
+        XCTAssertTrue(app.buttons["Talk with Mycroft"].waitForExistence(timeout: 10))
+        let missing = app.staticTexts["This thread no longer exists."]
+        XCTAssertFalse(missing.waitForExistence(timeout: 3))
+        app.terminate()
+        app.launchArguments = ["--slow-brain"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Talk with Mycroft"].waitForExistence(timeout: 30), "the thread is open again")
+        // Give the brain time to wake and the view to arrive.
+        XCTAssertFalse(missing.waitForExistence(timeout: 15), "the restored thread is found")
+        snap(app, "relaunched-into-thread")
+    }
+
+    /// Conversation mode: Settings offers the model for new threads and the conversation voice; the wave next to the
+    /// mic swaps the composer for the conversation's dock, and ending it brings the composer back.
+    func testConversationMode() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
-        choose(app, dictation: "Apple")
-        snap(app, "dictation-apple")
-        choose(app, dictation: "Fluid Speech Mini")
-        snap(app, "dictation-fluid")
-    }
+        app.buttons["Settings"].tap()
+        let any = app.descendants(matching: .any)
+        XCTAssertTrue(any["Sol 6.1"].waitForExistence(timeout: 10), "Settings offers Sol")
+        XCTAssertTrue(any["Apple on-device"].exists, "and Apple's model")
+        snap(app, "settings-model")
+        app.swipeUp()
+        XCTAssertTrue(any["Zoey"].waitForExistence(timeout: 5), "Settings offers the voices")
+        snap(app, "settings-voice")
+        app.buttons["Back"].tap()
+        // Starting the conversation opens the microphone, which aborts the app in a Simulator whose audio server can't
+        // reach one: MYCROFT_MIC=1 where it works.
+        guard ProcessInfo.processInfo.environment["MYCROFT_MIC"] == "1" else { return }
 
-    /// Opens Settings and picks a dictation model; it stays on the Settings screen.
-    private func choose(_ app: XCUIApplication, dictation name: String) {
-        if !app.staticTexts["DICTATION"].exists { app.buttons["Settings"].tap() }
-        // WebKit reports role="radio" as a plain element whose value is 1 when checked.
-        let options = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Fluid Speech Mini", "Apple"]))
-        let option = options[name]
-        XCTAssertTrue(option.waitForExistence(timeout: 10), "Settings shows the \(name) option")
-        option.tap()
-        expectation(for: NSPredicate(format: "value == '1'"), evaluatedWith: option)
-        waitForExpectations(timeout: 5)
-        XCTAssertEqual(options.matching(NSPredicate(format: "value == '1'")).count, 1, "one model is chosen")
+        app.buttons["New thread"].tap()
+        let talk = app.buttons["Talk with Mycroft"]
+        XCTAssertTrue(talk.waitForExistence(timeout: 10))
+        talk.tap()
+        let end = app.buttons["End conversation"]
+        XCTAssertTrue(end.waitForExistence(timeout: 20), "the dock replaces the composer")
+        XCTAssertFalse(app.buttons["Talk"].exists)
+        XCTAssertTrue(app.staticTexts["LISTENING"].waitForExistence(timeout: 90), "it listens once the voice and mic are up")
+        snap(app, "conversation-listening")
+        if ProcessInfo.processInfo.environment["MYCROFT_LIVE"] == "1" {
+            // Live: someone talks to the Mac's microphone (scripts can `say` a question) and Mycroft answers aloud.
+            XCTAssertTrue(app.staticTexts["HEARING YOU"].waitForExistence(timeout: 120), "it hears the question")
+            snap(app, "conversation-hearing")
+            XCTAssertTrue(app.staticTexts["MYCROFT"].waitForExistence(timeout: 120), "Mycroft speaks")
+            snap(app, "conversation-speaking")
+            Thread.sleep(forTimeInterval: 6)
+            snap(app, "conversation-speaking-later")
+            _ = app.staticTexts["LISTENING"].waitForExistence(timeout: 120)
+            snap(app, "conversation-after")
+        }
+        app.buttons["Mute"].tap()
+        XCTAssertTrue(app.buttons["Unmute"].waitForExistence(timeout: 5))
+        snap(app, "conversation-muted")
+        end.tap()
+        XCTAssertTrue(app.buttons["Talk"].waitForExistence(timeout: 10), "ending it brings the composer back")
     }
 
     private func snap(_ app: XCUIApplication, _ name: String) {

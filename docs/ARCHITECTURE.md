@@ -10,14 +10,14 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
 │  │         + bridge to the app; native recovery screen (shake)           │
 │  ├─ RunController: BGContinuedProcessingTask / LongRunningIntent,        │
 │  │                 Live Activity progress, stall reporting               │
-│  ├─ Listener: on-device dictation in every thread (Fluid or Apple)       │
+│  ├─ Listener: on-device dictation in every thread (Fluid Speech Mini)    │
 │  ├─ Bridges: SQLite · files · keychain · URLSession fetch/SSE · SSH      │
 │  └─ RuntimeHost: owns the JSContext, loads the active generation,        │
 │                  swaps it on self-edit, rolls back on crash loops        │
 │                                                                          │
 │  Agent runtime (JavaScriptCore, replaceable)                             │
 │  ├─ Pi Durable Harness: threads = conversations, tasks, docs, replay     │
-│  ├─ Extensions: hands tools · computer use (Jev) · self-edit · voice     │
+│  ├─ Extensions: hands tools · Cua Driver tools · self-edit · voice       │
 │  └─ Storage: SqliteStorage → native sqlite3 via bridge                   │
 │                                                                          │
 │  Documents/ (file protection: until first unlock)                        │
@@ -28,8 +28,8 @@ Mycroft splits an agent into a **brain** on the iPhone and **hands** on other ma
           ┌───────────────────────┼─────────────────────────┐
           ▼                       ▼                         ▼
    OpenAI (Sol 6.1 via      hands on Linux servers    hands on a Mac
-   ChatGPT sub)             files · exec · PTY ·      + desktop agent:
-   · Jev (typesafe.ai)      supervised jobs           AX observe / act
+   ChatGPT sub)             files · exec · PTY ·      + desktop control:
+                            supervised jobs           Cua Driver
 ```
 
 ## 1. Runtimes on the phone and their boundaries
@@ -83,14 +83,16 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 
 - **Transport:** SSH from the phone, then `hands serve --stdio`. The wire protocol is a superset of Pi's `pi-env` protocol (MIT), so its file, exec, PTY and `listFiles` semantics carry over.
 - **Jobs:** pi-env kills child processes when the connection drops (30 s idle). That doesn't work when the brain is a phone that sleeps. `hands` adds a **supervisor** (systemd user unit or LaunchAgent) that owns jobs keyed by the tool-call id. A job survives the phone disconnecting, and reattaching replays its output, so "start job" becomes a replay-safe tool.
-- **Desktop control (macOS):** SSH sessions can't get Accessibility (TCC) permission, so `hands` installs a LaunchAgent in the logged-in user session. The SSH-side process proxies `ui.observe` and `ui.act` calls to it over a Unix socket.
-- **Computer-use loop:** observe the AX tree → compact element list with refs → **Jev** (typesafe.ai) picks the operation *and* target in one request (the jev-use pattern) → `hands` acts → re-observe to verify. The Jev key stays on the phone (brain), and `hands` never sees model credentials.
+- **Desktop control (macOS):** [Cua Driver](https://github.com/trycua/cua) (MIT) is linked into `hands` and runs in the supervisor that launchd starts, the one process macOS lets hold Accessibility and Screen Recording as "hands" ([ADR 0018](decisions/0018-computer-use-with-cua-driver.md)). A connection's `hands serve` forwards `cua.tools` (Cua's MCP tool list and instructions) and `cua.call` (one tool call, Cua's MCP result unchanged) to it over a Unix socket. Each client keeps one Cua session, so element tokens survive reconnects.
+- **Computer use:** the phone's agent gets Cua's tools under their own names, descriptions and schemas, plus a `machine` property (`CuaTools.swift`; the catalog is bundled and refreshed from a Mac with a newer driver). About 15 core tools are always offered (`get_window_state`, `click`, `type_text`, `run_steps`, `verify_state`, ...), the rest through `tool_search`, and Cua's instructions go into the system prompt. The model itself reads windows, acts and verifies. Before an action that would type or press something destructive (delete, send, pay, quit, ...), a `beforeTool` hook stops it until the user confirms. `hands` runs no model and never sees model credentials.
 
 ## 7. Voice
 
 - Voice is part of every thread ([ADR 0010](decisions/0010-voice-in-every-thread.md)). One on-device listener serves the open composer: hold the mic to talk and release to send, or tap to keep it on; the user starts and stops it, and the screen sends the words like typed text ([ADR 0012](decisions/0012-threads-like-t3.md)). While a run works, a message queues for after it or steers it.
-- The recognizer is chosen in Settings ([ADR 0014](decisions/0014-dictation-fluid-speech-mini.md)): Fluid Speech Mini, bundled in the app and run through FluidAudio on the Neural Engine (the default; the turn is transcribed again every second and at each pause), or Apple's SpeechTranscriber (words as they are spoken). It loads when the app starts and when it is chosen; until it has loaded, dictation uses Apple's.
+- The recognizer is Fluid Speech Mini, bundled in the app and run through FluidAudio on the Neural Engine; the turn is transcribed again every second and at each pause ([ADR 0014](decisions/0014-dictation-fluid-speech-mini.md), [0017](decisions/0017-fluid-speech-mini-only.md)). It loads when the app starts; audio heard before that is kept and transcribed once it has.
 - The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with no voice processing, and the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
+- A thread can also be a conversation ([ADR 0016](decisions/0016-conversation-mode.md)): `VoiceChat` listens hands-free with echo cancellation, sends each turn when the user pauses, and speaks each new sentence of the run's streaming text in Gradium's Phonon voice (bundled, through FluidAudio), so it talks while it works. Words that aren't its own echo cut it off.
+- New threads use Sol 6.1 or, as an experiment, Apple's on-device model (Settings → Model, ADR 0016); Apple's threads get Mycroft's own extension only.
 
 ## 8. Threads
 

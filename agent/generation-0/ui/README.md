@@ -15,8 +15,9 @@ lives in a store that survives the swap.
 | `lib.js` | Hooks (`useData`, `useUI`, `useCall`, `useNavigation`), markdown, formatting, icons, `Label`, `Tag`, `Spinner`, `Sheet`. |
 | `screens/threads.js` | Home: the thread list (draft, pinned, active, the Settled shelf; swipe and long-press), sign-in, the new-thread button; the Archived screen. |
 | `screens/thread.js` | A thread or a new thread's draft: transcript (user turns, finished runs folded into "Worked for", answers with Copy and Fork), the run capsule, the queue sheet, rename. |
-| `screens/composer.js` | The composer: field with clear, dictation (hold, slide to cancel or lock, tap), send / queue / steer / stop. |
-| `screens/settings.js` | Settings: sign-in, dictation model, queue or steer, keys, generations, machines, notices. |
+| `screens/composer.js` | The composer: field with clear, the conversation button, dictation (hold, slide to cancel or lock, tap), send / queue / steer / stop. |
+| `screens/talk.js` | Conversation mode's dock, in the composer's place while the user talks with Mycroft: what is said, the orb, mute, end. |
+| `screens/settings.js` | Settings: machines, model for new threads, sign-in, conversation voice, queue or steer, notices, and generations as a tree (`graph`). |
 | `screens/pair.js` | Adding a machine. |
 | `style.css` | All styling. Colours are CSS variables in `:root` (`--accent`, `--accent-soft`, `--canvas`, `--raised`, `--ink`, `--ink-muted`, `--success`, `--danger`, `--warning`). |
 
@@ -50,6 +51,8 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
   `settledOpen` live here.
 - `on(type, fn)`: raw events from the app.
 - `generation`: the generation whose screen is running. `preview`: true in an off-screen check.
+- `swapping`: true while a new generation's screen replaces this one. Components unmount then only to come back, so
+  cleanups that end something living in the app (a conversation: `talk.end`) must skip it.
 
 ## Data from the app
 
@@ -57,14 +60,15 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
 
 ```
 { phase: 'starting'|'ready'|'failed', failure?,
-  generation: { active, lastGood, history: [{ generation, note, createdAt }] },
+  generation: { active, lastGood, history: [{ generation, note, createdAt, parent }] },  // parent: what it was made from
   threads: [{ id, title, createdAt, updatedAt, archived, machine?, pinned?, settledAt?, unsettledAt?,
              visitedAt?, finishedAt?, outcome?: 'done'|'failed'|'stopped', parent? }],   // newest first, not archived
   archived: [ …the same, archived ],
   busy: [threadId],                                 // threads with a run going
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
-  keys: { jev: bool },
-  dictation: { engine: 'fluid'|'apple', fluid: bool, ready: bool },   // fluid: Fluid Speech Mini is bundled; ready: loaded
+  dictation: { bundled: bool, ready: bool },   // Fluid Speech Mini, the dictation model: in this build; loaded
+  voice: { bundled, ready, voice, voices: [{ id, name, accent }] },    // the conversation voice (Phonon); ready: loaded
+  brain: { model: 'sol'|'apple', appleUnavailable: string|null },     // the model new threads use; why Apple's can't run
   machines: [{ name, hostname, addresses, port, os, arch, version, pairedAt }],
   notices: [string], model: 'gpt-6.1-sol', screenErrors: [string] }
 ```
@@ -72,7 +76,7 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
 `views[threadId]`, after `call('thread.open', { id })` and until `thread.close`:
 
 ```
-{ thread, busy, queued: [{ id, mode: 'followUp'|'steer', text }], model, error?,
+{ thread, busy, queued: [{ id, mode: 'followUp'|'steer', text }], model, error?,    // model: 'gpt-6.1-sol' or 'on-device'
   entries: [{ id, kind, model: [message] }],   // pi messages: role 'user' | 'assistant' | 'toolResult'
   live: { run?, generation?: { message }, tools: [{ callId, name, status, output }] } }
 ```
@@ -86,12 +90,20 @@ is the answer being written right now.
 
 Other events:
 
-- `listen`: the on-device dictation, for one composer at a time: `{ state: 'off'|'preparing'|'on'|'failed', owner,
-  engine: 'fluid'|'apple', text, prefix, level, elapsed, error }`. `owner` is the id the composer started
-  it with (a thread id as a string, or `'new'`), `text` what has been said and `prefix` the typed draft it goes after.
-  With Fluid Speech Mini, `text` updates every second or so and at each pause (Apple's word by word). `engine` is
-  the model this dictation uses: Apple's while Fluid Speech Mini is still loading (`state.dictation.ready`). Nothing is sent by the listener: `listen.stop` returns the words and the
-  page sends them. It runs natively, so it goes on with the screen locked.
+- `listen`: the on-device dictation (Fluid Speech Mini), for one composer at a time: `{ state: 'off'|'preparing'|'on'|
+  'failed', owner, text, prefix, level, elapsed, error }`. `owner` is the id the composer started it with (a thread id
+  as a string, or `'new'`), `text` what has been said and `prefix` the typed draft it goes after. `text` updates every
+  second or so and at each pause; before the model has loaded (`state.dictation.ready`) the audio is kept and the words
+  arrive once it has. Nothing is sent by the listener: `listen.stop` returns the words and the page sends them. It runs
+  natively, so it goes on with the screen locked.
+- `talk`: conversation mode, while it is on (and once more when it ends): `{ phase: 'off'|'starting'|'listening'|
+  'hearing'|'working'|'speaking', thread, heard, said, status, muted, error, voiceReady, cutIn: 'words'|'stop'|'tap',
+  level, elapsed }`. `thread` is null in a new thread until its first words create it. `heard` is what the user is saying,
+  `said` the sentence Mycroft is speaking, `status` what a working run is doing (its thinking's headline, or a tool),
+  `level` 0…1 of whoever speaks. `cutIn` is how the user can stop Mycroft speaking: talking (headphones), saying
+  "stop" (the speaker: its echo can't be told from the user), or only `talk.tap`. What the microphone hears while Mycroft
+  speaks is never sent. Every turn is sent as a steer. It runs natively
+  (the screen can lock); the app sends the words and speaks the run's new text. Ending it never stops the run.
 - `pairing`: `{ state: 'starting'|'waiting'|'paired'|'failed', command, pinned, copied, localNetwork, addresses: [{ network, ip }], chosen, machine?, message? }`. `addresses` are where a computer could reach the phone, nearest first; `network` is `Wi-Fi`, `Ethernet`, `Tailscale`, `NetBird`, `VPN`, `Personal Hotspot` or an interface name. `command` (short, on the clipboard) and `pinned` use the `chosen` one.
 
 ## Ops
@@ -110,7 +122,6 @@ Other events:
 | `thread.pin` / `thread.settle` / `thread.archive` | `id, on` | settling unpins; sending to a thread unsettles it |
 | `signin.start` / `signin.signOut` | | ChatGPT device-code sign-in; progress arrives in `state.signIn` |
 | `signin.open` | `url, code?` | copies the code, opens the page in-app |
-| `keys.save` | `name: 'jev', value` | empty value removes the key |
 | `machines.check` | | `{ name: 'online' \| reason }` |
 | `machines.forget` | `name` | |
 | `machines.exec` | `machine, command, cwd?, timeoutMs?` | runs a quick command (bash, at most 60 s, default 15) on a machine; returns `{ exitCode, output }` (stdout and stderr, the first 16 KB). Stores nothing: use it for reads the screen repeats |
@@ -123,7 +134,12 @@ Other events:
 | `listen.cancel` | | throw the words away and stop |
 | `listen.clear` | | throw away the prefix and the words so far, and keep listening |
 | `listen.close` | | stop everything (the screen went away) |
-| `dictation.engine` | `engine: 'fluid'\|'apple'` | the model dictation uses; in `state.dictation` |
+| `talk.start` | `id` (null: a new thread) | a conversation in that thread: listens, sends each turn as a steer when the user pauses, speaks what the run writes; `talk` events |
+| `talk.end` | | ends it; the run goes on |
+| `talk.tap` | | stops Mycroft speaking (and what it had left to say), or sends what the user said now |
+| `talk.mute` | `on` | ignores the microphone |
+| `voice.choose` | `voice` | the conversation voice (an id from `state.voice.voices`); outside a conversation it plays a sample |
+| `brain.choose` | `brain: 'sol'\|'apple'` | the model new threads use; a thread keeps its own |
 | `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |
 | `clipboard.copy` | `text` | |
 | `haptic` | `style: 'light'\|'medium'\|'success'\|'error'\|'selection'` | |

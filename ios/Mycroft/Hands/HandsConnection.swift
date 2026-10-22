@@ -337,6 +337,7 @@ actor HandsPool {
         defer { opening[machine.id] = nil }
         let fresh = try await task.value
         connections[machine.id] = fresh
+        Task { await CuaTools.refreshCatalog(from: fresh) }
         return fresh
     }
 

@@ -32,6 +32,65 @@ struct GenerationStoreTests {
         await #expect(throws: SelfError.self) { try await store.draftExtension() }
     }
 
+    /// A draft that changes only the screen has no extension.js of its own (generations keep only what changed): it
+    /// activates with the app's.
+    @Test func screenOnlyDraftActivates() async throws {
+        let store = GenerationStore(root: root.appending(path: "agent"))
+        try await store.bootstrap(bundled: try bundled())
+        try await store.write("ui/screens/cpu.js", content: "export const cpu = 1")
+        #expect(await store.hasDraft)
+        let (_, next) = try await store.draftExtension()
+        #expect(next == 1)
+        #expect(await store.draftUIChanges() == ["screens/cpu.js"])
+        #expect(try await store.promoteDraft(note: "cpu") == 1)
+        // The next screen-only draft starts from generation 1, which has no extension.js either.
+        try await store.write("ui/screens/cpu.js", content: "export const cpu = 2")
+        #expect(try await store.draftExtension().generation == 2)
+    }
+
+    /// After a switch back to an older generation, the next one branches from it.
+    @Test func generationsRecordWhatTheyWereMadeFrom() async throws {
+        let store = GenerationStore(root: root.appending(path: "agent"))
+        try await store.bootstrap(bundled: try bundled())
+        try await store.write("ui/a.js", content: "1")
+        #expect(try await store.promoteDraft(note: "one") == 1)
+        try await store.write("ui/a.js", content: "2")
+        #expect(try await store.promoteDraft(note: "two") == 2)
+        try await store.activate(0)
+        try await store.write("ui/b.js", content: "3")
+        #expect(try await store.promoteDraft(note: "three") == 3)
+        let parents = await store.state.history.map(\.parent)
+        #expect(parents == [nil, 0, 1, 0])
+        // A draft thrown away leaves no parent behind.
+        try await store.write("ui/b.js", content: "4")
+        try await store.discardDraft()
+        #expect(await store.state.draftParent == nil)
+    }
+
+    /// Generations from before parents were recorded get theirs from their files: a draft starts as a copy of its
+    /// parent, so a generation has all of its parent's files.
+    @Test func parentsOfOlderGenerationsAreInferred() async throws {
+        let agent = root.appending(path: "agent")
+        let layout = [1: ["ui/style.css"], 2: ["ui/style.css", "ui/app.js"], 3: ["ui/cpu.js"], 4: ["ui/cpu.js", "ui/threads.js"]]
+        for (generation, files) in layout {
+            for file in files {
+                let url = agent.appending(path: "generations/\(generation)/\(file)")
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try "generation \(generation)".write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
+        try FileManager.default.createDirectory(at: agent.appending(path: "generations/0"), withIntermediateDirectories: true)
+        let history = (0...4).map { #"{"generation": \#($0), "note": "n", "createdAt": "2026-10-20T10:00:00Z"}"# }
+        let state = #"{"active": 4, "lastGood": 4, "bootAttempts": 0, "history": [\#(history.joined(separator: ","))]}"#
+        try state.write(to: agent.appending(path: "state.json"), atomically: true, encoding: .utf8)
+
+        let store = GenerationStore(root: agent)
+        try await store.bootstrap(bundled: try bundled())
+        #expect(await store.state.history.map(\.parent) == [nil, 0, 1, 0, 3])
+        // Kept: reopening reads them back.
+        #expect(await GenerationStore(root: agent).state.history.map(\.parent) == [nil, 0, 1, 0, 3])
+    }
+
     @Test func crashLoopRollsBackToLastGood() async throws {
         let store = GenerationStore(root: root.appending(path: "agent"))
         try await store.bootstrap(bundled: try bundled())

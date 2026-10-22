@@ -78,8 +78,3 @@ nonisolated struct KeychainError: LocalizedError {
     let status: OSStatus
     var errorDescription: String? { "Keychain error \(status)" }
 }
-
-/// Names of the secrets Mycroft keeps.
-nonisolated enum Secret {
-    static let jev = "jev.apiKey"
-}

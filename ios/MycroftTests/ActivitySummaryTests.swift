@@ -14,10 +14,16 @@ struct ActivitySummaryTests {
     }
 
     @Test func describesDesktopActions() {
-        let step = ActivitySummary.describe(
-            tool: "ui_act", arguments: ["action": "click", "target": "Save", "app": "Notes", "machine": "Mac"])
-        #expect(step.headline == "Click “Save” in Notes on Mac")
+        let step = ActivitySummary.describe(tool: "type_text", arguments: ["text": "hello from Mycroft", "pid": 501, "machine": "Mac"])
+        #expect(step.headline == "Typing “hello from Mycroft” on Mac")
         #expect(step.kind == .desktop)
+        #expect(ActivitySummary.describe(tool: "hotkey", arguments: ["keys": ["cmd", "n"], "machine": "Mac"]).headline == "Pressing cmd+n on Mac")
+        #expect(ActivitySummary.describe(tool: "invoke_menu", arguments: ["path": ["File", "New Note"], "machine": "Mac"]).headline
+            == "Choosing File > New Note on Mac")
+        #expect(ActivitySummary.describe(tool: "run_steps", arguments: ["steps": [["tool": "click"], ["tool": "type_text"]], "machine": "Mac"]).headline
+            == "Running 2 steps in an app on Mac")
+        #expect(ActivitySummary.describe(tool: "get_window_state", arguments: ["pid": 501, "window_id": 7, "machine": "Mac"]).headline
+            == "Looking at a window on Mac")
     }
 
     @Test func clipsLongCommandsToOneLine() {
@@ -31,7 +37,7 @@ struct ActivitySummaryTests {
             ActivitySummary.describe(tool: "hands_exec", arguments: ["command": "make", "machine": "hetzner"]),
             ActivitySummary.describe(tool: "hands_exec", arguments: ["command": "make test", "machine": "hetzner"]),
             ActivitySummary.describe(tool: "hands_edit", arguments: ["path": "src/main.rs", "machine": "hetzner"]),
-            ActivitySummary.describe(tool: "ui_act", arguments: ["action": "click", "target": "OK", "machine": "Mac"]),
+            ActivitySummary.describe(tool: "click", arguments: ["element_token": "s0000002a:3", "machine": "Mac"]),
             ActivitySummary.describe(tool: "self_read", arguments: ["path": "extension.js"]),
             ActivitySummary.describe(tool: "self_activate", arguments: ["note": "x"]),
         ]

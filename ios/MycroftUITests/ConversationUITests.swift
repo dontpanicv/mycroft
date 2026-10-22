@@ -115,18 +115,19 @@ final class ConversationUITests: XCTestCase {
         XCTAssertTrue(texts.contains("hands_job_start") || texts.contains("hands_exec"), "no hands calls")
     }
 
-    /// Desktop control on a paired Mac through hands → Mycroft Hands, with Jev choosing each step.
+    /// Desktop control on a paired Mac through hands → Cua Driver's tools.
     func testDesktopNotes() throws {
         startThread()
         send("""
-            On my Mac, use desktop_do to open Notes and create a new note that says hello from Mycroft. \
-            Then take a ui_screenshot of the Mac and tell me in one sentence what you see.
+            On my Mac, open Notes and create a new note that says hello from Mycroft, using the desktop tools \
+            (get_window_state, then run_steps). Then tell me in one sentence what the note says.
             """)
         XCTAssertTrue(waitForIdle(timeout: 420), "the run did not finish")
         attachScreenshot("desktop-notes")
         let texts = transcript()
         print("TRANSCRIPT:\n\(texts)")
-        XCTAssertTrue(texts.contains("desktop_do"), "no desktop_do call")
+        XCTAssertTrue(texts.contains("get_window_state"), "no get_window_state call")
+        XCTAssertTrue(texts.contains("run_steps") || texts.contains("type_text"), "no desktop action")
     }
 
     /// Stop during a long command on a paired machine ends the run within seconds.

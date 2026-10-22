@@ -2,22 +2,7 @@ import CoreML
 import FluidAudio
 import Foundation
 
-/// Which model turns speech into text. Chosen in Settings, kept in UserDefaults.
-nonisolated enum Dictation: String, Sendable {
-    /// Fluid Speech Mini, bundled in the app: fewer mistakes, especially with other voices in the room.
-    case fluid
-    /// Apple's SpeechTranscriber: words appear as they are spoken.
-    case apple
-
-    static let key = "mycroft.dictation"
-
-    /// The saved choice, or Fluid Speech Mini when the app has it.
-    static var saved: Dictation {
-        UserDefaults.standard.string(forKey: key).flatMap(Dictation.init) ?? (FluidSpeech.isBundled ? .fluid : .apple)
-    }
-}
-
-/// Fluid Speech Mini (CC-BY-4.0, FluidVoice): English dictation built on NVIDIA's Parakeet TDT 0.6B v3 and Moondream's
+/// Fluid Speech Mini (CC-BY-4.0, FluidVoice), the one dictation model (docs/decisions/0017): English, built on NVIDIA's Parakeet TDT 0.6B v3 and Moondream's
 /// Parakeet Ultra, a drop-in Parakeet v3 Core ML package run by FluidAudio (Apache-2.0) on the Neural Engine. The model
 /// (~240 MB) is in the app bundle (ios/scripts/fetch-fluid-speech.sh); it loads when the app starts and stays loaded.
 actor FluidSpeech {
@@ -39,7 +24,7 @@ actor FluidSpeech {
         if let manager { return manager }
         if let loading { return try await loading.value }
         guard let directory = Self.directory else {
-            throw TranscriberError("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
+            throw VoiceError("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
         }
         let task = Task {
             let models = try await AsrModels.loadLocal(from: directory, version: .v3)

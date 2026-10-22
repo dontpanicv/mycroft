@@ -10,7 +10,8 @@ import PiDurableKit
 ///   draft/                 the next generation, being edited by the agent
 /// ```
 ///
-/// The agent edits the draft, `promoteDraft` freezes it as generation n+1. A generation that keeps failing to boot
+/// The agent edits the draft, `promoteDraft` freezes it as generation n+1, a child of the generation the draft started
+/// from: after a switch back to an older generation, the next one branches from it. A generation that keeps failing to boot
 /// is rolled back to the last one that ran healthily. A generation holds only what the agent changed; every other
 /// file is the app's own (its bundled generation 0), so an app update reaches every generation. See
 /// docs/decisions/0004-self-modification-by-generations.md and 0009-self-editable-web-ui.md.
@@ -19,6 +20,8 @@ actor GenerationStore {
         var generation: Int
         var note: String
         var createdAt: Date
+        /// The generation it was made from; nil for generation 0.
+        var parent: Int? = nil
         var id: Int { generation }
     }
 
@@ -27,6 +30,8 @@ actor GenerationStore {
         var lastGood = 0
         var bootAttempts = 0
         var history: [Record] = []
+        /// The generation the draft started from, while there is a draft.
+        var draftParent: Int?
     }
 
     static let extensionName = "mycroft"
@@ -56,11 +61,29 @@ actor GenerationStore {
     /// Starts the history the first time, with generation 0: the app's own files.
     func bootstrap(bundled: URL) throws {
         self.bundled = bundled
-        defer { pruneInherited() }
+        defer {
+            pruneInherited()
+            inferParents()
+        }
         guard !fm.fileExists(atPath: folder(0).path) else { return }
         try fm.createDirectory(at: folder(0), withIntermediateDirectories: true)
         state = State(history: [Record(generation: 0, note: "Shipped with the app", createdAt: .now)])
         try save()
+    }
+
+    /// Generations made before they recorded their parent get one, once: the newest older generation whose files they
+    /// all have, since a draft starts as a copy of its parent. (A file changed back to the app's own copy is pruned and
+    /// can hide the parent; then an older generation is named.)
+    private func inferParents() {
+        let missing = state.history.indices.filter { state.history[$0].generation > 0 && state.history[$0].parent == nil }
+        guard !missing.isEmpty else { return }
+        for index in missing {
+            let child = state.history[index].generation
+            let files = Self.files(in: folder(child))
+            let older = state.history.map(\.generation).filter { $0 < child }.sorted(by: >)
+            state.history[index].parent = older.first { Self.files(in: folder($0)).isSubset(of: files) } ?? 0
+        }
+        try? save()
     }
 
     /// Generations used to hold full copies of the app's files, and an old copy hides the app's updates. Generation 0
@@ -123,9 +146,10 @@ actor GenerationStore {
         return makeExtension(source: try String(contentsOf: url, encoding: .utf8), generation: generation)
     }
 
+    /// The draft's extension: its own extension.js, or (a draft that changes only the screen) the one it inherits.
     func draftExtension() throws -> (Extension, generation: Int) {
-        let url = draft.appending(path: "extension.js")
-        guard fm.fileExists(atPath: url.path) else { throw SelfError.noDraft }
+        guard fm.fileExists(atPath: draft.path) else { throw SelfError.noDraft }
+        guard let url = Self.locate("extension.js", in: draft, bundled: bundled) else { throw SelfError.noDraft }
         let next = nextGeneration
         return (makeExtension(source: try String(contentsOf: url, encoding: .utf8), generation: next), next)
     }
@@ -218,10 +242,14 @@ actor GenerationStore {
         } else {
             try fm.createDirectory(at: draft, withIntermediateDirectories: true)
         }
+        state.draftParent = state.active
+        try save()
     }
 
     func discardDraft() throws {
         if fm.fileExists(atPath: draft.path) { try fm.removeItem(at: draft) }
+        state.draftParent = nil
+        try save()
     }
 
     /// A line diff of the draft against the active generation.
@@ -275,7 +303,8 @@ actor GenerationStore {
         guard fm.fileExists(atPath: draft.path) else { throw SelfError.noDraft }
         let next = nextGeneration
         try fm.moveItem(at: draft, to: folder(next))
-        state.history.append(Record(generation: next, note: note, createdAt: .now))
+        state.history.append(Record(generation: next, note: note, createdAt: .now, parent: state.draftParent ?? state.active))
+        state.draftParent = nil
         state.active = next
         state.bootAttempts = 0
         try save()

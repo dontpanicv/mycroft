@@ -1,6 +1,7 @@
 # 0005 · `hands`: a pi-env-compatible daemon with a job supervisor
 
-**Status:** proposed
+**Status:** proposed. The transport is superseded by [0008](0008-hands-transport-pairing.md); the desktop bullet by
+[0018](0018-computer-use-with-cua-driver.md): Cua Driver runs in the `hands` service itself, with `cua.tools` and `cua.call`.
 
 A single Rust binary for macOS and Linux:
 - `hands serve --stdio` over SSH speaks a superset of pi-env's wire protocol (files, exec, PTY, `listFiles`).

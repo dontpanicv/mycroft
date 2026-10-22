@@ -1,6 +1,6 @@
 # 0006 · Computer use: AX tree + Jev, decided on the phone
 
-**Status:** proposed
+**Status:** superseded by [0018](0018-computer-use-with-cua-driver.md) (21 Oct 2026). Implemented as below for M6.
 
 The loop is observe → decide → act → verify:
 1. **Observe:** `hands` returns a compact accessibility tree with element refs.

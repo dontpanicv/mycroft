@@ -37,8 +37,20 @@ nonisolated struct Machine: Codable, Sendable, Hashable, Identifiable {
 nonisolated struct MachineList: Codable, Sendable, Hashable {
     var items: [Machine] = []
 
+    /// The machine `name` means: its exact name in any case, the same letters and digits ("bender 2" for bender-2), or
+    /// the start of only one machine's name ("Bender"). The model needn't look names up first.
     func named(_ name: String) -> Machine? {
-        items.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        if let exact = items.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { return exact }
+        let wanted = Self.key(name)
+        guard !wanted.isEmpty else { return nil }
+        if let same = items.first(where: { Self.key($0.name) == wanted }) { return same }
+        let starting = items.filter { Self.key($0.name).hasPrefix(wanted) }
+        return starting.count == 1 ? starting[0] : nil
+    }
+
+    /// A name's letters and digits, lowercased.
+    private static func key(_ name: String) -> String {
+        String(name.lowercased().filter { $0.isLetter || $0.isNumber })
     }
 }
 

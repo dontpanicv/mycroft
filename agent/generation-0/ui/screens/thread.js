@@ -1,11 +1,13 @@
 // One thread: the transcript as a console (user turns as bordered blocks, prose, numbered tool rows) and the composer
 // (screens/composer.js). A finished run folds its working into "Worked for 1m 05s"; its answer keeps Copy and Fork.
 // While a run works, a capsule above the composer shows its time and the queue, and new messages queue or steer.
-// `id` null is a new thread's draft: nothing exists until the first message is sent.
+// In a conversation (screens/talk.js) its dock takes the composer's place; ending it brings the composer back.
+// `id` null is a new thread's draft: nothing exists until the first message is sent (or said).
 
 import { html, render, useEffect, useLayoutEffect, useRef, useState } from '/lib/preact.js'
-import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Markdown, Spinner, Sheet, pad, duration, summarize, haptic } from '../lib.js'
+import { useData, useCall, useUI, useNavigation, useRuntime, Icon, Label, Tag, Markdown, Spinner, Sheet, pad, duration, summarize, haptic } from '../lib.js'
 import { Composer } from './composer.js'
+import { TalkDock, useTalk } from './talk.js'
 
 export function Thread({ id }) {
 	const call = useCall()
@@ -21,6 +23,12 @@ export function Thread({ id }) {
 	const scroller = useRef(null)
 	const pinned = useRef(true)
 	const [atEnd, setAtEnd] = useState(true)
+	const talk = useTalk(draft ? null : id)
+	const anyTalk = useData((d) => d.talk)
+	const latestTalk = useRef(anyTalk)
+	latestTalk.current = anyTalk
+	// This draft started the conversation: it moves to the thread the first words create.
+	const startedTalk = useRef(false)
 
 	useEffect(() => {
 		if (draft) return () => call('listen.close').catch(() => {})
@@ -30,6 +38,22 @@ export function Thread({ id }) {
 			call('listen.close').catch(() => {})
 		}
 	}, [id])
+
+	// A conversation is in this thread: leaving the thread ends it (the run goes on). A draft's conversation moves to
+	// the thread its first words created. A new generation's screen swapping in isn't leaving: it carries on.
+	const runtime = useRuntime()
+	useEffect(() => () => {
+		if (runtime.swapping) return
+		const current = latestTalk.current
+		if (current && current.phase !== 'off' && current.thread === (draft ? null : id)) call('talk.end').catch(() => {})
+	}, [id])
+	useEffect(() => {
+		if (draft && anyTalk?.phase !== 'off' && anyTalk?.thread != null && startedTalk.current) replace(`#/t/${anyTalk.thread}`)
+	}, [anyTalk?.thread])
+	const startTalk = () => {
+		startedTalk.current = true
+		call('talk.start', { id: draft ? null : id }).catch((e) => setError(e.message))
+	}
 
 	// Follow the bottom while the user is there.
 	const onScroll = () => {
@@ -94,14 +118,17 @@ export function Thread({ id }) {
 						<${Transcript} view=${view} thread=${meta} onError=${setError} onRetry=${(text) => submit(text, 'send')} />`
 					: html`<div class="center"><${Spinner} /></div>`}
 				${(error || view?.error) && html`<p class="card danger mono small">${error || view.error}</p>`}
-				<div class="composer-space"></div>
+				<div class=${`composer-space ${talk ? 'talking' : ''}`}></div>
 			</div>
-			<${Composer} owner=${draft ? 'new' : id} busy=${busy} preferred=${whileWorking}
+			${talk && html`<${TalkDock} talk=${talk} model=${view?.model === 'on-device' && 'Apple on-device'} above=${!draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
+				onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`} />`}
+			${!talk && html`<${Composer} owner=${draft ? 'new' : id} busy=${busy} preferred=${whileWorking} onTalk=${startTalk}
 				placeholder=${draft ? 'Ask Mycroft anything…' : busy ? (whileWorking === 'steer' ? 'Steer the run…' : 'Queue a message…') : 'Message Mycroft'}
-				chips=${meta?.machine && html`<${Tag}>${meta.machine}<//>`}
+				chips=${(meta?.machine || view?.model === 'on-device') && html`${meta?.machine && html`<${Tag}>${meta.machine}<//>`}
+					${view?.model === 'on-device' && html`<${Tag} tone="warning">Apple on-device<//>`}`}
 				above=${!draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
 					onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`}
-				onSubmit=${submit} onStop=${() => call('thread.stop', { id })} onError=${setError} />
+				onSubmit=${submit} onStop=${() => call('thread.stop', { id })} onError=${setError} />`}
 		</main>
 		${sheet === 'queue' && html`<${QueueSheet} id=${id} items=${queued} busy=${busy} onEdit=${editQueued} onError=${setError} onClose=${() => setSheet(null)} />`}
 		${sheet === 'rename' && meta && html`<${RenameSheet} thread=${meta} onClose=${() => setSheet(null)} />`}
@@ -123,6 +150,8 @@ function useLinger(value, ms) {
 function RunStatus({ view, atEnd, onEnd, onQueue, onResume }) {
 	const busy = view?.busy ?? false
 	const queued = view?.queued?.length ?? 0
+	// Steers wait for the run's next step; they aren't a queue.
+	const steering = queued > 0 && view.queued.every((item) => item.mode === 'steer')
 	const since = lastUserTime(view?.entries ?? [])
 	const now = useNow(busy)
 	if (!busy && !queued && atEnd) return null
@@ -130,7 +159,7 @@ function RunStatus({ view, atEnd, onEnd, onQueue, onResume }) {
 		${(busy || queued > 0) && html`<div class="capsule glass">
 			${busy && html`<span class="segment soft"><${Spinner} /> Working${since ? ` ${duration(Math.max(0, now - since))}` : ''}</span>`}
 			${!busy && queued > 0 && html`<span class="segment">Queue paused</span>`}
-			${queued > 0 && html`<button class="segment link" onClick=${onQueue}><${Icon} name="queue" size=${14} /> ${queued} queued</button>`}
+			${queued > 0 && html`<button class="segment link" onClick=${onQueue}><${Icon} name=${steering ? 'steer' : 'queue'} size=${14} /> ${queued} ${steering ? 'steering' : 'queued'}</button>`}
 			${!busy && queued > 0 && html`<button class="segment link" onClick=${onResume}><${Icon} name="play" size=${13} /> Resume</button>`}
 		</div>`}
 		${!atEnd && html`<button class="icon-button glass small-icon to-end" aria-label="Scroll to end" onClick=${onEnd}><${Icon} name="down" size=${16} /></button>`}

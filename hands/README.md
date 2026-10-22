@@ -2,7 +2,7 @@
 
 `hands` is the executing half of Mycroft. It's a small daemon for **macOS and Linux** that you install on your Macs and servers. The brain on the iPhone pairs with it and connects to its TLS listener, and uses it to work with files, run commands and jobs, and on macOS to drive the desktop.
 
-> Status: 0.2 (milestone M5). Files, exec, PTY and `listFiles` work as in pi-env, and supervised jobs are added. The paired TLS listener replaces SSH as the default transport ([ADR 0008](../docs/decisions/0008-hands-transport-pairing.md), [docs/pairing.md](docs/pairing.md)); SSH still works. On macOS, desktop control (`ui.observe`, `ui.act`, `ui.screenshot`) goes through the Mycroft Hands helper app ([../desktop](../desktop/README.md), [docs/desktop-protocol.md](../docs/desktop-protocol.md)). See [ADR 0005](../docs/decisions/0005-hands-daemon.md).
+> Status: 0.2 (milestone M5). Files, exec, PTY and `listFiles` work as in pi-env, and supervised jobs are added. The paired TLS listener replaces SSH as the default transport ([ADR 0008](../docs/decisions/0008-hands-transport-pairing.md), [docs/pairing.md](docs/pairing.md)); SSH still works. On macOS, desktop control (`cua.tools`, `cua.call`) is [Cua Driver](https://github.com/trycua/cua), linked into `hands` and run by its service ([ADR 0018](../docs/decisions/0018-computer-use-with-cua-driver.md)). See [ADR 0005](../docs/decisions/0005-hands-daemon.md).
 
 `hands` is built on the pi-env daemon of [Pi](https://github.com/earendil-works/pi) (MIT). See [NOTICE](NOTICE).
 
@@ -19,7 +19,7 @@ Paste or type it into a terminal on the Mac or Linux machine. The phone serves t
 - pairs the machine with the phone;
 - prints `Paired with <phone>. Mycroft can use this Mac now.`
 
-On a Mac, when the phone serves `MycroftHands.zip`, the script also downloads and verifies it and passes it to `install --desktop-zip`, which installs the desktop helper. `install` then walks you through the permissions Mycroft needs, one at a time (see [Permissions on macOS](#permissions-on-macos)).
+On a Mac, `install` then walks you through the permissions Mycroft needs, one at a time (see [Permissions on macOS](#permissions-on-macos)). Desktop control needs nothing else installed: it is part of `hands`.
 
 The command works once and expires after 10 minutes.
 
@@ -30,11 +30,7 @@ scripts/build-release.sh            # builds dist/hands-<os>-<arch> for all four
 scripts/install.sh --dry-run        # shows what would happen
 scripts/install.sh                  # picks the binary for this OS/arch, verifies it, runs `hands install`
 hands pair --with BASE --pin PIN    # pair with a phone, given the BASE and PIN of its install command
-
-# macOS desktop control (see ../desktop/README.md):
-../desktop/scripts/build.sh                                       # builds ../desktop/dist/MycroftHands.zip
-hands install --desktop-zip ../desktop/dist/MycroftHands.zip      # installs the helper, asks for its permissions
-hands desktop permissions                                         # what the helper has been granted
+hands permissions                   # macOS: asks for what Mycroft needs, desktop control included
 ```
 
 `hands install` copies the binary to `~/.local/bin/hands` and runs `hands supervise --listen` as a user service. That process is the supervisor of jobs and the phone's listener:
@@ -47,14 +43,15 @@ Running `hands install` again converges to the same state:
 - `--uninstall` reverses the install and keeps the state dir.
 - `--no-service` skips the service.
 - `--bind ADDR` makes the listener listen on one address only, such as a Tailscale address.
-- `--desktop-zip PATH` (macOS) also installs the desktop helper from `MycroftHands.zip`; a `MycroftHands.zip` next to the `hands` binary is used without the flag. See [Desktop control](#desktop-control-macos).
 
-With `--pair`, if the service cannot start (or with `--no-service`), the listener runs detached until the machine restarts. `hands serve` still starts a supervisor on demand when none is running.
+On macOS, install and `--uninstall` also remove the separate desktop helper an earlier version installed (see [Where things live](#where-things-live)).
+
+With `--pair`, if the service cannot start (or with `--no-service`), the listener runs detached until the machine restarts. `hands serve` still starts a supervisor on demand when none is running; on macOS that one has no desktop control.
 
 ## Commands
 
 ```sh
-hands install [--pair BASE --pin PIN] [--desktop-zip PATH] [--no-service] [--bind ADDR] [--dry-run] [--uninstall]
+hands install [--pair BASE --pin PIN] [--no-service] [--bind ADDR] [--dry-run] [--uninstall]
 hands pair --with BASE --pin PIN [--bind ADDR]   # pair with a phone; starts the listener if none runs
 hands paired [--json]                 # list the paired phones
 hands unpair <name>                   # remove a paired phone (by name or public key)
@@ -63,10 +60,8 @@ hands supervise [--listen] [--bind ADDR] [--detached]
 hands serve --stdio [--token <hex>]   # pi-env protocol 1 on stdin/stdout: over ssh, and per listener connection
 hands jobs [--json]                   # list supervised jobs (from disk if no supervisor is running)
 hands permissions [--check] [--json]  # macOS: walk through what Mycroft needs approved, one at a time; Linux: report
-hands desktop permissions [--request] [--wait N] [--json]
-                                      # macOS: Accessibility and Screen Recording of the desktop helper; --request asks
 hands doctor                          # binary, version, OS/arch, state dir, supervisor, listener, paired phones, jobs,
-                                      # service, and on macOS the desktop helper and its permissions
+                                      # service, and on macOS desktop control (Cua Driver in the supervisor)
 hands version
 ```
 
@@ -89,24 +84,21 @@ The wire protocol is pi-env's protocol 1, unchanged: [docs/protocol.md](docs/pro
 | `job.wait { key, timeoutMs? }` | Waits until the job ends or the timeout passes, without killing it. Returns `timedOut`. |
 | `job.cancel { key, signal? }` | Signals the job's whole process group (default `SIGTERM`). |
 | `job.list {}` | Lists all jobs, newest first. |
-| `ui.observe`, `ui.act`, `ui.screenshot` | macOS desktop control, forwarded to the desktop helper ([docs/desktop-protocol.md](../docs/desktop-protocol.md)). Listed only while the helper answers; otherwise, and on Linux, they fail with `not_supported`. `ui.screenshot` returns the PNG as the payload, with `{ width, height }`. |
+| `cua.tools {}` | macOS: Cua Driver's MCP tool list and server instructions, as Cua writes them, less the tools `hands` leaves out. |
+| `cua.call { name, arguments? }` | macOS: calls one of those tools and returns Cua's MCP result unchanged (`content` with text and base64 images, `structuredContent`, `isError`). On Linux both fail with `not_supported`. |
 
-[docs/jobs.md](docs/jobs.md) specifies the fields, results and error codes (`EINVAL`, `not_found`, `spawn_error`, `aborted`, `supervisor_unavailable`, ...).
+[docs/jobs.md](docs/jobs.md) specifies the fields, results and error codes (`EINVAL`, `not_found`, `spawn_error`, `aborted`, `supervisor_unavailable`, `not_service`, ...).
 
 **How jobs outlive the connection.** pi-env kills its commands when the connection drops (stdin ends, or 30 s without bytes). It has to: the brain is a phone that sleeps. Jobs belong to the supervisor instead, so `exec` keeps pi-env's behaviour and `job.*` don't die with the connection. The supervisor runs each job through a tiny runner that leads the job's process group and records the exit code in the job's directory. A job survives `serve` exiting and the supervisor restarting, and its output and exit code can be read after the job ends. Finished jobs are kept for 7 days or until there are 200 of them.
 
 ## Desktop control (macOS)
 
-A process started over SSH or by the listener can't hold Accessibility or Screen Recording, so `hands` doesn't touch the desktop itself. It forwards `ui.*` requests to **Mycroft Hands.app** (bundle id `dev.mycroft.hands-desktop`, built from [../desktop](../desktop/README.md)), which runs in your GUI session and holds both permissions.
+`hands` links [Cua Driver](https://github.com/trycua/cua) (MIT) as a library: the `cua-driver-sdk` crate and its `cua-driver-core`, `cursor-overlay` and `platform-macos`, pinned to the tag `cua-driver-rs-v0.38.0`. It reads one window at a time (accessibility tree and screenshot, with `element_token`s and diff re-reads), acts in the background without moving your pointer or switching apps, batches steps with checks (`run_steps`), and shows an agent cursor. There is nothing else to install: no Cua app, no `cua-driver` CLI. Linux builds don't have it: they are static musl, and Cua's Linux crates link X11.
 
-`hands install --desktop-zip MycroftHands.zip` (or the phone's install):
-1. unpacks the app to `~/Applications/Mycroft Hands.app`, after checking its bundle id and signature. An installed copy is replaced only when the version differs.
-2. writes the LaunchAgent `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist`, which runs the app's `hands-desktop serve` with `HANDS_STATE_DIR`, and loads it with `launchctl bootstrap gui/<uid>`.
-3. walks through the permissions, below. For Accessibility and Screen Recording it opens the app, one permission at a time (`open -n … --args --request-permissions --only …`), so macOS shows its prompt for the app (not for your terminal) and System Settings opens at the right pane. After Screen Recording is granted, the app restarts the helper, which macOS requires.
-
-`--uninstall` removes the app and its LaunchAgent. The grants stay in System Settings; `tccutil reset All dev.mycroft.hands-desktop` removes them. A failure while installing the helper is a warning: `hands` itself is installed and pairs anyway.
-
-`hands desktop permissions` asks the running helper what it has been granted. `--request` opens the app to ask for each in turn, and waits (default 300 s, `--wait N`) until both are granted.
+- **Where it runs.** In the supervisor that launchd starts, the `dev.mycroft.hands` service. macOS gives Accessibility and Screen Recording to the responsible process; started by launchd, that is `hands` itself. The supervisor creates the driver once at startup, as Cua's own service does (`CuaDriver::try_create_service_for_host`, with `host_owns_permission_ux`: `hands permissions` asks). The agent cursor takes the main thread's AppKit loop, and the supervisor accepts connections on another thread. A supervisor that `serve` started on demand has no desktop, and `cua.*` fail with `not_service`.
+- **How calls get there.** `hands serve` forwards `cua.tools` and `cua.call` over `supervisor.sock`, like `job.*`, with the client (the paired phone's name, or `ssh`) and a call id. Each client keeps one Cua session across reconnects, so element tokens stay valid. Cancelling a `cua.call` aborts the driver call.
+- **What is offered.** Cua's tools as Cua describes them, except `parse_visual_regions` (Cua's perception model isn't linked) and Computer History (`history_*`, off). The phone offers them to its model under their own names, and asks the user before risky actions.
+- **Status.** The supervisor's `hello` has `desktop: { version }` or `desktop: { off: why }`; `hands doctor` shows it.
 
 ### Permissions on macOS
 
@@ -114,7 +106,7 @@ A process started over SSH or by the listener can't hold Accessibility or Screen
 
 ```
 [1/7] Accessibility: read and use apps' buttons, menus and fields
-      Turn on "Mycroft Hands" in System Settings, which macOS just opened.
+      When macOS asks, click Open System Settings and turn on "hands" under Accessibility.
       ✓ granted
 [2/7] Screen Recording: see the screen when Mycroft takes a screenshot
 [3/7] Desktop folder: commands Mycroft runs can read and change files there
@@ -126,18 +118,17 @@ A process started over SSH or by the listener can't hold Accessibility or Screen
 
 | Permission | Held by | How it is asked |
 |---|---|---|
-| Accessibility, Screen Recording | Mycroft Hands.app | the app's own prompt and System Settings pane, one at a time |
+| Accessibility, Screen Recording | hands | the service asks macOS (`AXIsProcessTrustedWithOptions`, `CGRequestScreenCaptureAccess`), which prompts about "hands" and opens System Settings |
 | Desktop, Documents, Downloads | hands | the service opens the folder, which makes macOS ask about "hands" |
 | Local Network (macOS 15+) | hands | the service sends one UDP packet to the router |
 | Full Disk Access (optional) | hands | no prompt exists: System Settings opens and Finder shows `hands`, to drag into the list |
 
-- **Why the service asks.** macOS gives a permission to the responsible process. From Terminal that is Terminal, so the terminal only drives: the folder, network and disk checks run in the service's supervisor (the `access` op), which launchd started, so macOS asks about `hands`, and the grant covers every command Mycroft runs. A supervisor started from a terminal refuses the op.
+- **Why the service asks.** macOS gives a permission to the responsible process. From Terminal that is Terminal, so the terminal only drives: every item is asked for and checked in the service's supervisor (the `access` op, `access { what, ask: true }` to make macOS ask), which launchd started, so macOS asks about `hands`, and the grant covers desktop control and every command Mycroft runs. A supervisor started from a terminal refuses the op.
+- **Screen Recording needs a restart.** macOS tells a process about a new Screen Recording grant only after it restarts. So the supervisor checks Accessibility and Screen Recording in a fresh child (`hands permissions --probe <item>`, which macOS also counts as `hands`), which also says whether it sees the grant itself (`applied`). When it doesn't, whether the grant is new or older than the running service, the walkthrough restarts the service (the supervisor's `shutdown`; launchd starts it again) and waits for it. Running jobs are not affected.
 - **A prompt that doesn't come.** macOS asks once. If it was answered before, the walkthrough opens the right System Settings pane after a few seconds and says what to turn on.
-- **Kept across updates.** The macOS binaries are signed as `dev.mycroft.hands` (scripts/build-release.sh), so macOS keeps these grants when hands is updated.
+- **Kept across updates.** The macOS binaries are signed as `dev.mycroft.hands` (scripts/build-release.sh). Signed with an Apple Development identity, they keep these grants when hands is updated; signed ad hoc (no identity on the build machine), Accessibility and Screen Recording are asked for again after each update.
 - **`--check` and `--json`** only report, and never make macOS ask: the folders and Local Network are checked only once a walkthrough has asked about them (`permissions.json` in the state dir). Without a terminal (`ssh` without `-t`, say), `install` prints how to run the walkthrough instead.
 - **Linux** has nothing to approve: hands runs as you. `hands permissions` reports what keeps it running instead, the service and lingering (`sudo loginctl enable-linger $USER` keeps it running after logout).
-
-`hello.features` lists `ui.observe`, `ui.act` and `ui.screenshot` while the helper answers its `ping` (cached for 3 s). Each request opens its own connection to `desktop.sock`; the helper's error codes (`not_trusted`, `not_permitted`, `stale`, ...) come back as the error frame's `code`.
 
 ## Where things live
 
@@ -146,14 +137,15 @@ A process started over SSH or by the listener can't hold Accessibility or Screen
 | binary | `~/.local/bin/hands` | `~/.local/bin/hands` |
 | state dir | `~/Library/Application Support/hands` | `$XDG_STATE_HOME/hands` or `~/.local/state/hands` |
 | service | `~/Library/LaunchAgents/dev.mycroft.hands.plist` | `~/.config/systemd/user/hands.service` |
-| desktop helper | `~/Applications/Mycroft Hands.app`, `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist` | (none) |
 
 The state dir holds:
 - the supervisor's `supervisor.sock`, `supervisor.lock` and `supervisor.log` (the listener logs there too);
 - one `jobs/<key>-<hash>/` directory per job (`job.json`, `output.log`);
 - the listener's `listener.json` (its port), `listener.lock` and `listener-cert.pem` / `listener-key.pem`;
 - `paired.json`, the paired phones' public keys;
-- on macOS, the desktop helper's `desktop.sock` and `desktop.log`.
+- on macOS, `permissions.json`, which permissions a walkthrough has asked about.
+
+Earlier versions installed a separate desktop helper on macOS. `hands install` and `--uninstall` remove it if it is there: `~/Applications/Mycroft Hands.app`, `~/Library/LaunchAgents/dev.mycroft.hands-desktop.plist`, and its job (`launchctl bootout gui/<uid>/dev.mycroft.hands-desktop`).
 
 The key, the certificate, `listener.json` and `paired.json` are mode 0600. `HANDS_STATE_DIR` overrides the state dir's location, and `hands install` passes the override on to the service.
 
@@ -162,11 +154,11 @@ The key, the certificate, `listener.json` and `paired.json` are mode 0600. `HAND
 - **One listening port, closed to anyone unpaired.** The listener accepts TLS 1.3 only. Until a peer proves it holds a paired phone's Ed25519 key, it accepts nothing but the `auth` message. The signature covers the listener's certificate hash and a fresh nonce, so it can't be replayed or relayed through another certificate. `--bind` limits the listener to one interface, such as the Tailscale one.
 - **Pairing trusts the channel and the code.** The short install command fetches the script over plain HTTP, so it trusts the network path: WireGuard on Tailscale and NetBird, the Wi-Fi otherwise. Everything after that is pinned to the phone's public key (curl `--pinnedpubkey`, and `hands` with rustls), and the pinned command pins the script as well. `hands` sends nothing to a certificate that doesn't match the pin. The one-time setup code expires after 10 minutes, and the phone stops serving after 100 wrong codes. The phone pins the listener's `certSha256` from then on.
 - **Same user.** The supervisor's Unix socket is user-only, in the user-only state dir. Over SSH (`hands serve --stdio`), the phone pins the host key as before.
-- **No credentials.** No model credentials or API keys ever reach `hands`. Jev and the LLMs are called from the phone.
+- **No credentials, no models.** No model credentials or API keys ever reach `hands`, and it runs no model: the LLMs are called from the phone, and Cua's perception model is not linked.
 - **What is stored.** Jobs inherit `serve`'s environment, which may contain secrets, but the environment is never written to disk. `job.json` records only the command or argv, `cwd`, state and timing. Job output is stored as is in the user-only state dir, so a command that prints a secret leaves it in `output.log` until retention deletes it.
 - **Same user.** Everything runs as the user who installed `hands`, and `hands` grants nothing beyond what that user's shell can do. Treat a paired phone, or its SSH key, as shell access to the host. `hands unpair` revokes a phone for new connections.
 - **Process groups.** Each job is its own session and process group. `job.cancel` signals only that group. The supervisor sends signals only while the job's runner, the group leader, is still alive, so a reused pid is never targeted.
-- **Desktop control.** On macOS, Accessibility and Screen Recording are granted to Mycroft Hands.app only, never to `hands` or your terminal. `hands` talks to it over the user-only `desktop.sock`. The helper never runs commands and never reads or types secure text, and it takes a screenshot only for an explicit `ui.screenshot`.
+- **Desktop control.** On macOS, Accessibility and Screen Recording are granted to `hands` (the service), never to your terminal. A paired phone can then read and use any app's windows, and take screenshots, as well as run commands. Cua Driver runs only in that service, and each client gets its own Cua session. The phone asks the user before actions that look destructive (deleting, sending, paying, quitting, ...); that check is the phone's, not `hands`'.
 
 ## Development
 
@@ -175,20 +167,22 @@ cargo build --release
 cargo test        # unit tests from pi-env, plus integration tests in tests/ against target/debug/hands
 ```
 
+On macOS the first build clones Cua's git repository (about 630 MB), which Cargo keeps for later builds.
+
 The integration tests start `hands serve` and `hands supervise --listen` with a temporary `HANDS_STATE_DIR` under `/tmp`, bind the listener to 127.0.0.1, and never touch the real state dir or install anything. Each test stops its own supervisor when it finishes.
 
-`tests/desktop.rs` runs `ui.*` through `hands serve` against a fake helper on a temporary `desktop.sock`: pass-through of observe, act and screenshot (payload), error codes, `hello.features` only while `ping` answers, `not_supported` without a helper, one connection per concurrent request, `hands desktop permissions`, and the install dry run with a stub zip. Nothing touches the real desktop.
+`tests/desktop.rs` runs `cua.tools` and `cua.call` through `hands serve` against a fake supervisor on a temporary `supervisor.sock`: both are forwarded and answered unchanged, each call carries `client` and `call`, a cancelled call sends `cua.cancel` and ends with `aborted`, malformed calls stop in `serve`, and a real supervisor that launchd did not start has no desktop. Nothing touches the real desktop or Cua Driver.
 
 `tests/pairing.rs` runs the whole flow against a fake phone (an HTTPS server with a self-signed certificate):
 - `hands pair` pairs the machine and writes `paired.json`;
 - a WebSocket client with the phone's key authenticates, and pi-env `hello`, files and `job.*` work through the listener;
 - wrong signatures, unknown keys, other messages before `auth`, other paths and a wrong pin are all refused;
-- the install script, served and piped to `sh`, `dash`, `zsh` and `bash`, downloads, verifies and runs a stub binary, and refuses a tampered one. On macOS it also fetches a stub `MycroftHands.zip` and passes it on; it refuses a tampered zip, and installs without the helper when the phone does not serve one.
+- the install script, served and piped to `sh`, `dash`, `zsh` and `bash`, downloads, verifies and runs a stub binary, and refuses a tampered one.
 
 Release builds use `opt-level = "z"`, LTO and one codegen unit, and are stripped. `scripts/build-release.sh` builds the two macOS binaries with cargo and the two static musl Linux binaries with `cargo zigbuild`.
 
 Layout:
-- `src/serve.rs` is pi-env's daemon loop (formerly its `main.rs`), with the `job.*` and `ui.*` dispatch added.
+- `src/serve.rs` is pi-env's daemon loop (formerly its `main.rs`), with the `job.*` and `cua.*` dispatch added.
 - `src/supervisor.rs` contains the supervisor and its client.
 - `src/jobs.rs` contains the job table, persistence, runner and retention.
 - `src/listener.rs` contains the TLS WebSocket listener, its handshake and the frame proxy.
@@ -198,7 +192,7 @@ Layout:
 - `src/state.rs` contains the paths.
 - `src/install.rs` contains `hands install`.
 - `src/cli.rs` contains `hands jobs`, `paired`, `unpair` and `doctor`.
-- `src/ui/mod.rs` forwards `ui.*` to the desktop helper; `src/ui/app.rs` installs the helper and asks for its permissions (`hands desktop`).
+- `src/cua.rs` is desktop control: `serve`'s forwarding of `cua.*`, and Cua Driver in the supervisor (sessions, cancellation, the agent cursor's main loop).
 - `src/permissions.rs` is `hands permissions`: the macOS walkthrough, the service's `access` op, and the Linux report.
 
 The other files come from pi-env.

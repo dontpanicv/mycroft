@@ -26,7 +26,8 @@ fn speaks_pi_env_protocol_1() {
     ] {
         assert!(features.contains(&feature), "{feature} missing from {features:?}");
     }
-    assert!(!features.contains(&"ui.observe"));
+    assert_eq!(features.contains(&"cua.call"), cfg!(target_os = "macos"));
+    assert_eq!(hello["cua"].is_object(), cfg!(target_os = "macos"));
 
     let work = state.work();
     let file = work.join("a.txt");

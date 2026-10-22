@@ -16,7 +16,8 @@ packages:
     from: 1.21.0
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    exactVersion: 0.17.7
+    # main after 0.17.7: Gradium Phonon 31m on PocketTtsSmallManager (#1053), not in a release yet.
+    revision: c79c4106b954f81205113c3343e5a7e59a1089b5
   PiDurableKit:
     url: https://github.com/finnvoor/PiDurableKit
     revision: 1305a72ffe5ea29a9f5e7d576a7cf9334189c1ef
@@ -64,7 +65,6 @@ targets:
         BGTaskSchedulerPermittedIdentifiers: ['$(PRODUCT_BUNDLE_IDENTIFIER).run']
         UIAppFonts: [JetBrainsMono.ttf, SchibstedGrotesk.ttf]
         NSMicrophoneUsageDescription: Mycroft listens while you dictate or talk to it.
-        NSSpeechRecognitionUsageDescription: Mycroft turns your speech into text on this iPhone.
         NSLocalNetworkUsageDescription: Mycroft connects to your machines running hands on this network.
         NSSupportsLiveActivities: true
         NSBonjourServices: [_mycroft-hands._tcp]
@@ -77,7 +77,7 @@ targets:
           # so the phone can serve the one-line install. Missing pieces are skipped with a warning.
           DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
           HANDS="${SRCROOT}/../hands"
-          mkdir -p "$DEST/hands-dist"
+          rm -rf "$DEST/hands-dist" && mkdir -p "$DEST/hands-dist"
           if [ -f "$HANDS/scripts/phone-install.sh" ]; then cp "$HANDS/scripts/phone-install.sh" "$DEST/"; else echo "warning: hands/scripts/phone-install.sh missing"; fi
           found=0
           for t in darwin-arm64 darwin-x86_64 linux-x86_64 linux-aarch64; do
@@ -93,8 +93,6 @@ targets:
               exit 1
             fi
           fi
-          DESKTOP="${SRCROOT}/../desktop/dist/MycroftHands.zip"
-          if [ -f "$DESKTOP" ]; then cp "$DESKTOP" "$DEST/hands-dist/"; else echo "warning: no desktop/dist/MycroftHands.zip (run desktop/scripts/build.sh)"; fi
       - name: Bundle Fluid Speech Mini
         basedOnDependencyAnalysis: false
         script: |
@@ -107,6 +105,19 @@ targets:
             rsync -a --delete "$MODEL/model/" "$DEST/"
           else
             echo "warning: no Fluid Speech Mini in ios/Models (run ios/scripts/fetch-fluid-speech.sh); dictation will use Apple's model"
+          fi
+      - name: Bundle Phonon
+        basedOnDependencyAnalysis: false
+        script: |
+          # Copies the conversation voice (ios/scripts/fetch-phonon.sh, ~150 MB) into the app. Without it, there is no
+          # conversation mode.
+          MODEL="${SRCROOT}/Models/phonon"
+          if [ -f "$MODEL/REVISION" ]; then
+            DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Phonon"
+            mkdir -p "$DEST"
+            rsync -a --delete "$MODEL/model/" "$DEST/"
+          else
+            echo "warning: no Phonon in ios/Models (run ios/scripts/fetch-phonon.sh); conversation mode will be off"
           fi
     settings:
       base:

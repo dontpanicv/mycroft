@@ -46,7 +46,8 @@ nonisolated enum HandsTools {
     static func makeExtension() -> Extension {
         Extension("mycroft.hands") {
             PromptSection("machines") { input in
-                let list = try await input.document(Machines.document)
+                // The list is the session's: a section reads the conversation's documents unless told otherwise.
+                let list = try await input.document(Machines.document, of: .session)
                 guard !list.items.isEmpty else {
                     return "No machines are paired yet. If the user needs a shell, files or desktop control, tell them to add a machine in Settings → Machines."
                 }
@@ -55,13 +56,14 @@ nonisolated enum HandsTools {
                     return "- \(machine.name): \(machine.displayOS) \(machine.arch); reachable as \(reach)"
                 }
                 return """
-                    Machines paired with hands. Every hands_* tool takes `machine`; use the exact name below.
+                    Machines paired with hands. Every hands_* and desktop tool takes `machine`: one of the names below.
                     \(lines.joined(separator: "\n"))
                     - The user may say "the Mac", "the Linux box" or "the server": pick the machine that matches; ask only if two match.
                     - The user often talks instead of typing, and on-device speech recognition turns unusual names into sound-alikes ("vendor too" for bender-2). Match what you read to these names by sound.
                     - You can use several machines in one turn. Calls in the same step run at the same time, so start independent work on different machines together.
                     - For something that must keep running while you do other things (a server, a watcher, a build), use hands_job_start, and stop it with hands_job_cancel when you are done.
                     - When one machine has to reach another, use the other machine's address from this list, not localhost.
+                    - On a Mac, script an app with osascript when it has a scripting dictionary (Spotify, Music, Finder, Mail): one call, surer than driving its window. An app that isn't running doesn't answer while it starts, and osascript then waits two minutes: start it with `open -ga <App>`, then retry a quick read inside `with timeout of 3 seconds` until it answers.
                     """
             }
 
@@ -71,26 +73,27 @@ nonisolated enum HandsTools {
                 guard !list.items.isEmpty else { return "No machines are paired." }
                 var lines: [String] = []
                 for machine in list.items {
-                    let status: String
+                    let head = "\(machine.name) — \(machine.displayOS) \(machine.arch)"
                     do {
+                        // What the machine says now: hands may have been updated since pairing.
                         let info = try await HandsPool.shared.connection(to: machine).info
-                        status = "online, home \(info?.string("home") ?? "?")"
+                        let version = info?.string("version") ?? machine.version
+                        lines.append("\(head), hands \(version): online, home \(info?.string("home") ?? "?")")
                     } catch {
-                        status = "unreachable (\(error.localizedDescription))"
+                        lines.append("\(head), hands \(machine.version) when paired: unreachable (\(error.localizedDescription))")
                     }
-                    lines.append("\(machine.name) — \(machine.displayOS) \(machine.arch), hands \(machine.version): \(status)")
                 }
                 return lines.joined(separator: "\n")
             }
 
             Tool(
                 "hands_exec",
-                description: "Run a shell command on a paired machine and return its output and exit code. It runs as a supervised job: if it is still running after timeout_s (default 600), you get its job key and can keep waiting with hands_job_wait.",
+                description: "Run a shell command on a paired machine and return its output and exit code. It runs as a supervised job: if it is still running after timeout_s (default 60), you get its output so far and its job key, and it keeps running: wait longer with hands_job_wait, or stop it with hands_job_cancel. Pass a longer timeout_s for work you know takes longer (a build, a test run).",
                 parameters: .object([
                     "machine": .string("Machine name"),
                     "command": .string("Shell command, run with bash -c"),
                     "cwd": .string("Working directory; ~ and relative paths start at the user's home").optional,
-                    "timeout_s": .integer("How long to wait before returning (default 600)").optional,
+                    "timeout_s": .integer("How long to wait before returning (default 60)").optional,
                 ]),
                 replay: .safe
             ) { (args: ExecArguments, call) -> ToolResult in
@@ -101,7 +104,7 @@ nonisolated enum HandsTools {
                     if let cwd = args.cwd { fields["cwd"] = try await absolute(cwd, hands) }
                     _ = try await hands.request("job.start", fields)
                     do {
-                        return try await follow(key, on: hands, machine: machine, timeout: args.timeout_s ?? 600, call: call)
+                        return try await follow(key, on: hands, machine: machine, timeout: args.timeout_s ?? 60, call: call)
                     } catch is CancellationError {
                         // The user stopped the run: stop the command on the machine too (its whole process group).
                         await Task.detached { _ = try? await hands.request("job.cancel", ["key": key]) }.value
@@ -267,7 +270,7 @@ nonisolated enum HandsTools {
             offset = chunk.int("nextOffset") ?? offset + chunk.payload.count
             if chunk.bool("eof") { break }
             if Date.now >= deadline {
-                return ToolResult(output: [.text("Still running on \(machine.name) as job \(key). Output so far:\n\(text(tail))\nUse hands_job_wait to keep waiting.")])
+                return ToolResult(output: [.text("Still running on \(machine.name) as job \(key). Output so far:\n\(text(tail))\nIt keeps running: hands_job_wait to keep waiting, hands_job_cancel to stop it.")])
             }
             let remaining = Int(deadline.timeIntervalSinceNow * 1000)
             _ = try await hands.request("job.wait", ["key": key, "timeoutMs": max(250, min(3000, remaining))])

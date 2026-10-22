@@ -2,16 +2,16 @@
 //! time in the terminal. `hands install` runs the same walkthrough after pairing.
 //!
 //! macOS gives a permission to the process that asks for it, or rather to its *responsible* process. Run from
-//! Terminal, that is Terminal. So the terminal only drives and reports:
+//! Terminal, that is Terminal. So the terminal only drives and reports, and every permission belongs to the service's
+//! supervisor: Started by launchd, it is its own responsible process, so macOS asks about "hands", and the answer
+//! covers the desktop control it runs (cua.rs) and every command it runs later. The walkthrough asks the supervisor
+//! (the `access` op) to ask macOS for Accessibility or Screen Recording, open a folder, send one packet to the router,
+//! or read a protected file. A supervisor started from a terminal refuses: macOS would ask about the terminal instead.
 //!
-//! - **Accessibility** and **Screen Recording** belong to Mycroft Hands.app, which does the desktop work. The
-//!   walkthrough opens the app to ask for one of them (`--request-permissions --only …`) and follows the helper's
-//!   `ping`.
-//! - **Desktop, Documents, Downloads**, **Local Network** and **Full Disk Access** belong to `hands` itself, because
-//!   the commands Mycroft runs are its children. The walkthrough asks the service's supervisor (the `access` op) to
-//!   open the folder, send one packet to the router, or read a protected file. Started by launchd, the service is its
-//!   own responsible process, so macOS asks about "hands", and the answer covers every command it runs later. A
-//!   supervisor started from a terminal refuses: macOS would ask about the terminal instead.
+//! macOS tells a process about a new Screen Recording grant only once it restarts. So the supervisor checks both
+//! desktop permissions in a fresh child (`hands permissions --probe <item>`), which macOS also counts as hands, and
+//! says whether it sees the grant itself (`applied`). When it doesn't, the walkthrough restarts the service, whether
+//! the grant is new or older than the service.
 //!
 //! Checking a folder or the local network the first time makes macOS ask. So `--check` only looks at the ones a
 //! walkthrough has asked about before (`permissions.json` in the state dir) and reports the rest as not asked yet.
@@ -20,7 +20,6 @@
 //! instead: the service and lingering.
 
 use crate::errors::Failure;
-use crate::ui::app;
 use crate::{install, listener, state, supervisor};
 use serde_json::{Map, Value, json};
 use std::fs::{self, File, OpenOptions};
@@ -35,8 +34,6 @@ use std::time::{Duration, Instant};
 
 /// Readable only with Full Disk Access, and present on every Mac.
 const PROTECTED_FILE: &str = "/Library/Application Support/com.apple.TCC/TCC.db";
-/// How long the app keeps asking for one permission after the walkthrough opened it.
-const APP_WAIT_SECS: u64 = 900;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
@@ -91,7 +88,7 @@ impl Item {
     fn purpose(self) -> &'static str {
         match self {
             Item::Accessibility => "read and use apps' buttons, menus and fields",
-            Item::ScreenRecording => "see the screen when Mycroft takes a screenshot",
+            Item::ScreenRecording => "see app windows when Mycroft looks at them",
             Item::Desktop | Item::Documents | Item::Downloads => "commands Mycroft runs can read and change files there",
             Item::LocalNetwork => "commands can reach other devices on your network",
             Item::FullDisk => "everything else: iCloud Drive, external disks, other apps' data",
@@ -107,18 +104,15 @@ impl Item {
         matches!(self, Item::Desktop | Item::Documents | Item::Downloads | Item::LocalNetwork)
     }
 
-    /// Held by Mycroft Hands.app rather than by hands.
-    fn app(self) -> bool {
-        matches!(self, Item::Accessibility | Item::ScreenRecording)
-    }
-
     /// What to do while the walkthrough waits.
     fn how(self) -> &'static str {
         match self {
-            Item::Accessibility => "Turn on \"Mycroft Hands\" in System Settings, which macOS just opened.",
+            Item::Accessibility => {
+                "When macOS asks, click Open System Settings and turn on \"hands\" under Accessibility."
+            }
             Item::ScreenRecording => {
-                "Turn on \"Mycroft Hands\" in System Settings, which macOS just opened. If macOS offers to quit and \
-                 reopen it, choose Quit & Reopen."
+                "When macOS asks, click Open System Settings and turn on \"hands\" under Screen & System Audio \
+                 Recording. hands restarts by itself afterwards."
             }
             Item::Desktop | Item::Documents | Item::Downloads => {
                 "Click Allow when macOS asks whether \"hands\" may access it."
@@ -134,6 +128,16 @@ impl Item {
     /// Where to turn it on when macOS doesn't ask (because it was answered before).
     fn fallback(self) -> Option<&'static str> {
         match self {
+            Item::Accessibility => Some(
+                "No prompt? It was answered before: turn on \"hands\" under Accessibility in System Settings, which \
+                 is open now. Already on? That was an older hands: remove it with −, then run \
+                 `hands permissions` again.",
+            ),
+            Item::ScreenRecording => Some(
+                "No prompt? It was answered before: turn on \"hands\" under Screen & System Audio Recording in \
+                 System Settings, which is open now. Already on? That was an older hands: remove it with −, then run \
+                 `hands permissions` again.",
+            ),
             Item::Desktop | Item::Documents | Item::Downloads => Some(
                 "No prompt? It was answered before: turn on \"hands\" under Files and Folders in System Settings, \
                  which is open now.",
@@ -202,12 +206,12 @@ pub fn in_service() -> bool {
     }
 }
 
-/// The supervisor's `access` op: `{ what }` → `{ granted }`, or `{ notApplicable: why }`.
+/// The supervisor's `access` op: `{ what, ask? }` → `{ granted }`, or `{ notApplicable: why }`. With `ask`, macOS
+/// first asks for Accessibility or Screen Recording.
 pub fn access(json: &Value) -> Result<Value, Failure> {
     let what = json["what"].as_str().unwrap_or_default();
-    let item = Item::from_key(what)
-        .filter(|item| !item.app())
-        .ok_or_else(|| Failure::new("EINVAL", format!("access: unknown permission {what:?}")))?;
+    let item =
+        Item::from_key(what).ok_or_else(|| Failure::new("EINVAL", format!("access: unknown permission {what:?}")))?;
     if !cfg!(target_os = "macos") {
         return Ok(json!({ "notApplicable": "only macOS asks" }));
     }
@@ -225,12 +229,94 @@ pub fn access(json: &Value) -> Result<Value, Failure> {
         Item::Downloads => folder(&home.join("Downloads")),
         Item::FullDisk => readable(Path::new(PROTECTED_FILE)),
         Item::LocalNetwork => local_network(),
-        Item::Accessibility | Item::ScreenRecording => unreachable!(),
+        Item::Accessibility | Item::ScreenRecording => {
+            if json["ask"].as_bool() == Some(true) {
+                tcc::ask(item);
+            }
+            probe(item)
+        }
     };
     Ok(match result {
+        // `applied`: whether this process sees the grant too; it sees a new Screen Recording grant only once it
+        // restarts.
+        Ok(granted) if matches!(item, Item::Accessibility | Item::ScreenRecording) => {
+            json!({ "granted": granted, "applied": tcc::granted(item) })
+        }
         Ok(granted) => json!({ "granted": granted }),
         Err(why) => json!({ "notApplicable": why }),
     })
+}
+
+/// Whether hands has Accessibility or Screen Recording, as a fresh `hands permissions --probe` sees it.
+fn probe(item: Item) -> Result<bool, String> {
+    let binary = std::env::current_exe().map_err(|error| error.to_string())?;
+    let output = Command::new(binary)
+        .args(["permissions", "--probe", item.key()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| format!("cannot run hands: {error}"))?;
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "granted" => Ok(true),
+        "missing" => Ok(false),
+        other => Err(format!("the probe answered {other:?}")),
+    }
+}
+
+/// macOS's own calls for the two desktop permissions; they act for this process's responsible one.
+#[cfg(target_os = "macos")]
+mod tcc {
+    use super::Item;
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::CFString;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+
+    pub fn granted(item: Item) -> bool {
+        // SAFETY: plain queries without arguments.
+        unsafe {
+            match item {
+                Item::ScreenRecording => CGPreflightScreenCaptureAccess(),
+                _ => AXIsProcessTrusted(),
+            }
+        }
+    }
+
+    /// Make macOS ask, once; later it only reports.
+    pub fn ask(item: Item) {
+        if item == Item::ScreenRecording {
+            // SAFETY: no arguments; shows macOS's prompt the first time.
+            unsafe { CGRequestScreenCaptureAccess() };
+            return;
+        }
+        let prompt = CFString::new("AXTrustedCheckOptionPrompt");
+        let options = CFDictionary::from_CFType_pairs(&[(prompt.as_CFType(), CFBoolean::true_value().as_CFType())]);
+        // SAFETY: a valid dictionary, alive for the call.
+        unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) };
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod tcc {
+    use super::Item;
+
+    pub fn granted(_: Item) -> bool {
+        false
+    }
+
+    pub fn ask(_: Item) {}
 }
 
 fn denied(error: &io::Error) -> bool {
@@ -313,41 +399,34 @@ pub trait Mac: Send + Sync {
     fn open_settings(&self, item: Item);
 }
 
-pub struct RealMac;
+/// `restart`: in the walkthrough, a service that doesn't see a grant yet is restarted, so that it does.
+pub struct RealMac {
+    pub restart: bool,
+}
 
 impl Mac for RealMac {
     fn check(&self, item: Item) -> Status {
-        if item.app() {
-            if !app::app_path().exists() {
-                return Status::NotApplicable("Mycroft Hands isn't installed, so desktop control is off".into());
-            }
-            // The helper restarts after Screen Recording is granted; give it a moment to answer again.
-            return match app::ping_within(Duration::from_secs(5)) {
-                Some(helper) if item == Item::Accessibility => granted(helper.trusted),
-                Some(helper) => granted(helper.screen_recording),
-                None => Status::Unknown("Mycroft Hands isn't answering; it runs once you're logged in on this Mac".into()),
-            };
+        let request = json!({ "op": "access", "what": item.key() });
+        let reply = supervisor::call_running(&request);
+        if self.restart
+            && let Ok((reply, _)) = &reply
+            && reply["granted"] == true
+            && reply["applied"] == false
+        {
+            restart_service();
+            return access_status(supervisor::call_running(&request));
         }
-        match supervisor::call_running(&json!({ "op": "access", "what": item.key() })) {
-            Ok((reply, _)) => match (reply["granted"].as_bool(), reply["notApplicable"].as_str()) {
-                (Some(value), _) => granted(value),
-                (None, Some(why)) => Status::NotApplicable(why.to_string()),
-                _ => Status::Unknown(format!("the service answered {reply}")),
-            },
-            Err(failure) if failure.code == "supervisor_unavailable" => {
-                Status::Unknown("the hands service isn't running (`hands install` sets it up)".into())
-            }
-            Err(failure) if failure.code == "EINVAL" => {
-                Status::Unknown("the running hands service is older; restart it with `hands install`".into())
-            }
-            Err(failure) => Status::Unknown(failure.message),
-        }
+        access_status(reply)
     }
 
     fn ask(&self, item: Item) -> Result<(), String> {
         match item {
-            Item::Accessibility => app::request_permissions(&app::app_path(), Some("accessibility"), APP_WAIT_SECS),
-            Item::ScreenRecording => app::request_permissions(&app::app_path(), Some("screen-recording"), APP_WAIT_SECS),
+            Item::Accessibility | Item::ScreenRecording => {
+                match access_status(supervisor::call_running(&json!({ "op": "access", "what": item.key(), "ask": true }))) {
+                    Status::Unknown(why) => Err(why),
+                    _ => Ok(()),
+                }
+            }
             Item::FullDisk => {
                 self.open_settings(item);
                 // ~/.local is hidden in Finder: show the binary itself, ready to drag.
@@ -359,6 +438,40 @@ impl Mac for RealMac {
 
     fn open_settings(&self, item: Item) {
         let _ = open(&[format!("x-apple.systempreferences:com.apple.preference.security?{}", item.pane()).as_ref()]);
+    }
+}
+
+/// Restart the service (the supervisor's `shutdown`; launchd starts it again at once), and wait until it's back.
+/// Running jobs are not affected.
+fn restart_service() {
+    let hello = json!({ "op": "hello" });
+    let pid = |reply: Result<(Value, Vec<u8>), Failure>| reply.ok().and_then(|(hello, _)| hello["pid"].as_u64());
+    let before = pid(supervisor::call_running(&hello));
+    let _ = supervisor::call_running(&json!({ "op": "shutdown" }));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(250));
+        if pid(supervisor::call_running(&hello)).is_some_and(|now| Some(now) != before) {
+            return;
+        }
+    }
+}
+
+/// The supervisor's answer to an `access` request.
+fn access_status(reply: Result<(Value, Vec<u8>), Failure>) -> Status {
+    match reply {
+        Ok((reply, _)) => match (reply["granted"].as_bool(), reply["notApplicable"].as_str()) {
+            (Some(value), _) => granted(value),
+            (None, Some(why)) => Status::NotApplicable(why.to_string()),
+            _ => Status::Unknown(format!("the service answered {reply}")),
+        },
+        Err(failure) if failure.code == "supervisor_unavailable" => {
+            Status::Unknown("the hands service isn't running (`hands install` sets it up)".into())
+        }
+        Err(failure) if failure.code == "EINVAL" => {
+            Status::Unknown("the running hands service is older; restart it with `hands install`".into())
+        }
+        Err(failure) => Status::Unknown(failure.message),
     }
 }
 
@@ -612,28 +725,20 @@ fn walkthrough(tty: &mut Tty) -> i32 {
     tty.line("Mycroft needs a few permissions on this Mac. macOS asks for each one; approve them one at a time.");
     tty.line("Press Enter to skip a step, Ctrl-C to stop. `hands permissions` comes back to this any time.");
     tty.line("");
-    // The folders, the network and the disk are asked for by the service: without it, say so once and skip them.
+    // Every permission is asked for by the service: without it, say so and stop.
     let hello = supervisor::call_running(&json!({ "op": "hello" })).ok().map(|(hello, _)| hello);
-    let service = hello.as_ref().is_some_and(|hello| hello["service"].as_bool() == Some(true));
-    let items: Vec<Item> = Item::ALL.into_iter().filter(|item| service || item.app()).collect();
-    if !service {
+    if !hello.as_ref().is_some_and(|hello| hello["service"].as_bool() == Some(true)) {
         tty.line(match hello.as_ref().map(|hello| hello["service"].as_bool()) {
-            Some(None) => "The running hands service is older than this hands, so it can't ask macOS about the folders,",
-            Some(Some(_)) => "hands runs from a terminal rather than as the service, so it can't ask macOS about the folders,",
-            None => "The hands service isn't running, so macOS can't be asked about the folders,",
+            Some(None) => "The running hands service is older than this hands, so it can't ask macOS yet.",
+            Some(Some(_)) => "hands runs from a terminal rather than as the service, so it can't ask macOS yet.",
+            None => "The hands service isn't running, so macOS can't be asked yet.",
         });
-        tty.line("Local Network and Full Disk Access yet. Run `hands install`, then `hands permissions` again.");
-        tty.line("");
+        tty.line("Run `hands install`, then `hands permissions` again.");
+        return 1;
     }
-    let mac: Arc<dyn Mac> = Arc::new(RealMac);
-    let mut outcomes = walk(mac, tty, &items, &Timing::default());
-    remember_asked(&items);
-    outcomes.extend(
-        Item::ALL
-            .into_iter()
-            .filter(|item| !items.contains(item))
-            .map(|item| (item, Outcome::Unknown("the hands service isn't running".into()))),
-    );
+    let mac: Arc<dyn Mac> = Arc::new(RealMac { restart: true });
+    let outcomes = walk(mac, tty, &Item::ALL, &Timing::default());
+    remember_asked(&Item::ALL);
     tty.line("");
     let lines = summary(&outcomes);
     for line in &lines {
@@ -671,6 +776,14 @@ const USAGE: &str = "usage: hands permissions [--check] [--json]";
 
 /// `hands permissions [--check] [--json]`.
 pub fn main(args: &[String]) -> i32 {
+    // The supervisor's fresh look at a desktop permission (`probe`).
+    if let [flag, key] = args
+        && flag == "--probe"
+        && let Some(item) = Item::from_key(key)
+    {
+        println!("{}", if tcc::granted(item) { "granted" } else { "missing" });
+        return 0;
+    }
     let (mut check, mut json_output) = (false, false);
     for arg in args {
         match arg.as_str() {
@@ -690,7 +803,7 @@ pub fn main(args: &[String]) -> i32 {
     {
         return walkthrough(&mut tty);
     }
-    let statuses = report(&RealMac);
+    let statuses = report(&RealMac { restart: false });
     if json_output {
         let mut object = Map::new();
         for (item, status) in &statuses {
@@ -825,7 +938,7 @@ mod tests {
         // Screen Recording was already granted: only Accessibility was asked for.
         assert_eq!(mac.events(), ["ask accessibility"]);
         assert_eq!(console.lines[0], "[1/2] Accessibility: read and use apps' buttons, menus and fields");
-        assert!(console.lines.iter().any(|line| line.contains("Turn on \"Mycroft Hands\"")));
+        assert!(console.lines.iter().any(|line| line.contains("turn on \"hands\" under Accessibility")));
         assert!(console.lines.iter().any(|line| line.starts_with("[2/2] Screen Recording")));
     }
 
@@ -856,7 +969,7 @@ mod tests {
     fn reports_what_doesnt_apply_or_cant_be_told() {
         let mac = FakeMac::new(vec![
             (Item::LocalNetwork, vec![Status::NotApplicable("macOS asks for it from version 15".into())]),
-            (Item::ScreenRecording, vec![Status::Unknown("Mycroft Hands isn't answering".into())]),
+            (Item::ScreenRecording, vec![Status::Unknown("the hands service isn't running".into())]),
         ]);
         let mut console = console(vec![]);
         let outcomes = walk(mac.clone(), &mut console, &[Item::LocalNetwork, Item::ScreenRecording], &fast());
@@ -885,10 +998,10 @@ mod tests {
 
     #[test]
     fn access_refuses_outside_the_service_and_unknown_items() {
-        assert_eq!(access(&json!({ "what": "accessibility" })).unwrap_err().code, "EINVAL");
         assert_eq!(access(&json!({ "what": "nope" })).unwrap_err().code, "EINVAL");
         if cfg!(target_os = "macos") && !in_service() {
             assert_eq!(access(&json!({ "what": "desktop" })).unwrap_err().code, "not_service");
+            assert_eq!(access(&json!({ "what": "accessibility", "ask": true })).unwrap_err().code, "not_service");
         }
     }
 

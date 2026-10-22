@@ -26,6 +26,17 @@ ring = "=0.17.14"
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
 
+# Desktop control on macOS: Cua Driver runs in the supervisor (cua.rs), with its MCP instructions (core) and agent
+# cursor (cursor-overlay, platform-macos). Its SDK is async, so the supervisor keeps a tokio runtime for it. Pinned to
+# a release tag. Not on Linux: those builds are static musl, and Cua's Linux crates link X11.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+cua-driver-core = { git = "https://github.com/trycua/cua", tag = "cua-driver-rs-v0.38.0" }
+cua-driver-sdk = { git = "https://github.com/trycua/cua", tag = "cua-driver-rs-v0.38.0" }
+cursor-overlay = { git = "https://github.com/trycua/cua", tag = "cua-driver-rs-v0.38.0" }
+platform-macos = { git = "https://github.com/trycua/cua", tag = "cua-driver-rs-v0.38.0" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
 # Bonjour on Linux (macOS uses the system's dns_sd).
 [target.'cfg(target_os = "linux")'.dependencies]
 mdns-sd = { version = "=0.21.5", default-features = false }

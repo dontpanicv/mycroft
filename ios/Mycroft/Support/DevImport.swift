@@ -5,7 +5,6 @@ import PiDurableKit
 ///
 /// `scripts/dev-import.sh` drops files into the app's `Documents/import/` folder:
 /// - `codex-auth.json`: `~/.codex/auth.json` (ChatGPT sign-in made by Codex)
-/// - `jev.key`: the Jev API key from the Mac's keychain
 ///
 /// On launch they are moved into the keychain and deleted. On a real iPhone, sign in with the device code instead:
 /// sharing one refresh token with Codex makes the two apps log each other out.
@@ -25,16 +24,6 @@ enum DevImport {
                 imported.append("Codex auth.json import failed: \(error.localizedDescription)")
             }
             try? fm.removeItem(at: codex)
-        }
-        let jev = folder.appending(path: "jev.key")
-        if fm.fileExists(atPath: jev.path) {
-            if let key = try? String(contentsOf: jev, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-                !key.isEmpty
-            {
-                try? Keychain.write(key, for: Secret.jev)
-                imported.append("Jev API key")
-            }
-            try? fm.removeItem(at: jev)
         }
         return imported
     }

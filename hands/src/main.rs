@@ -6,6 +6,7 @@
 //! Based on the pi-env daemon of earendil-works/pi (MIT); see NOTICE.
 
 mod cli;
+mod cua;
 mod decode;
 mod errors;
 mod exec;
@@ -26,7 +27,6 @@ mod state;
 mod supervisor;
 mod sys;
 mod tls;
-mod ui;
 mod watch;
 mod window;
 
@@ -35,27 +35,23 @@ use std::env;
 
 const USAGE: &str = "usage: hands <command>
 
-  install [--pair <BASE> --pin <PIN>] [--desktop-zip <PATH>] [--no-service] [--bind <ADDR>] [--dry-run]
-          [--uninstall]             install the binary and the service (systemd user unit / LaunchAgent) that runs
-                                    `supervise --listen`; with --pair, pair with the phone too; on macOS, with
-                                    --desktop-zip (or MycroftHands.zip next to hands), also Mycroft Hands.app, the
-                                    desktop helper, and ask for its permissions
+  install [--pair <BASE> --pin <PIN>] [--no-service] [--bind <ADDR>] [--dry-run] [--uninstall]
+                                    install the binary and the service (systemd user unit / LaunchAgent) that runs
+                                    `supervise --listen`; with --pair, pair with the phone too; on macOS, then ask
+                                    for the permissions Mycroft needs
   pair --with <BASE> --pin <PIN> [--bind <ADDR>]
                                     pair with the phone (what the phone's install command runs, via install)
   paired [--json]                   list the paired phones
   unpair <name>                     remove a paired phone
   supervise [--listen] [--bind <ADDR>] [--detached]
-                                    the long-lived supervisor that owns jobs; with --listen, also the phone's
-                                    TLS WebSocket listener
+                                    the long-lived supervisor that owns jobs and, on macOS, desktop control; with
+                                    --listen, also the phone's TLS WebSocket listener
   serve [--stdio] [--token <hex>]   the pi-env protocol on stdin/stdout (over ssh, and per listener connection)
   jobs [--json]                     list supervised jobs
-  permissions [--check] [--json]    on macOS, walk through what Mycroft needs approved, one at a time:
-                                    Accessibility and Screen Recording (Mycroft Hands), the Desktop, Documents and
-                                    Downloads folders, Local Network and, optionally, Full Disk Access (hands);
-                                    --check only reports. On Linux, report the service and lingering
-  desktop permissions [--request] [--wait <SECONDS>] [--json]
-                                    Accessibility and Screen Recording of Mycroft Hands (macOS); --request opens
-                                    the app so macOS asks for each in turn, and waits until both are granted
+  permissions [--check] [--json]    on macOS, walk through what Mycroft needs approved for hands, one at a time:
+                                    Accessibility, Screen Recording, the Desktop, Documents and Downloads folders,
+                                    Local Network and, optionally, Full Disk Access; --check only reports. On
+                                    Linux, report the service and lingering
   doctor                            report the binary, supervisor, listener, paired phones, state dir and jobs
   version                           print the version
 
@@ -141,7 +137,6 @@ fn main() {
         Some("paired") => cli::paired(rest),
         Some("unpair") => cli::unpair(rest),
         Some("jobs") => cli::jobs(rest),
-        Some("desktop") => ui::app::main(rest),
         Some("permissions") => permissions::main(rest),
         Some("doctor") => cli::doctor(),
         Some("version" | "--version" | "-V") => {

@@ -29,6 +29,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     private var viewFeeds: [Int: Task<Void, Never>] = [:]
     private var feeds: [String: Task<Void, Never>] = [:]
     private let listener = Listener()
+    private lazy var talk = VoiceChat(listener: listener)
     private var server: InstallServer?
     private var copiedCommand = ""
     private var safari: SFSafariViewController?
@@ -58,6 +59,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "ui.boot":
             stopFeeds()
             startStateFeed()
+            // A conversation lives in the app, not the page: a reloaded page (a new generation's boot.js) picks it up.
+            if talk.isOn { followTalk() }
             let saved = preview ? nil : UserDefaults.standard.string(forKey: Self.uiStateKey)
             return ["state": stateObject(), "uiState": saved ?? NSNull(), "preview": preview]
         case "ui.ready":
@@ -146,13 +149,6 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "signin.signOut":
             try writable()
             await app.signOut()
-        case "keys.save":
-            try writable()
-            let value: String = args.string("value") ?? ""
-            switch args.string("name") {
-            case "jev": try app.saveJevKey(value)
-            default: throw BridgeError("Unknown key \(args.string("name") ?? "")")
-            }
 
         // Machines
         case "machines.exec":
@@ -195,7 +191,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         // Dictation into a composer (Voice/Listener.swift)
         case "listen.start":
             try writable()
-            await listener.start(try args.require("owner"), prefix: args.string("prefix") ?? "", dictation: app.dictation)
+            endTalk()
+            await listener.start(try args.require("owner"), prefix: args.string("prefix") ?? "")
             followListener()
         case "listen.stop":
             return ["text": await listener.stop()]
@@ -204,12 +201,37 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "listen.clear":
             listener.clear()
         case "listen.close":
-            listener.shutDown()
-        case "dictation.engine":
+            // A conversation keeps the listener when a composer goes away.
+            if !talk.isOn { listener.shutDown() }
+
+        // Conversation mode (Voice/VoiceChat.swift)
+        case "talk.start":
             try writable()
-            guard let engine = args.string("engine").flatMap(Dictation.init) else { throw BridgeError("Unknown engine") }
-            if engine == .fluid, !FluidSpeech.isBundled { throw BridgeError("This build of Mycroft doesn't include Fluid Speech Mini.") }
-            app.dictation = engine
+            await talk.start(thread: args.int("id"))
+            followTalk()
+            if !talk.isOn, let error = talk.error { throw BridgeError(error) }
+        case "talk.end":
+            endTalk()
+        case "talk.tap":
+            talk.tap()
+        case "talk.mute":
+            talk.mute(args.bool("on") ?? true)
+        case "voice.choose":
+            try writable()
+            guard let voice = args.string("voice"), Speaker.voices.contains(where: { $0.id == voice }) else {
+                throw BridgeError("Unknown voice")
+            }
+            if talk.isOn {
+                Speaker.shared.voice = voice
+            } else {
+                try await Speaker.shared.sample(voice)
+            }
+
+        // The model new threads use (Agent/Brain.swift)
+        case "brain.choose":
+            try writable()
+            guard let brain = args.string("brain").flatMap(Brain.init) else { throw BridgeError("Unknown model") }
+            app.brain = brain
 
         // Self
         case "generation.rollback":
@@ -278,14 +300,20 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         case .ready: ["phase": "ready"]
         case .failed(let message): ["phase": "failed", "failure": message]
         }
+        let voice: [String: Any] = [
+            "bundled": Speaker.isBundled, "ready": Speaker.shared.ready, "voice": Speaker.shared.voice,
+            "voices": Speaker.voices.map { ["id": $0.id, "name": $0.name, "accent": $0.accent] },
+        ]
+        let brain: [String: Any] = ["model": app.brain.rawValue, "appleUnavailable": Brain.appleUnavailable ?? NSNull()]
         return phase.merging([
             "generation": Self.object(app.generation) ?? NSNull(),
             "threads": Self.object(app.threads) ?? [],
             "archived": Self.object(app.archivedThreads) ?? [],
             "busy": app.busyThreads.map(\.rawValue).sorted(),
             "signIn": signIn,
-            "keys": ["jev": app.hasJevKey],
-            "dictation": ["engine": app.dictation.rawValue, "fluid": FluidSpeech.isBundled, "ready": app.fluidReady],
+            "dictation": ["bundled": FluidSpeech.isBundled, "ready": app.dictationReady],
+            "voice": voice,
+            "brain": brain,
             "machines": Self.object(app.machines) ?? [],
             "notices": app.notices,
             "model": Provider.defaultModel.modelId,
@@ -312,10 +340,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     private func openView(_ id: Int) {
         viewFeeds[id]?.cancel()
         viewFeeds[id] = Task { [weak self] in
-            guard let conversation = try? await self?.app.conversation(ConversationID(id)) else {
-                self?.send("view", ["thread": id, "error": "This thread no longer exists."])
-                return
-            }
+            guard let conversation = await self?.conversation(id), !Task.isCancelled else { return }
             var shown: [EntryID]?
             do {
                 for try await view in conversation.views() {
@@ -339,6 +364,20 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
+    /// Thread `id`'s conversation, or nil after telling the page why there is none. The screen loads while the brain wakes
+    /// up, and reopens the thread that was open at once: this waits for the brain, or a thread that exists would be
+    /// reported missing.
+    private func conversation(_ id: Int) async -> Conversation? {
+        await app.start()
+        do {
+            if let conversation = try await app.conversation(ConversationID(id)) { return conversation }
+            send("view", ["thread": id, "error": app.harness == nil ? "Mycroft could not start." : "This thread no longer exists."])
+        } catch {
+            send("view", ["thread": id, "error": error.localizedDescription])
+        }
+        return nil
+    }
+
     /// Polls a native object while the page needs it and sends what changed.
     private func feed(_ type: String, every interval: Duration = .milliseconds(100), _ read: @escaping () -> [String: Any]) {
         feeds[type]?.cancel()
@@ -359,16 +398,31 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         viewFeeds.values.forEach { $0.cancel() }
         viewFeeds = [:]
         stopPairing()
-        listener.shutDown()
+        if !talk.isOn { listener.shutDown() }
     }
 
     /// The page went away for good.
     func tearDown() {
         stateFeed?.cancel()
+        endTalk()
         stopFeeds()
     }
 
     // MARK: Voice, pairing
+
+    /// The `talk` events while a conversation is on.
+    private func followTalk() {
+        guard talk.isOn || talk.error != nil else { return }
+        feed("talk", every: .milliseconds(80)) { [talk] in talk.snapshot() }
+    }
+
+    /// Ends the conversation, if one is on, and tells the page.
+    private func endTalk() {
+        guard talk.isOn else { return }
+        talk.end()
+        feeds.removeValue(forKey: "talk")?.cancel()
+        send("talk", talk.snapshot())
+    }
 
     /// The `listen` events while the listener is in use; they stop with the page.
     private func followListener() {
@@ -511,6 +565,9 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let notices = """
         Mycroft's screen is built with Preact (MIT, © Jason Miller) and htm (Apache-2.0, © Google LLC), \
         bundled as htm's preact/standalone build.
+
+        Mycroft's voice in a conversation is Phonon 31m by Gradium (Apache-2.0), https://huggingface.co/gradium/phonon-31m-en, \
+        in FluidInference's Core ML conversion (https://huggingface.co/FluidInference/pocket-tts-coreml), run by FluidAudio.
 
         Dictation uses Fluid Speech Mini by FluidVoice (CC-BY-4.0), \
         https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-coreml, built on NVIDIA's Parakeet TDT 0.6B v3 \

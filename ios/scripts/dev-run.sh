@@ -6,7 +6,6 @@
 # - ~/.codex/auth.json (your ChatGPT sign-in from Codex) is copied into the app and moved into its keychain on launch.
 #   Both apps then hold the same refresh token; whichever refreshes first logs the other out. Fine for a Simulator,
 #   use the in-app device-code sign-in on your iPhone.
-# - The Jev key (service mycroft.jev, account jev) is read from the macOS keychain and moved into the app's keychain.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,6 +15,7 @@ BUNDLE_ID="${BUNDLE_ID:-dev.mycroft.app}"
 
 xcodegen generate --quiet
 scripts/fetch-fluid-speech.sh >/dev/null
+scripts/fetch-phonon.sh >/dev/null
 xcrun simctl boot "$UDID" 2>/dev/null || true
 open "$(xcode-select -p)/Applications/Simulator.app" --args -CurrentDeviceUDID "$UDID" || true
 xcodebuild -project Mycroft.xcodeproj -scheme Mycroft -destination "platform=iOS Simulator,id=$UDID" \
@@ -27,10 +27,6 @@ mkdir -p "$DATA/Documents/import"
 if [[ -f "$HOME/.codex/auth.json" && "${SKIP_CODEX_AUTH:-0}" != 1 ]]; then
   install -m 600 "$HOME/.codex/auth.json" "$DATA/Documents/import/codex-auth.json"
   echo "handed over ~/.codex/auth.json"
-fi
-if security find-generic-password -s mycroft.jev -a jev >/dev/null 2>&1; then
-  (umask 077; security find-generic-password -s mycroft.jev -a jev -w > "$DATA/Documents/import/jev.key")
-  echo "handed over the Jev key"
 fi
 
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true

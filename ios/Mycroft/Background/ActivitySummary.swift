@@ -35,17 +35,39 @@ nonisolated enum ActivitySummary {
             return Step(headline: "Editing \(file(string("path")))\(on)", machine: machine, kind: .file)
         case "hands_list", "ls":
             return Step(headline: "Looking through \(file(string("path")))\(on)", machine: machine, kind: .read)
-        case "desktop_do":
-            return Step(headline: "\(machine ?? "Mac"): \(string("goal") ?? "using apps")", machine: machine, kind: .desktop)
-        case "ui_screenshot":
+        // Cua Driver's tools on a Mac (Desktop/CuaTools.swift).
+        case "get_window_state", "get_accessibility_tree":
+            let what = string("query").map { "for “\($0)”" } ?? "at \(string("app") ?? "a window")"
+            return Step(headline: "Looking \(what)\(on)", machine: machine, kind: .desktop)
+        case "get_desktop_state":
             return Step(headline: "Looking at the screen\(on)", machine: machine, kind: .read)
-        case "ui_observe":
-            return Step(headline: "Looking at \(string("app") ?? "the screen")\(on)", machine: machine, kind: .desktop)
-        case "ui_act":
-            let action = string("action") ?? "Using"
-            let target = string("target").map { " “\($0)”" } ?? ""
-            let app = string("app").map { " in \($0)" } ?? ""
-            return Step(headline: "\(action.capitalized)\(target)\(app)\(on)", machine: machine, kind: .desktop)
+        case "list_apps", "list_windows":
+            return Step(headline: "Checking the open apps\(on)", machine: machine, kind: .read)
+        case "launch_app":
+            return Step(headline: "Opening \(string("name") ?? string("bundle_id") ?? "an app")\(on)", machine: machine, kind: .desktop)
+        case "bring_to_front":
+            return Step(headline: "Bringing a window forward\(on)", machine: machine, kind: .desktop)
+        case "kill_app":
+            return Step(headline: "Force-quitting an app\(on)", machine: machine, kind: .desktop)
+        case "click", "double_click", "right_click":
+            return Step(headline: "Clicking\(on)", machine: machine, kind: .desktop)
+        case "type_text", "type_text_chars":
+            return Step(headline: "Typing \(string("text").map { "“\($0)”" } ?? "text")\(on)", machine: machine, kind: .desktop)
+        case "press_key", "hotkey":
+            let keys = (arguments["keys"]?.arrayValue?.compactMap(\.stringValue) ?? [string("key")].compactMap { $0 }).joined(separator: "+")
+            return Step(headline: "Pressing \(keys.isEmpty ? "keys" : keys)\(on)", machine: machine, kind: .desktop)
+        case "scroll":
+            return Step(headline: "Scrolling\(string("direction").map { " \($0)" } ?? "")\(on)", machine: machine, kind: .desktop)
+        case "set_value":
+            return Step(headline: "Setting \(string("value").map { "“\($0)”" } ?? "a value")\(on)", machine: machine, kind: .desktop)
+        case "invoke_menu":
+            let path = arguments["path"]?.arrayValue?.compactMap(\.stringValue).joined(separator: " > ")
+            return Step(headline: "Choosing \(path.map(clip) ?? "a menu item")\(on)", machine: machine, kind: .desktop)
+        case "run_steps":
+            let count = arguments["steps"]?.arrayValue?.count ?? 0
+            return Step(headline: "Running \(count > 0 ? plural(count, "step") : "steps") in an app\(on)", machine: machine, kind: .desktop)
+        case "verify_state":
+            return Step(headline: "Checking the result\(on)", machine: machine, kind: .read)
         case "now": return Step(headline: "Checking the time", machine: nil, kind: .read)
         default: return Step(headline: "Using \(tool)\(on)", machine: machine, kind: .other)
         }

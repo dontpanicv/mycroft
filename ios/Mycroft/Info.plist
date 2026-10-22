@@ -34,8 +34,6 @@
 	<string>Mycroft connects to your machines running hands on this network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Mycroft listens while you dictate or talk to it.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Mycroft turns your speech into text on this iPhone.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIAppFonts</key>

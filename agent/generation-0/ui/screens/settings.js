@@ -1,5 +1,5 @@
-// Settings: the ChatGPT sign-in, the dictation model, sending while Mycroft works, API keys, Mycroft's generations,
-// paired machines, notices.
+// Settings: paired machines, the model new threads use and the ChatGPT sign-in, the conversation voice, sending while
+// Mycroft works, notices, and Mycroft's generations as a tree.
 
 import { html, useEffect, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Spinner, pad, ago, haptic } from '../lib.js'
@@ -24,16 +24,12 @@ function Section({ title, children }) {
 export function Settings() {
 	const state = useData((d) => d.state)
 	return html`<${Page} title="Settings">
-		<${Section} title="Model"><${SignIn} /><//>
-		<${Section} title="Dictation"><${Dictation} dictation=${state?.dictation} /><//>
-		<${Section} title="While Mycroft works"><${WhileWorking} /><//>
-		<${Section} title="Desktop control · Jev">
-			<${KeyField} name="jev" saved=${state?.keys?.jev}
-				about="Jev (typesafe.ai) picks the next action on your Mac from its accessibility tree." />
-		<//>
-		<${Section} title="Self"><${Generations} generation=${state?.generation} /><//>
 		<${Section} title="Machines"><${Machines} machines=${state?.machines ?? []} /><//>
+		<${Section} title="Model"><${Brain} brain=${state?.brain} /><${SignIn} /><//>
+		<${Section} title="Conversation voice"><${Voice} voice=${state?.voice} /><//>
+		<${Section} title="While Mycroft works"><${WhileWorking} /><//>
 		<${Section} title="About"><${About} /><//>
+		<${Section} title="Self"><${Generations} generation=${state?.generation} /><//>
 	<//>`
 }
 
@@ -50,7 +46,7 @@ export function SignIn() {
 	switch (signIn.state) {
 		case 'signedIn':
 			return html`<div class="card row between">
-				<div><p class="mono strong">ChatGPT</p><p class="muted small">Sol 6.1 is the default for new threads.</p></div>
+				<div><p class="mono strong">ChatGPT</p><p class="muted small">Signed in, for Sol 6.1.</p></div>
 				<button class="button glass" onClick=${() => call('signin.signOut')}>Sign out</button>
 			</div>`
 		case 'waiting': {
@@ -70,21 +66,34 @@ export function SignIn() {
 	}
 }
 
-const engines = [
-	{ id: 'fluid', name: 'Fluid Speech Mini', about: 'Fewer mistakes, even with other voices around. Text arrives in short steps.' },
-	{ id: 'apple', name: 'Apple', about: 'Words appear as you say them.' },
+const brains = [
+	{ id: 'sol', name: 'Sol 6.1', about: 'Your ChatGPT subscription. Every tool: machines, desktop, self-editing.' },
+	{ id: 'apple', name: 'Apple on-device', about: 'Experimental. Runs on this iPhone, no sign-in, but a small memory and no machine tools.' },
 ]
 
-/** Which on-device model turns speech into text. */
-function Dictation({ dictation }) {
+/** The model new threads think with. A thread keeps the model it started with. */
+function Brain({ brain }) {
 	const call = useCall()
-	if (!dictation) return null
-	const options = engines.map((engine) => ({ ...engine, disabled: engine.id === 'fluid' && !dictation.fluid }))
-	return html`<${Choices} label="Dictation model" options=${options} chosen=${dictation.engine}
-		onChoose=${(engine) => call('dictation.engine', { engine })}>
-		${!dictation.fluid && html`<p class="faint small">This build doesn't include Fluid Speech Mini.</p>`}
-		${dictation.fluid && dictation.engine === 'fluid' && !dictation.ready && html`<p class="faint small">Fluid Speech Mini is loading; until then dictation uses Apple's model.</p>`}
-		<p class="faint small">Both run on this iPhone.</p>
+	if (!brain) return null
+	const options = brains.map((option) => ({ ...option, disabled: option.id === 'apple' && brain.appleUnavailable && brain.model !== 'apple' }))
+	return html`<${Choices} label="Model for new threads" options=${options} chosen=${brain.model}
+		onChoose=${(model) => call('brain.choose', { brain: model })}>
+		${brain.appleUnavailable && html`<p class="faint small">${brain.appleUnavailable}</p>`}
+		<p class="faint small">For new threads; a thread keeps its model.</p>
+	<//>`
+}
+
+/** The voice Mycroft speaks with in a conversation. Choosing one plays a sample. */
+function Voice({ voice }) {
+	const call = useCall()
+	const [error, setError] = useState(null)
+	if (!voice) return null
+	if (!voice.bundled) return html`<div class="card"><p class="faint small">This build doesn't include Mycroft's voice (Phonon), so there is no conversation mode.</p></div>`
+	const options = voice.voices.map((v) => ({ id: v.id, name: v.name, about: v.accent }))
+	const choose = (id) => call('voice.choose', { voice: id }).then(() => setError(null), (e) => setError(e.message))
+	return html`<${Choices} label="Conversation voice" options=${options} chosen=${voice.voice} onChoose=${choose}>
+		${error && html`<p class="danger small">${error}</p>`}
+		<p class="faint small">Phonon by Gradium, on this iPhone. Talk with Mycroft from the wave next to the mic in a thread.</p>
 	<//>`
 }
 
@@ -119,32 +128,58 @@ function Choices({ label, options, chosen, onChoose, children }) {
 	</div>`
 }
 
-function KeyField({ name, saved, about }) {
-	const call = useCall()
-	const [value, setValue] = useState('')
-	const save = async () => {
-		await call('keys.save', { name, value })
-		setValue('')
-		haptic(call, 'success')
+/**
+ * The generations newest first, each with its lane in the graph, as `git log --graph` draws it. A lane waits for a
+ * parent: a generation takes the lane waiting for it (or a new one, at a branch's tip), and the other lanes waiting for
+ * it end there, where branches split. `before` and `after` are the lanes above and below its row.
+ */
+export function graph(history) {
+	const rows = []
+	let lanes = []
+	for (const record of [...history].sort((a, b) => b.generation - a.generation)) {
+		const parent = record.parent ?? (record.generation > 0 ? record.generation - 1 : null)
+		const before = lanes
+		const waiting = before.flatMap((waits, index) => (waits === record.generation ? [index] : []))
+		const after = [...before]
+		for (const index of waiting) after[index] = null
+		let lane = waiting[0] ?? after.indexOf(null)
+		if (lane < 0) lane = after.length
+		after[lane] = parent
+		while (after.length && after[after.length - 1] === null) after.pop()
+		rows.push({ record, lane, before, after })
+		lanes = after
 	}
-	return html`<div class="card stack">
-		<p class="muted small">${about} The key stays in this iPhone's keychain.</p>
-		<div class="row gap">
-			<input class="input grow" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
-				placeholder=${saved ? 'Key saved — paste to replace' : 'Paste API key'} value=${value} onInput=${(e) => setValue(e.target.value)} />
-			<button class="button glass" disabled=${!value && !saved} onClick=${save}>${!value && saved ? 'Remove' : 'Save'}</button>
-		</div>
-	</div>`
+	return rows
 }
 
-/** Mycroft's generations, newest first, like a git log. Tap twice to switch to one. */
+const laneWidth = 14
+const dotY = 20
+const laneX = (lane) => 7 + lane * laneWidth
+
+/** One row's piece of the graph: lanes passing by, the generation's dot, and the lines into it from above and below. */
+function GraphCell({ row, lanes, active }) {
+	const { record, lane, before, after } = row
+	const x = laneX(lane)
+	return html`<span class="gen-graph" style=${{ width: `${lanes * laneWidth}px` }} aria-hidden="true"><svg>
+		${before.map((waits, index) => waits === null ? null
+			: waits === record.generation
+				? html`<line x1=${laneX(index)} y1="0" x2=${x} y2=${dotY} />`
+				: html`<line x1=${laneX(index)} y1="0" x2=${laneX(index)} y2="100%" />`)}
+		${after[lane] != null && html`<line x1=${x} y1=${dotY} x2=${x} y2="100%" />`}
+		<circle cx=${x} cy=${dotY} r="4" class=${record.generation === active ? 'active' : ''} />
+	</svg></span>`
+}
+
+/** Mycroft's generations as a tree, newest first: switching back and changing Mycroft from there starts a branch. Tap
+ * twice to switch to one. */
 function Generations({ generation }) {
 	const call = useCall()
 	const [armed, setArmed] = useState(null)
 	const [all, setAll] = useState(false)
 	if (!generation) return null
-	const history = [...generation.history].sort((a, b) => b.generation - a.generation)
-	const shown = all ? history : history.slice(0, 5)
+	const rows = graph(generation.history)
+	const shown = all ? rows : rows.slice(0, 5)
+	const lanes = Math.max(1, ...shown.map((row) => Math.max(row.before.length, row.after.length, row.lane + 1)))
 	const use = (number) => {
 		if (armed !== number) return setArmed(number)
 		setArmed(null)
@@ -152,15 +187,19 @@ function Generations({ generation }) {
 		call('generation.rollback', { generation: number })
 	}
 	return html`<div class="card list-card">
-		${shown.map((record) => html`<div class="gen-row">
+		${shown.map((row) => {
+			const { record } = row
+			return html`<div class="gen-row">
+			<${GraphCell} row=${row} lanes=${lanes} active=${generation.active} />
 			<span class="index">${pad(record.generation)}</span>
 			<span class="grow"><span class="block">${record.note}</span><span class="faint mono tiny">${ago(record.createdAt)}</span></span>
 			${record.generation === generation.active
 				? html`<${Tag} tone="soft">Active<//>`
 				: html`<button class=${`button small glass ${armed === record.generation ? 'prominent' : ''}`} onClick=${() => use(record.generation)}>
 						${armed === record.generation ? 'Switch?' : record.generation === generation.lastGood ? 'Last good' : 'Use'}</button>`}
-		</div>`)}
-		${shown.length < history.length && html`<button class="more inline" onClick=${() => setAll(true)}>Show ${history.length - shown.length} older</button>`}
+			</div>`
+		})}
+		${shown.length < rows.length && html`<button class="more inline" onClick=${() => setAll(true)}>Show ${rows.length - shown.length} older</button>`}
 		<p class="faint small">Shake the phone to recover from a broken generation.</p>
 	</div>`
 }
