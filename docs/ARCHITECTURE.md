@@ -92,7 +92,7 @@ This is Mario's "kill and respawn, pi durable takes care of the rest", made safe
 - The recognizer is Fluid Speech Mini, bundled in the app and run through FluidAudio on the Neural Engine; the turn is transcribed again every second and at each pause ([ADR 0014](decisions/0014-dictation-fluid-speech-mini.md), [0017](decisions/0017-fluid-speech-mini-only.md)). It loads when the app starts; audio heard before that is kept and transcribed once it has.
 - The loop lives in the native host (`Listener`, `AVAudioSession` in play-and-record mode with no voice processing, and the `audio` background mode), so it runs with the screen locked, and a self-edit of the screen never drops it.
 - A thread can also be a conversation ([ADR 0016](decisions/0016-conversation-mode.md)): `VoiceChat` listens hands-free with echo cancellation, sends each turn when the user pauses, and speaks each new sentence of the run's streaming text in Gradium's Phonon voice (bundled, through FluidAudio), so it talks while it works. Words that aren't its own echo cut it off.
-- New threads use Sol 6.1 or, as an experiment, Apple's on-device model (Settings → Model, ADR 0016); Apple's threads get Mycroft's own extension only.
+- New threads use Sol 6.1 at high effort. Apple's on-device model was tried as an option (ADR 0016) and removed: too small to be useful.
 
 ## 8. Threads
 

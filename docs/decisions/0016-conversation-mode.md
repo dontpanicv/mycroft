@@ -59,7 +59,8 @@ for hearing; brings back speaking, which [0011](0011-dictation-parakeet.md) remo
     can turn it into a message. A tap on the orb always cuts in. After a cut-in nothing more of that run is said
     until the user's next message.
   - Every turn goes as a steer: talking while Mycroft works redirects it.
-- **Apple's on-device model, as an experiment.** Settings → Model picks what new threads use: Sol 6.1 or Apple's
+- **Apple's on-device model, as an experiment** (removed 22 Oct 2026: unusable for Mycroft's work. Settings has no
+  choice of model; new threads use Sol 6.1 at high effort, and compaction is pi-durable's default again). Settings → Model picks what new threads use: Sol 6.1 or Apple's
   on-device Foundation Model (`FoundationModelsProvider` in PiDurableKit). A thread keeps the model it started with.
   The on-device window is a few thousand tokens, so Apple's threads get only Mycroft's own extension (no machines,
   desktop, self-editing or code mode) and say so in their instructions. Compaction is sized for that window

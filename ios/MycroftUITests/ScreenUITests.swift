@@ -191,27 +191,32 @@ final class ScreenUITests: XCTestCase {
         app.buttons["Back"].tap()
     }
 
-    /// Settings: machines first, the generations last, drawn as a tree.
+    /// Settings, the most used first: machines, then the generations, drawn as a tree, then the voice, the ChatGPT
+    /// sign-in and the notices.
     func testSettingsOrderAndGenerationTree() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
         app.launch()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
         app.buttons["Settings"].tap()
-        let machines = app.buttons["Add machine"], model = app.descendants(matching: .any)["Sol 6.1"]
+        let any = app.descendants(matching: .any)
+        let machines = app.buttons["Add machine"]
         XCTAssertTrue(machines.waitForExistence(timeout: 10))
-        XCTAssertTrue(model.exists)
-        XCTAssertLessThan(machines.frame.minY, model.frame.minY, "Machines come before the model")
+        let order = [
+            machines,
+            any.matching(NSPredicate(format: "label BEGINSWITH 'Shake the phone'")).firstMatch,
+            any["Zoey"],
+            any.matching(NSPredicate(format: "label CONTAINS 'ChatGPT'")).firstMatch,
+            app.buttons["Open source notices"],
+        ]
+        let tops = order.map(\.frame.minY)
+        XCTAssertEqual(tops, tops.sorted(), "machines, generations, voice, sign-in, notices")
         snap(app, "settings-top")
-        let notices = app.buttons["Open source notices"]
-        for _ in 0..<12 where !app.buttons["Shake the phone"].exists && !notices.isHittable { app.swipeUp() }
-        app.swipeUp()
         let older = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show '")).firstMatch
+        for _ in 0..<6 where !older.isHittable { app.swipeUp() }
         if older.exists { older.tap() }
         sleep(1)
         snap(app, "settings-generations")
-        app.swipeUp()
-        snap(app, "settings-generations-2")
     }
 
     /// Add machine: the short command, and the network picker switching it to another of the phone's addresses.
@@ -292,8 +297,8 @@ final class ScreenUITests: XCTestCase {
         snap(app, "relaunched-into-thread")
     }
 
-    /// Conversation mode: Settings offers the model for new threads and the conversation voice; the wave next to the
-    /// mic swaps the composer for the conversation's dock, and ending it brings the composer back.
+    /// Conversation mode: Settings offers the conversation voice (and no choice of model); the wave next to the mic
+    /// swaps the composer for the conversation's dock, and ending it brings the composer back.
     func testConversationMode() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-ui"]
@@ -301,8 +306,8 @@ final class ScreenUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 30))
         app.buttons["Settings"].tap()
         let any = app.descendants(matching: .any)
-        XCTAssertTrue(any["Sol 6.1"].waitForExistence(timeout: 10), "Settings offers Sol")
-        XCTAssertTrue(any["Apple on-device"].exists, "and Apple's model")
+        XCTAssertTrue(app.buttons["Add machine"].waitForExistence(timeout: 10))
+        XCTAssertFalse(any["Apple on-device"].exists, "no choice of model")
         snap(app, "settings-model")
         app.swipeUp()
         XCTAssertTrue(any["Zoey"].waitForExistence(timeout: 5), "Settings offers the voices")

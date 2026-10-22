@@ -17,7 +17,7 @@ lives in a store that survives the swap.
 | `screens/thread.js` | A thread or a new thread's draft: transcript (user turns, finished runs folded into "Worked for", answers with Copy and Fork), the run capsule, the queue sheet, rename. |
 | `screens/composer.js` | The composer: field with clear, the conversation button, dictation (hold, slide to cancel or lock, tap), send / queue / steer / stop. |
 | `screens/talk.js` | Conversation mode's dock, in the composer's place while the user talks with Mycroft: what is said, the orb, mute, end. |
-| `screens/settings.js` | Settings: machines, model for new threads, sign-in, conversation voice, queue or steer, notices, and generations as a tree (`graph`). |
+| `screens/settings.js` | Settings, most used first: machines, generations as a tree (`graph`), conversation voice, queue or steer, the ChatGPT sign-in, notices. |
 | `screens/pair.js` | Adding a machine. |
 | `style.css` | All styling. Colours are CSS variables in `:root` (`--accent`, `--accent-soft`, `--canvas`, `--raised`, `--ink`, `--ink-muted`, `--success`, `--danger`, `--warning`). |
 
@@ -68,7 +68,6 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
   dictation: { bundled: bool, ready: bool },   // Fluid Speech Mini, the dictation model: in this build; loaded
   voice: { bundled, ready, voice, voices: [{ id, name, accent }] },    // the conversation voice (Phonon); ready: loaded
-  brain: { model: 'sol'|'apple', appleUnavailable: string|null },     // the model new threads use; why Apple's can't run
   machines: [{ name, hostname, addresses, port, os, arch, version, pairedAt }],
   notices: [string], model: 'gpt-6.1-sol', screenErrors: [string] }
 ```
@@ -139,7 +138,6 @@ Other events:
 | `talk.tap` | | stops Mycroft speaking (and what it had left to say), or sends what the user said now |
 | `talk.mute` | `on` | ignores the microphone |
 | `voice.choose` | `voice` | the conversation voice (an id from `state.voice.voices`); outside a conversation it plays a sample |
-| `brain.choose` | `brain: 'sol'\|'apple'` | the model new threads use; a thread keeps its own |
 | `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |
 | `clipboard.copy` | `text` | |
 | `haptic` | `style: 'light'\|'medium'\|'success'\|'error'\|'selection'` | |

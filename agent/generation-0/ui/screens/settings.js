@@ -1,5 +1,5 @@
-// Settings: paired machines, the model new threads use and the ChatGPT sign-in, the conversation voice, sending while
-// Mycroft works, notices, and Mycroft's generations as a tree.
+// Settings, the most used first: paired machines, Mycroft's generations as a tree, the conversation voice, sending
+// while Mycroft works, the ChatGPT sign-in for Sol 6.1 (once), and notices.
 
 import { html, useEffect, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Spinner, pad, ago, haptic } from '../lib.js'
@@ -25,11 +25,11 @@ export function Settings() {
 	const state = useData((d) => d.state)
 	return html`<${Page} title="Settings">
 		<${Section} title="Machines"><${Machines} machines=${state?.machines ?? []} /><//>
-		<${Section} title="Model"><${Brain} brain=${state?.brain} /><${SignIn} /><//>
+		<${Section} title="Self"><${Generations} generation=${state?.generation} /><//>
 		<${Section} title="Conversation voice"><${Voice} voice=${state?.voice} /><//>
 		<${Section} title="While Mycroft works"><${WhileWorking} /><//>
+		<${Section} title="Model"><${SignIn} /><//>
 		<${Section} title="About"><${About} /><//>
-		<${Section} title="Self"><${Generations} generation=${state?.generation} /><//>
 	<//>`
 }
 
@@ -64,23 +64,6 @@ export function SignIn() {
 		default:
 			return html`<div class="card stack"><p>Sign in with your ChatGPT subscription to use Sol 6.1.</p>${button}</div>`
 	}
-}
-
-const brains = [
-	{ id: 'sol', name: 'Sol 6.1', about: 'Your ChatGPT subscription. Every tool: machines, desktop, self-editing.' },
-	{ id: 'apple', name: 'Apple on-device', about: 'Experimental. Runs on this iPhone, no sign-in, but a small memory and no machine tools.' },
-]
-
-/** The model new threads think with. A thread keeps the model it started with. */
-function Brain({ brain }) {
-	const call = useCall()
-	if (!brain) return null
-	const options = brains.map((option) => ({ ...option, disabled: option.id === 'apple' && brain.appleUnavailable && brain.model !== 'apple' }))
-	return html`<${Choices} label="Model for new threads" options=${options} chosen=${brain.model}
-		onChoose=${(model) => call('brain.choose', { brain: model })}>
-		${brain.appleUnavailable && html`<p class="faint small">${brain.appleUnavailable}</p>`}
-		<p class="faint small">For new threads; a thread keeps its model.</p>
-	<//>`
 }
 
 /** The voice Mycroft speaks with in a conversation. Choosing one plays a sample. */

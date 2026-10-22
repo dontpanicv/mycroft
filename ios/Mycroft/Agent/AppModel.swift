@@ -33,10 +33,6 @@ final class AppModel {
     /// Fluid Speech Mini (Voice/FluidSpeech.swift) is loaded: dictation is transcribed at once. Until then the audio is
     /// kept and transcribed when it is.
     var dictationReady = false
-    /// The model new threads think with (Agent/Brain.swift).
-    var brain = Brain.saved {
-        didSet { UserDefaults.standard.set(brain.rawValue, forKey: Brain.key) }
-    }
     var notices: [String] = []
 
     let models = Models(credentials: .keychain(service: "dev.mycroft.credentials"))
@@ -79,11 +75,6 @@ final class AppModel {
             if CommandLine.arguments.contains("--slow-brain") { try? await Task.sleep(for: .seconds(4)) }
             #endif
             try await ScreenTools.register(on: models)
-            do {
-                try await models.register(FoundationModelsProvider(models: [.onDevice()]))
-            } catch {
-                log.error("Apple's model failed to register: \(error)")
-            }
             let harness = try await openHarness()
             self.harness = harness
             await refreshGeneration()
@@ -131,12 +122,10 @@ final class AppModel {
     /// Tool calls of one step run in parallel, so work on several machines happens at the same time.
     ///
     /// Partial answers are committed every 40 ms (pi-durable's default is 100), so a conversation speaks them sooner.
-    /// Compaction is sized for Apple's on-device model (a few thousand tokens): pi-durable's defaults keep 16,384
-    /// tokens free and would never compact such a window before it overflows. The thresholds are counted from each
-    /// model's own window, so Sol's threads still compact only when nearly full, keeping less verbatim.
-    nonisolated static let settings = Settings(
-        compaction: .forContextWindow(Brain.appleContextWindow), progress: .init(partialInterval: .milliseconds(40)),
-        toolExecution: .parallel)
+    nonisolated static let settings = Settings(progress: .init(partialInterval: .milliseconds(40)), toolExecution: .parallel)
+
+    /// A new thread's agent: Sol 6.1 on the ChatGPT subscription, thinking hard.
+    nonisolated static let agent = AgentChange(model: Provider.defaultModel, thinkingLevel: .high)
 
     private func selfExtension() -> Extension {
         SelfTools.makeExtension(store: generations, host: .init(
@@ -221,7 +210,7 @@ final class AppModel {
 
     func newThread() async throws -> ThreadMeta {
         guard let harness else { throw StartError.notReady }
-        let conversation = try await harness.createConversation(agent: brain.agent)
+        let conversation = try await harness.createConversation(agent: Self.agent)
         let meta = ThreadMeta(id: conversation.id, title: ThreadMeta.untitled, createdAt: .now, updatedAt: .now)
         try await harness.update(Threads.document) { $0.items.append(meta) }
         return meta
@@ -260,15 +249,10 @@ final class AppModel {
         RunMonitor.shared.runSubmitted(current)
     }
 
-    /// Asks the thread's agent to talk (or stops asking): the thread's instructions, with the note its model needs.
+    /// Asks the thread's agent to talk (or stops asking): the thread's instructions.
     func setVoice(_ on: Bool, in id: ConversationID) async throws {
         guard let conversation = try await conversation(id) else { return }
-        let apple = try await conversation.agentState().model?.provider == .apple
-        if let instructions = Instructions.compose(apple: apple, voice: on) {
-            try await conversation.configure(AgentChange(instructions: instructions))
-        } else {
-            try await conversation.configure(AgentChange(reset: [.instructions]))
-        }
+        try await conversation.configure(on ? AgentChange(instructions: Instructions.voice) : AgentChange(reset: [.instructions]))
     }
 
     /// Changes a thread's list metadata.

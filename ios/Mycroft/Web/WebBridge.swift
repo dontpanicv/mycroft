@@ -227,12 +227,6 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
                 try await Speaker.shared.sample(voice)
             }
 
-        // The model new threads use (Agent/Brain.swift)
-        case "brain.choose":
-            try writable()
-            guard let brain = args.string("brain").flatMap(Brain.init) else { throw BridgeError("Unknown model") }
-            app.brain = brain
-
         // Self
         case "generation.rollback":
             try writable()
@@ -304,7 +298,6 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             "bundled": Speaker.isBundled, "ready": Speaker.shared.ready, "voice": Speaker.shared.voice,
             "voices": Speaker.voices.map { ["id": $0.id, "name": $0.name, "accent": $0.accent] },
         ]
-        let brain: [String: Any] = ["model": app.brain.rawValue, "appleUnavailable": Brain.appleUnavailable ?? NSNull()]
         return phase.merging([
             "generation": Self.object(app.generation) ?? NSNull(),
             "threads": Self.object(app.threads) ?? [],
@@ -313,7 +306,6 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             "signIn": signIn,
             "dictation": ["bundled": FluidSpeech.isBundled, "ready": app.dictationReady],
             "voice": voice,
-            "brain": brain,
             "machines": Self.object(app.machines) ?? [],
             "notices": app.notices,
             "model": Provider.defaultModel.modelId,
