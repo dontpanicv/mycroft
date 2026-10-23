@@ -2,8 +2,8 @@ import XCTest
 
 /// The web screen without the model: it loads, navigates, keeps drafts, and shows its controls to accessibility.
 final class ScreenUITests: XCTestCase {
-    /// A row of the thread list: its label is "title · when · …".
-    static let threadRow = NSPredicate(format: "label CONTAINS ' · ' AND NOT label CONTAINS 'Draft'")
+    /// A row of the thread list: its label is "title · when · …". The infinite chat's row, above the list, isn't one.
+    static let threadRow = NSPredicate(format: "label CONTAINS ' · ' AND NOT label CONTAINS 'Draft' AND NOT label BEGINSWITH 'Mycroft ∞'")
 
     func testNavigationAndDrafts() throws {
         let app = XCUIApplication()

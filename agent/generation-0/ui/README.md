@@ -13,7 +13,7 @@ lives in a store that survives the swap.
 | `boot.js` | The link to the app, the two stores, and the hot swap. Changing it (or index.html) means a full page reload. |
 | `app.js` | `mount(root, runtime)` / `unmount(root)`, the routes, the edge-swipe back, the theme report. |
 | `lib.js` | Hooks (`useData`, `useUI`, `useCall`, `useNavigation`), markdown, formatting (`ago`, `duration`, `osName`, …), icons, `Label`, `Tag`, `Spinner`, `Sheet`. |
-| `screens/threads.js` | Home: the thread list (draft, pinned, active, the Settled shelf; swipe and long-press), sign-in, the new-thread button; the Archived screen. |
+| `screens/threads.js` | Home: the infinite chat's row ("Mycroft ∞"), the thread list (draft, pinned, active, the Settled shelf; swipe and long-press), sign-in, the new-thread button; the Archived screen. |
 | `screens/thread.js` | A thread or a new thread's draft: transcript (user turns, finished runs folded into "Worked for", answers with Copy and Fork), the run capsule, the queue sheet, rename. |
 | `screens/composer.js` | The composer: field with clear, the conversation button, dictation (hold, slide to cancel or lock, tap), send / queue / steer / stop. |
 | `screens/talk.js` | Conversation mode's dock, in the composer's place while the user talks with Mycroft: what is said, the orb, mute, end. |
@@ -64,6 +64,7 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
   threads: [{ id, title, createdAt, updatedAt, archived, pinned?, settledAt?, unsettledAt?,
              visitedAt?, finishedAt?, outcome?: 'done'|'failed'|'stopped', parent? }],   // newest first, not archived
   archived: [ …the same, archived ],
+  infinite: { …a thread, infinite: true } | null,   // the infinite chat: one thread that never ends, in neither list
   busy: [threadId],                                 // threads with a run going
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
   dictation: { bundled: bool, ready: bool },   // Fluid Speech Mini, the dictation model: in this build; loaded
@@ -76,7 +77,8 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
 
 ```
 { thread, busy, queued: [{ id, mode: 'followUp'|'steer', text }], model, error?,    // thread: its id; model: 'gpt-6.1-sol'
-  entries: [{ id, kind, model: [message] }],   // pi messages: role 'user' | 'assistant' | 'toolResult'. The app sends
+  entries: [{ id, kind, model: [message] }],   // pi messages: role 'user' | 'assistant' | 'toolResult'; kind
+                                               // 'pi.compaction' is the summary of what came before. The app sends
                                                // them whole once, then only what changed ({ keep, append }: boot.js
                                                // keeps the first `keep` and adds `append`), so `views` always has all
   live: { run?, generation?: { message }, tools: [{ callId, name, status, output }] } }
@@ -120,7 +122,7 @@ Other events:
 | `thread.unqueue` / `thread.steerNow` | `id, submission` | withdraws a queued message / hands it to the run now |
 | `thread.fork` | `id, entry` | a new thread with the history up to and including `entry` (an answer), titled "Fork · …"; returns it |
 | `thread.rename` | `id, title` | |
-| `thread.pin` / `thread.settle` / `thread.archive` | `id, on` | settling unpins; sending to a thread unsettles it |
+| `thread.pin` / `thread.settle` / `thread.archive` | `id, on` | settling unpins; sending to a thread unsettles it; the infinite chat can't be archived |
 | `signin.start` / `signin.signOut` | | ChatGPT device-code sign-in; progress arrives in `state.signIn` |
 | `signin.open` | `url, code?` | copies the code, opens the page in-app |
 | `machines.check` | | `{ name: 'online' \| reason }` |

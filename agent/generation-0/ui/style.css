@@ -208,6 +208,8 @@ button.glass.prominent:active:not(:disabled) { background: var(--accent); }
 .swipe-action.armed { background: var(--accent); color: white; }
 .shelf { width: 100%; display: flex; align-items: center; gap: 10px; padding: 22px var(--gutter) 10px; color: var(--ink-faint); }
 .shelf .rule { flex: 1; height: 1px; background: var(--hairline); }
+.list.infinite { margin-bottom: 18px; }
+.shelf.memory { padding: 10px 0 18px; }
 .more { display: block; margin: 12px var(--gutter) 0; width: calc(100% - 2 * var(--gutter)); padding: 11px; border: 1px dashed var(--hairline); font: 11px var(--mono); letter-spacing: 0.06em; color: var(--ink-faint); }
 .archived-open { text-align: left; min-width: 0; }
 .more.inline { margin: 12px 0 0; width: 100%; }

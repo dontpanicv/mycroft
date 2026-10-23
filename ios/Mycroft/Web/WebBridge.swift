@@ -177,7 +177,9 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         },
         "thread.archive": .write { bridge, args in
             let on = args.bool("on") ?? true
-            try await bridge.app.edit(try bridge.thread(args).id) { $0.archived = on }
+            let thread = try bridge.thread(args)
+            guard thread.infinite != true else { throw Failure("The infinite chat stays.") }
+            try await bridge.app.edit(thread.id) { $0.archived = on }
             return nil
         },
     ]
@@ -330,7 +332,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         ]
         return phase.merging([
             "generation": Self.object(app.generation) ?? NSNull(),
-            "threads": Self.object(app.threads.filter { !$0.archived }) ?? [],
+            "threads": Self.object(app.threads.filter { !$0.archived && $0.infinite != true }) ?? [],
+            "infinite": app.threads.first(where: { $0.infinite == true }).flatMap { Self.object($0) } ?? NSNull(),
             "archived": Self.object(app.threads.filter(\.archived)) ?? [],
             "busy": app.busyThreads.map(\.rawValue).sorted(),
             "signIn": signIn,

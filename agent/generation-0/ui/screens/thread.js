@@ -14,8 +14,8 @@ export function Thread({ id }) {
 	const { back, go, replace } = useNavigation()
 	const draft = id == null
 	const view = useData((d) => (draft ? null : d.views[id]))
-	const meta = useData((d) => (draft ? null : [...(d.state?.threads ?? []), ...(d.state?.archived ?? [])].find((t) => t.id === id)))
-	const parent = useData((d) => (meta?.parent ? [...(d.state?.threads ?? []), ...(d.state?.archived ?? [])].find((t) => t.id === meta.parent) : null))
+	const meta = useData((d) => (draft ? null : allThreads(d).find((t) => t.id === id)))
+	const parent = useData((d) => (meta?.parent ? allThreads(d).find((t) => t.id === meta.parent) : null))
 	const [, setDrafts] = useUI('drafts', {})
 	const [whileWorking] = useUI('whileWorking', 'queue')
 	const [error, setError] = useState(null)
@@ -109,8 +109,8 @@ export function Thread({ id }) {
 		<main class="screen thread">
 			<header class="bar glass-bar">
 				<button class="icon-button glass" aria-label="Back" onClick=${back}><${Icon} name="back" /></button>
-				<button class="bar-title" disabled=${draft} onClick=${() => setSheet('rename')}>
-					<span class="title mono">${draft ? 'New thread' : meta?.title ?? 'Thread'}</span>
+				<button class="bar-title" disabled=${draft || meta?.infinite} onClick=${() => setSheet('rename')}>
+					<span class="title mono">${draft ? 'New thread' : meta?.infinite ? 'Mycroft ∞' : meta?.title ?? 'Thread'}</span>
 				</button>
 				<span class="bar-side"></span>
 				${showProgress && html`<div class="progress"></div>`}
@@ -133,6 +133,8 @@ export function Thread({ id }) {
 		${sheet === 'rename' && meta && html`<${RenameSheet} thread=${meta} onClose=${() => setSheet(null)} />`}
 	`
 }
+
+const allThreads = (d) => [...(d.state?.threads ?? []), ...(d.state?.archived ?? []), d.state?.infinite].filter(Boolean)
 
 /** `value`, but a `true` stays for `ms` after it turns false, so a run that pauses for a moment doesn't blink. */
 function useLinger(value, ms) {
@@ -235,12 +237,17 @@ export function RenameSheet({ thread, onClose }) {
 
 // MARK: Transcript
 
-/** The entries as turns: each user message with the work and the answer that followed it. */
+/** The entries as turns: each user message with the work and the answer that followed it. A compaction (the older
+ * entries, summarized for the model) is a turn of its own: `memory`. */
 function turnsOf(entries) {
 	const turns = []
 	for (const entry of entries) {
 		const message = entry.model?.[0]
 		if (!message) continue
+		if (entry.kind === 'pi.compaction') {
+			turns.push({ memory: entry, replies: [] })
+			continue
+		}
 		if (message.role === 'user' || !turns.length) turns.push({ user: message.role === 'user' ? entry : null, replies: [] })
 		if (message.role !== 'user') turns[turns.length - 1].replies.push(entry)
 	}
@@ -271,6 +278,7 @@ function Transcript({ view, thread, onError, onRetry }) {
 	return html`
 		${turns.map((turn, index) => {
 			const current = index === turns.length - 1 && view.busy
+			if (turn.memory) return html`<div class="shelf memory" key=${turn.memory.id}><${Label}>Earlier · in memory<//><span class="rule"></span></div>`
 			return html`
 				${turn.user && html`<${UserTurn} key=${turn.user.id} message=${turn.user.model[0]} />`}
 				${current

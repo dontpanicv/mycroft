@@ -1,8 +1,9 @@
 // The home screen: the thread list, sign-in when needed, and the floating new-thread button.
 //
-// Top to bottom: an unsent new-thread draft, pinned threads, active threads, then a "Settled (N)" shelf, collapsed by
-// default. A thread settles by hand (swipe left, or the long-press menu) or after three idle days; sending to it brings
-// it back. Each row says what needs the user: Working, Failed, or Done (an answer they haven't opened yet).
+// Top to bottom: the infinite chat ("Mycroft ∞", one thread that never ends), an unsent new-thread draft, pinned
+// threads, active threads, then a "Settled (N)" shelf, collapsed by default. A thread settles by hand (swipe left, or
+// the long-press menu) or after three idle days; sending to it brings it back. Each row says what needs the user:
+// Working, Failed, or Done (an answer they haven't opened yet).
 
 import { html, useState } from '/lib/preact.js'
 import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Sheet, Spinner, ago, haptic } from '../lib.js'
@@ -34,6 +35,7 @@ export function Threads() {
 	const [menu, setMenu] = useState(null)
 	const [renaming, setRenaming] = useState(null)
 	const threads = state?.threads ?? []
+	const infinite = state?.infinite
 	const busy = state?.busy ?? []
 	const signIn = state?.signIn?.state
 	const draft = (drafts.new ?? '').trim()
@@ -66,6 +68,9 @@ export function Threads() {
 
 			${signIn && signIn !== 'signedIn' && signIn !== 'unknown' && html`<div class="gutter top-gap"><${SignIn} /></div>`}
 			${(state?.notices ?? []).map((notice) => html`<p class="card notice mono small">${notice}</p>`)}
+			${infinite && html`<ol class="list infinite"><li>
+				<${Row} title="Mycroft ∞" thread=${infinite} status=${standing(infinite, busy).status} onOpen=${() => open(infinite)} />
+			</li></ol>`}
 
 			${threads.length || draft
 				? html`${openCount
@@ -125,7 +130,7 @@ export function Threads() {
 
 const statusLabels = { working: ['Working', 'soft'], failed: ['Failed', 'danger'], done: ['Done', 'success'] }
 
-/** One thread in the list: tap to open, long-press for the menu, swipe left for `swipe.run`. */
+/** One thread in the list: tap to open, long-press for the menu (if `onMenu`), swipe left for `swipe.run`. */
 function Row({ title, thread, status, label, slim, swipe, onOpen, onMenu }) {
 	const call = useCall()
 	const [dx, setDx] = useState(0)
@@ -135,7 +140,7 @@ function Row({ title, thread, status, label, slim, swipe, onOpen, onMenu }) {
 	const start = (event) => {
 		const touch = event.touches[0]
 		Object.assign(gesture, { x: touch.clientX, y: touch.clientY, swiping: false, moved: false })
-		gesture.timer = setTimeout(() => {
+		if (onMenu) gesture.timer = setTimeout(() => {
 			if (gesture.moved) return
 			gesture.menu = true
 			haptic(call, 'medium')
@@ -176,7 +181,7 @@ function Row({ title, thread, status, label, slim, swipe, onOpen, onMenu }) {
 		${swipe && dx < 0 && html`<div class=${`swipe-action ${armed ? 'armed' : ''}`}><span>${swipe.label}</span></div>`}
 		<button class=${`thread-row ${slim ? 'slim' : ''} ${status === 'working' ? 'recede' : ''}`} style=${dx ? `transform: translateX(${dx}px); transition: none` : ''} aria-label=${spoken}
 			onClick=${click} onTouchStart=${start} onTouchMove=${move} onTouchEnd=${end} onTouchCancel=${end}
-			onContextMenu=${(event) => { event.preventDefault(); haptic(call, 'medium'); onMenu() }}>
+			onContextMenu=${(event) => { event.preventDefault(); if (onMenu) { haptic(call, 'medium'); onMenu() } }}>
 			<span class="grow">
 				<span class="title">${thread?.pinned && html`<${Icon} name="pin" size=${12} /> `}${title}</span>
 				${!slim && html`<span class="meta">

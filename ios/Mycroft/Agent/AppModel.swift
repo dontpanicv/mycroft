@@ -44,6 +44,8 @@ final class AppModel {
     private let log = Logger(subsystem: "dev.mycroft", category: "app")
     private var watchers: [Task<Void, Never>] = []
     private static let databaseURL = URL.documentsDirectory.appending(path: "mycroft.sqlite")
+    /// The infinite chat's memory tree (Memory.Files), by conversation.
+    private static let memoryURL = URL.documentsDirectory.appending(path: "memory")
 
     // MARK: Start
 
@@ -93,6 +95,9 @@ final class AppModel {
             if generation.active != screen { WebUI.shared.load(generation: generation.active, recover: false) }
             phase = .ready
             watch(harness)
+            if let infinite = await ensureInfinite(harness) {
+                Memory.open(infinite, harness: harness, models: models, in: Self.memoryURL)
+            }
             await refreshSignIn()
             RunController.shared.attach(self)
             RunMonitor.shared.attach(self)
@@ -112,6 +117,7 @@ final class AppModel {
         }
         WebBridge.forgetSavedState()
         Journal.clear()
+        try? FileManager.default.removeItem(at: Self.memoryURL)
     }
 
     /// Replaces the database at `database` with one that holds only its paired machines; `beforeSwap` runs once the new
@@ -185,7 +191,7 @@ final class AppModel {
     private func extensions() async throws -> [Extension] {
         [
             try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), CuaTools.makeExtension(),
-            ShowTools.makeExtension(), .toolSearch(), .codemode(),
+            ShowTools.makeExtension(), Memory.makeExtension(), .toolSearch(), .codemode(),
         ]
     }
 
@@ -316,6 +322,22 @@ final class AppModel {
         return listed(meta)
     }
 
+    /// The infinite chat: one thread, made once, that the screen opens from above the list.
+    private func ensureInfinite(_ harness: Harness) async -> ConversationID? {
+        do {
+            if let infinite = try await harness.document(Threads.document).items.first(where: { $0.infinite == true }) { return infinite.id }
+            let conversation = try await harness.createConversation(agent: Self.agent)
+            var meta = ThreadMeta(id: conversation.id, title: "Mycroft", createdAt: .now, updatedAt: .now)
+            meta.infinite = true
+            try await harness.update(Threads.document) { [meta] in $0.items.append(meta) }
+            _ = listed(meta)
+            return meta.id
+        } catch {
+            log.error("the infinite chat could not be made: \(error)")
+            return nil
+        }
+    }
+
     /// Creates a thread with its first message: until then a new thread is only a draft on the screen. `voice`: it
     /// starts in a conversation.
     func startThread(with text: String, voice: Bool = false) async throws -> ThreadMeta {
@@ -408,6 +430,22 @@ final class AppModel {
         try? await edit(id) { meta in
             meta.finishedAt = .now
             meta.outcome = outcome
+        }
+        if let tree = Memory.tree(id) {
+            try? await tree.sync()
+            await trim(id)
+        }
+    }
+
+    /// The infinite chat's model sees its memory, not its transcript (Memory.swift), so Pi never compacts it by tokens:
+    /// past `Memory.trim` entries it compacts here, keeping the screen and each request's transcript short.
+    private func trim(_ id: ConversationID) async {
+        guard let conversation = try? await conversation(id), let view = try? await conversation.view(), view.entries.count > Memory.trim
+        else { return }
+        do {
+            try await conversation.compact()
+        } catch {
+            log.error("trimming the infinite chat failed: \(error)")
         }
     }
 

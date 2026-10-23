@@ -22,6 +22,8 @@ nonisolated struct ThreadMeta: Codable, Sendable, Hashable, Identifiable {
     var outcome: Outcome?
     /// The thread this one was forked from.
     var parent: ConversationID?
+    /// The infinite chat (Memory.swift): one thread that never ends, opened from above the list instead of in it.
+    var infinite: Bool?
 
     enum Outcome: String, Codable, Sendable {
         case done, failed, stopped
