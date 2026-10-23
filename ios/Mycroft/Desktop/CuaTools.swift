@@ -15,8 +15,14 @@ nonisolated enum CuaTools {
 
     /// Not offered at all: Mycroft ships neither Cua's perception model nor Computer History.
     static func isExcluded(_ name: String) -> Bool {
-        name == "parse_visual_regions" || name.hasPrefix("history_")
+        name == "parse_visual_regions" || name.hasPrefix("history_") || sessionTools.contains(name)
     }
+
+    /// hands keeps one Cua session per phone and names it itself (hands/src/cua.rs), so Cua's session tools and
+    /// `session` labels don't apply: Cua refuses a call whose label isn't hands' own.
+    static let sessionTools: Set<String> = [
+        "start_session", "escalate_session", "get_session", "list_sessions", "get_session_state", "end_session",
+    ]
 
     /// Words that make an action irreversible enough to ask the user first.
     static let destructive = ["delete", "remove", "erase", "trash", "send", "post", "pay", "buy", "purchase", "order", "transfer", "sign out", "log out", "quit", "shut down", "restart", "format"]
@@ -100,7 +106,10 @@ nonisolated enum CuaTools {
 
     static func prompt(_ catalog: Catalog) -> String {
         let mycroft = "These desktop tools (Cua Driver) drive the apps of a paired Mac in the background; each takes `machine`. Act with run_steps, even for one action: its steps are the action tools, with their own arguments. The other desktop tools load with tool_search. For shell work, use the hands_* command tools."
-        return [mycroft, catalog.instructions].compactMap { $0 }.joined(separator: "\n\n")
+        let cua = catalog.instructions.map {
+            $0.components(separatedBy: "\n\n").filter { !$0.contains("session") }.joined(separator: "\n\n")
+        }
+        return [mycroft, cua].compactMap { $0 }.joined(separator: "\n\n")
     }
 
     static func tool(_ entry: Catalog.Entry) -> Tool {
@@ -111,6 +120,7 @@ nonisolated enum CuaTools {
             var arguments = args.objectValue ?? [:]
             let name = arguments.removeValue(forKey: "machine")?.stringValue ?? ""
             arguments["confirmed"] = nil
+            arguments["session"] = nil
             let machine = try await HandsTools.resolve(name, call)
             let result = try await perform(entry, arguments, on: machine, within: limit)
             await CuaSnapshots.shared.record(result, machine: machine.name)
@@ -124,12 +134,13 @@ nonisolated enum CuaTools {
         var schema = entry.inputSchema?.objectValue ?? [:]
         schema["type"] = "object"
         var properties = schema["properties"]?.objectValue ?? [:]
+        properties["session"] = nil
         properties["machine"] = ["type": "string", "description": "Machine name (a paired Mac)"]
         if !entry.isReadOnly {
             properties["confirmed"] = ["type": "boolean", "description": "Set only after the user approved this exact action"]
         }
         schema["properties"] = .object(properties)
-        schema["required"] = .array(["machine"] + (schema["required"]?.arrayValue ?? []).filter { $0 != "machine" })
+        schema["required"] = .array(["machine"] + (schema["required"]?.arrayValue ?? []).filter { $0 != "machine" && $0 != "session" })
         return JSONSchema(schema)
     }
 

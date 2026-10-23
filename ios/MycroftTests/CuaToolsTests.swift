@@ -11,12 +11,12 @@ import Testing
 struct CuaToolsTests {
     /// A small `cua.tools` result in Cua Driver's shape.
     static let catalog = try! CuaTools.Catalog.decode(Data("""
-        {"version": "0.38.0", "instructions": "cua-driver: background GUI automation.",
+        {"version": "0.38.0", "instructions": "cua-driver: background GUI automation.\\n\\n`start_session` is optional; repeat a short `session` label.",
          "tools": [
           {"name": "list_apps", "description": "List apps.", "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
            "annotations": {"readOnlyHint": true, "destructiveHint": false}},
           {"name": "get_window_state", "description": "Snapshot a window.",
-           "inputSchema": {"type": "object", "required": ["pid", "window_id"], "properties": {"pid": {"type": "integer"}, "window_id": {"type": "integer"}}},
+           "inputSchema": {"type": "object", "required": ["session", "pid", "window_id"], "properties": {"pid": {"type": "integer"}, "window_id": {"type": "integer"}, "session": {"type": "string"}}},
            "annotations": {"readOnlyHint": true}, "outputSchema": {"type": "object"}, "risk": {"class": "r3"}},
           {"name": "click", "description": "Click.", "inputSchema": {"type": "object", "properties": {"element_token": {"type": "string"}}, "additionalProperties": false},
            "annotations": {"readOnlyHint": false, "destructiveHint": true}},
@@ -31,7 +31,8 @@ struct CuaToolsTests {
            "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true}},
           {"name": "set_window_frame", "description": "Frame.", "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": false}},
           {"name": "parse_visual_regions", "description": "Regions.", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}},
-          {"name": "history_query", "description": "History.", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}}
+          {"name": "history_query", "description": "History.", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}},
+          {"name": "end_session", "description": "End.", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": false}}
          ]}
         """.utf8))
 
@@ -61,11 +62,13 @@ struct CuaToolsTests {
 
     @Test func catalogBecomesTools() throws {
         let tools = Dictionary(uniqueKeysWithValues: CuaTools.makeExtension(catalog: Self.catalog).tools.map { ($0.name, $0) })
-        #expect(tools["parse_visual_regions"] == nil && tools["history_query"] == nil)
+        #expect(tools["parse_visual_regions"] == nil && tools["history_query"] == nil && tools["end_session"] == nil)
         #expect(tools.count == 10)
         for tool in tools.values {
             let properties = try #require(tool.parameters.json["properties"]?.objectValue)
             #expect(properties["machine"]?["type"] == "string", "\(tool.name)")
+            // hands names the session: a label of the model's own is refused.
+            #expect(properties["session"] == nil, "\(tool.name)")
             #expect(tool.parameters.json["required"]?.arrayValue?.first == "machine", "\(tool.name)")
             let readOnly = Self.entries[tool.name]!.isReadOnly
             #expect((properties["confirmed"] != nil) == !readOnly, "\(tool.name)")
@@ -87,6 +90,9 @@ struct CuaToolsTests {
         let own = Set((HandsTools.makeExtension().tools + ShowTools.makeExtension().tools).map(\.name) + ["now", "codemode", "tool_search"])
         let clashes = catalog.tools.map(\.name).filter { own.contains($0) || $0.hasPrefix("self_") || $0.hasPrefix("hands_") }
         #expect(clashes.isEmpty, "\(clashes)")
+        let tools = CuaTools.makeExtension(catalog: catalog).tools
+        #expect(tools.allSatisfy { $0.parameters.json["properties"]?["session"] == nil })
+        #expect(!CuaTools.prompt(catalog).contains("session"))
     }
 
     @Test func mapsCallToolResults() throws {
