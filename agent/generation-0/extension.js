@@ -8,7 +8,8 @@
 // - CommonJS. `require` resolves @earendil-works/pi-durable, /tools, /env, @earendil-works/pi-ai, chord/context.
 // - module.exports is ONE pi-durable extension named "mycroft".
 // - `MYCROFT` is defined by the host before this file runs: { generation, device }.
-// - Native tools (self_*, hands_*, ui_*) live in Swift extensions and are not defined here.
+// - Native tools (self_*, hands_*, Cua Driver's desktop tools, show, tool_search, codemode) live in Swift extensions
+//   and are not defined here.
 
 const { defineExtension, defineTool, section } = require("@earendil-works/pi-durable");
 const { Type } = require("@earendil-works/pi-ai");

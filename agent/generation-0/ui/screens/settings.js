@@ -2,7 +2,7 @@
 // while Mycroft works, the ChatGPT sign-in for Sol 6.1 (once), and notices.
 
 import { html, useEffect, useState } from '/lib/preact.js'
-import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Spinner, pad, ago, haptic } from '../lib.js'
+import { useData, useCall, useUI, useNavigation, Icon, Label, Tag, Spinner, pad, ago, osName, haptic } from '../lib.js'
 
 function Page({ title, children }) {
 	const { back } = useNavigation()
@@ -201,7 +201,7 @@ function Machines({ machines }) {
 		${machines.map((machine) => html`<div class="machine-row" onClick=${() => setMenu(menu === machine.name ? null : machine.name)}>
 			<div class="row between">
 				<span><span class="mono strong block">${machine.name}</span>
-					<span class="faint mono tiny">${machine.os === 'macos' ? 'macOS' : machine.os === 'linux' ? 'Linux' : machine.os} · ${machine.arch} · ${machine.addresses?.[0] ?? '?'}:${machine.port}</span></span>
+					<span class="faint mono tiny">${osName(machine.os)} · ${machine.arch} · ${machine.addresses?.[0] ?? '?'}:${machine.port}</span></span>
 				${status[machine.name] === 'online'
 					? html`<${Tag} tone="success">Online<//>`
 					: status[machine.name] ? html`<${Tag} tone="danger">Offline<//>` : html`<${Spinner} />`}

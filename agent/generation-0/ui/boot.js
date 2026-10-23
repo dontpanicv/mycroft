@@ -73,7 +73,11 @@ window.mycroft = {
 		else if (type === 'view') {
 			data.set((current) => {
 				const previous = current.views[payload.thread]
-				const view = { ...previous, ...payload, entries: payload.entries ?? previous?.entries ?? [] }
+				// The app sends the whole transcript once, then what changed: keep the first `keep`, add `append`.
+				const { keep, append, ...rest } = payload
+				const kept = previous?.entries ?? []
+				const entries = payload.entries ?? (append ? [...kept.slice(0, keep), ...append] : kept)
+				const view = { ...previous, ...rest, entries }
 				return { views: { ...current.views, [payload.thread]: view } }
 			})
 		} else if (type === 'hot') hot(payload)
@@ -153,7 +157,7 @@ async function swapStyles(generation) {
 }
 
 async function start() {
-	const boot = await native('ui.boot')
+	const boot = await native('ui.boot', { appends: true })
 	data.set({ state: boot.state })
 	if (boot.uiState) {
 		try {

@@ -12,7 +12,7 @@ lives in a store that survives the swap.
 | `index.html` | The page. Loads `style.css` (and any `<link data-hot>`) and `boot.js`. |
 | `boot.js` | The link to the app, the two stores, and the hot swap. Changing it (or index.html) means a full page reload. |
 | `app.js` | `mount(root, runtime)` / `unmount(root)`, the routes, the edge-swipe back, the theme report. |
-| `lib.js` | Hooks (`useData`, `useUI`, `useCall`, `useNavigation`), markdown, formatting, icons, `Label`, `Tag`, `Spinner`, `Sheet`. |
+| `lib.js` | Hooks (`useData`, `useUI`, `useCall`, `useNavigation`), markdown, formatting (`ago`, `duration`, `osName`, …), icons, `Label`, `Tag`, `Spinner`, `Sheet`. |
 | `screens/threads.js` | Home: the thread list (draft, pinned, active, the Settled shelf; swipe and long-press), sign-in, the new-thread button; the Archived screen. |
 | `screens/thread.js` | A thread or a new thread's draft: transcript (user turns, finished runs folded into "Worked for", answers with Copy and Fork), the run capsule, the queue sheet, rename. |
 | `screens/composer.js` | The composer: field with clear, the conversation button, dictation (hold, slide to cancel or lock, tap), send / queue / steer / stop. |
@@ -61,22 +61,24 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
 ```
 { phase: 'starting'|'ready'|'failed', failure?,
   generation: { active, lastGood, history: [{ generation, note, createdAt, parent }] },  // parent: what it was made from
-  threads: [{ id, title, createdAt, updatedAt, archived, machine?, pinned?, settledAt?, unsettledAt?,
+  threads: [{ id, title, createdAt, updatedAt, archived, pinned?, settledAt?, unsettledAt?,
              visitedAt?, finishedAt?, outcome?: 'done'|'failed'|'stopped', parent? }],   // newest first, not archived
   archived: [ …the same, archived ],
   busy: [threadId],                                 // threads with a run going
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
   dictation: { bundled: bool, ready: bool },   // Fluid Speech Mini, the dictation model: in this build; loaded
   voice: { bundled, ready, voice, voices: [{ id, name, accent }] },    // the conversation voice (Phonon); ready: loaded
-  machines: [{ name, hostname, addresses, port, os, arch, version, pairedAt }],
+  machines: [{ name, hostname?, addresses, port, certSha256, os: 'macos'|'linux', arch, version, pairedAt }],  // newest first; osName(os) shows os
   notices: [string], model: 'gpt-6.1-sol', screenErrors: [string] }
 ```
 
 `views[threadId]`, after `call('thread.open', { id })` and until `thread.close`:
 
 ```
-{ thread, busy, queued: [{ id, mode: 'followUp'|'steer', text }], model, error?,    // model: 'gpt-6.1-sol' or 'on-device'
-  entries: [{ id, kind, model: [message] }],   // pi messages: role 'user' | 'assistant' | 'toolResult'
+{ thread, busy, queued: [{ id, mode: 'followUp'|'steer', text }], model, error?,    // thread: its id; model: 'gpt-6.1-sol'
+  entries: [{ id, kind, model: [message] }],   // pi messages: role 'user' | 'assistant' | 'toolResult'. The app sends
+                                               // them whole once, then only what changed ({ keep, append }: boot.js
+                                               // keeps the first `keep` and adds `append`), so `views` always has all
   live: { run?, generation?: { message }, tools: [{ callId, name, status, output }] } }
 ```
 
@@ -138,17 +140,17 @@ Other events:
 | `talk.tap` | | stops Mycroft speaking (and what it had left to say), or sends what the user said now |
 | `talk.mute` | `on` | ignores the microphone |
 | `voice.choose` | `voice` | the conversation voice (an id from `state.voice.voices`); outside a conversation it plays a sample |
-| `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation |
+| `generation.rollback` | `generation?` | switches Mycroft (agent and screen) to that generation (default: the one before); returns it |
 | `clipboard.copy` | `text` | |
 | `haptic` | `style: 'light'\|'medium'\|'success'\|'error'\|'selection'` | |
 | `open.url` | `url` | opens an http(s) page in-app |
 | `notices.thirdParty` | | the open source notices text |
-| `ui.theme` | colours | tells the app the screen's colours (app.js does this on mount) |
+| `ui.theme` | `accent, accentSoft, canvas, raised, ink, inkMuted, success, danger` (hex) | tells the app the screen's colours, for what it draws natively (app.js does this on mount) |
 
 ## Tools and machines from the screen
 
-The screen can do what the agent does: `tools.call` runs any of the agent's tools (hands_*, ui_*, show, self_*, the
-JavaScript tools of `extension.js`, and `codemode`, whose `code` is a script that calls the other tools as
+The screen can do what the agent does: `tools.call` runs any of the agent's tools (hands_*, Cua Driver's desktop tools,
+show, self_*, tool_search, the JavaScript tools of `extension.js`, and `codemode`, whose `code` is a script that calls the other tools as
 `await tools.hands_exec({ … })`). A screen feature that needs live data from machines, files or tools therefore
 needs no app update: write the screen code and call them. For example:
 

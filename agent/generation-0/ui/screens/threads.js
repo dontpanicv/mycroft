@@ -80,7 +80,7 @@ export function Threads() {
 						: html`<section class="caught-up">
 							<span class="caught-up-mark"><${Icon} name="check" size=${22} stroke=${2.2} /></span>
 							<h2>All settled</h2>
-							<button class="button glass prominent" onClick=${() => { haptic(call); go('#/new') }}><${Icon} name="plus" size=${15} stroke=${2.2} /> New thread</button>
+							<button class="button glass prominent" aria-label="New thread" onClick=${() => { haptic(call); go('#/new') }}><${Icon} name="plus" size=${15} stroke=${2.2} /> New thread</button>
 						</section>`}
 					${settled.length > 0 && html`<button class="shelf" aria-expanded=${settledOpen} onClick=${() => setSettledOpen(!settledOpen)}>
 						<${Label}>${settledOpen ? 'Settled' : `Settled (${settled.length})`}<//><span class="rule"></span>
@@ -96,7 +96,7 @@ export function Threads() {
 					${archived > 0 && html`<button class="more" onClick=${() => go('#/archived')}>Archived (${archived})</button>`}`
 				: html`<section class="caught-up">
 						<h2>No threads yet</h2>
-						<button class="button glass prominent" onClick=${() => { haptic(call); go('#/new') }}><${Icon} name="plus" size=${15} stroke=${2.2} /> New thread</button>
+						<button class="button glass prominent" aria-label="New thread" onClick=${() => { haptic(call); go('#/new') }}><${Icon} name="plus" size=${15} stroke=${2.2} /> New thread</button>
 					</section>`}
 			<div class="spacer"></div>
 		</main>
@@ -171,7 +171,7 @@ function Row({ title, thread, status, label, slim, swipe, onOpen, onMenu }) {
 	}
 
 	const [statusText, tone] = statusLabels[status] ?? []
-	const spoken = [title, label ?? ago(thread.updatedAt), thread?.machine, statusText].filter(Boolean).join(' · ')
+	const spoken = [title, label ?? ago(thread.updatedAt), statusText].filter(Boolean).join(' · ')
 	return html`<div class="swipe-row">
 		${swipe && dx < 0 && html`<div class=${`swipe-action ${armed ? 'armed' : ''}`}><span>${swipe.label}</span></div>`}
 		<button class=${`thread-row ${slim ? 'slim' : ''} ${status === 'working' ? 'recede' : ''}`} style=${dx ? `transform: translateX(${dx}px); transition: none` : ''} aria-label=${spoken}
@@ -180,7 +180,7 @@ function Row({ title, thread, status, label, slim, swipe, onOpen, onMenu }) {
 			<span class="grow">
 				<span class="title">${thread?.pinned && html`<${Icon} name="pin" size=${12} /> `}${title}</span>
 				${!slim && html`<span class="meta">
-					${label ? html`<${Tag} tone="warning">${label}<//>` : html`<span>${ago(thread.updatedAt)}</span>${thread.machine && html`<${Tag}>${thread.machine}<//>`}`}
+					${label ? html`<${Tag} tone="warning">${label}<//>` : html`<span>${ago(thread.updatedAt)}</span>`}
 				</span>`}
 			</span>
 			${statusText

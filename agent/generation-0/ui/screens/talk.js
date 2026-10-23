@@ -5,7 +5,7 @@
 // for the pause. The mic button mutes the user; ✕ ends the conversation and leaves the run working.
 
 import { html } from '/lib/preact.js'
-import { useData, useCall, Icon, Label, Tag, Spinner, haptic } from '../lib.js'
+import { useData, useCall, Icon, Label, Spinner, haptic } from '../lib.js'
 
 /** The conversation, while it is on in thread `id` (null: a new thread's draft, until its first words create it). */
 export function useTalk(id) {
@@ -22,8 +22,8 @@ const phases = {
 	speaking: 'Mycroft',
 }
 
-/** `model` names a thread's model when it isn't the default (Apple's), so it's clear who is talking. */
-export function TalkDock({ talk, model, above }) {
+/** `above` sits over the dock (the run's status), as over the composer. */
+export function TalkDock({ talk, above }) {
 	const call = useCall()
 	const act = (op, args, style) => {
 		haptic(call, style)
@@ -42,7 +42,6 @@ export function TalkDock({ talk, model, above }) {
 				<div class="row gap">
 					${(talk.phase === 'working' || talk.phase === 'starting') && html`<${Spinner} />`}
 					<${Label} tone=${talk.phase === 'hearing' ? 'ink' : 'soft'} size=${10}>${phases[talk.phase] ?? talk.phase}<//>
-					${model && html`<${Tag} tone="warning">${model}<//>`}
 					${talk.phase === 'speaking' && talk.cutIn !== 'words' && html`<span class="faint tiny mono">· ${talk.cutIn === 'stop' ? 'say “stop” or tap' : 'tap'} to cut in</span>`}
 				</div>
 				<p class=${`talk-words ${talk.heard ? 'ink' : 'muted'}`}>${caption}</p>

@@ -2,7 +2,7 @@
 // waits for the machine to pair back. The picker chooses which of the phone's addresses the command uses.
 
 import { html, useEffect, useState } from '/lib/preact.js'
-import { useData, useUI, useCall, useNavigation, Icon, Label, Spinner, haptic } from '../lib.js'
+import { useData, useUI, useCall, useNavigation, Icon, Label, Spinner, osName, haptic } from '../lib.js'
 
 const reach = {
 	'Wi-Fi': 'on the same Wi-Fi as this iPhone',
@@ -77,7 +77,7 @@ export function Pair() {
 			${state === 'paired' && html`
 				<${Label} tone="success">Paired<//>
 				<h2 class="paired-name">${pairing.machine?.name}</h2>
-				<p class="muted mono small">${pairing.machine?.os} ${pairing.machine?.arch} · hands ${pairing.machine?.version}</p>
+				<p class="muted mono small">${osName(pairing.machine?.os)} ${pairing.machine?.arch} · hands ${pairing.machine?.version}</p>
 				<p class="muted">Mycroft can now run commands, edit files and start long jobs there. Mention it by name in a thread.</p>
 				<button class="button glass prominent wide" onClick=${back}>Done</button>
 			`}

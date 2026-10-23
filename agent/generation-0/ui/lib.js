@@ -68,6 +68,9 @@ export function duration(ms) {
 	return `${Math.floor(ms / 60_000)}m${pad(Math.round((ms % 60_000) / 1000))}s`
 }
 
+/** A machine's `os` as people write it. */
+export const osName = (os) => ({ macos: 'macOS', linux: 'Linux' })[os] ?? os
+
 /** The one argument worth showing for a tool call. */
 export function summarize(args) {
 	if (!args || typeof args !== 'object') return ''
@@ -84,16 +87,23 @@ export function summarize(args) {
 
 const escape = (text) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 
-function inline(text) {
-	const codes = []
-	let out = escape(text).replace(/`([^`]+)`/g, (_, code) => `\u0000${codes.push(code) - 1}\u0000`)
-	out = out
-		.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
-		.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2">$2</a>')
+const emphasis = (text) =>
+	text
 		.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
 		.replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\w)/g, '$1<em>$2</em>')
 		.replace(/(^|[^_\w])_([^_\s][^_]*)_(?!\w)/g, '$1<em>$2</em>')
-	return out.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`)
+
+function inline(text) {
+	// Code spans, then links (written or bare, in one pass), are set aside as they are made: nothing inside them is read
+	// again, so a link never nests in another and emphasis never reaches into a URL.
+	const kept = []
+	const keep = (made) => `\u0000${kept.push(made) - 1}\u0000`
+	const restore = (out) => out.replace(/\u0000(\d+)\u0000/g, (_, i) => restore(kept[i]))
+	const out = escape(text.replace(/\u0000/g, ''))
+		.replace(/`([^`]+)`/g, (_, code) => keep(`<code>${code}</code>`))
+		.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)|(^|[\s(])(https?:\/\/[^\s)\u0000]+)/g, (_, label, href, before, url) =>
+			href ? keep(`<a href="${href}">${emphasis(label)}</a>`) : before + keep(`<a href="${url}">${url}</a>`))
+	return restore(emphasis(out))
 }
 
 export function markdown(source) {

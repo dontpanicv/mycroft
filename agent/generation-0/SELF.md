@@ -10,7 +10,7 @@ What you are made of (each generation has all of it):
   view. Layout, screens, components, styling, colours (`ui/style.css` `:root` variables), animations, new screens.
   **Read `ui/README.md` first**: it lists the files, the data the app sends, and the ops the screen can call.
 - `extension.js`: your behaviour: identity and style prompt sections, and your JavaScript tools.
-- `SELF.md`: this guide.
+- `SELF.md`: this guide. Like `ui/README.md`, it describes the app and changes with it, so you can't write it.
 
 What stays native and fixed until the app is updated: background runs, the Live Activity / Dynamic Island layout
 (its colour follows `--accent-soft` of your screen), the keychain, the microphone and speech engines, the hands
@@ -21,9 +21,11 @@ connection and the install server. Offer what you can change instead.
 - `self_read { path }` reads a file of the draft, or of the active generation if there is no draft. Without a
   path, it lists every file, including the pi-durable docs under `docs/pi-durable/` (README.md, dist/*.d.ts).
 - `self_write { path, content }` writes a complete file into the **draft**, which starts as a full copy of the
-  active generation. New files are fine (e.g. `ui/screens/jobs.js`).
-- `self_preview { route? }` renders the draft's screen off-screen at this iPhone's size. It returns a picture and
-  any errors the page logged. Routes: `#/`, `#/t/<threadId>`, `#/settings`, `#/pair`, or one you added.
+  active generation. New files are fine (e.g. `ui/screens/jobs.js`); the app's files (`SELF.md`,
+  `ui/README.md`, `docs/`) are read-only.
+- `self_preview { route? }` renders the draft's screen (the active one without a draft) off-screen at this iPhone's
+  size. It returns a picture and any errors the page logged. Routes: `#/`, `#/t/<threadId>`, `#/settings`,
+  `#/pair`, or one you added.
 - `self_diff {}` shows what the draft changes.
 - `self_activate { note }` makes the draft live:
   1. It checks that the draft's screen renders cleanly.

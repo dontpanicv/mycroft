@@ -24,7 +24,7 @@ const clock = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) 
  * 'queue' / 'steer' while `busy` (`preferred` is the setting; a long press on send offers the other). `onStop` stops
  * the run. `onTalk` starts a conversation (no button without it). `above` sits over the composer (the run's status).
  */
-export function Composer({ owner, busy, preferred = 'queue', chips, above, placeholder, onSubmit, onStop, onTalk, onError }) {
+export function Composer({ owner, busy, preferred = 'queue', above, placeholder, onSubmit, onStop, onTalk, onError }) {
 	const call = useCall()
 	const [drafts, setDrafts] = useUI('drafts', {})
 	const listen = useListen(owner)
@@ -155,15 +155,13 @@ export function Composer({ owner, busy, preferred = 'queue', chips, above, place
 
 	return html`<div class="composer">
 		${above}
-		${recording
-			? html`<div class="row gap chips recording">
-					${!holding && html`<button class="icon-button glass small-icon danger" aria-label="Cancel dictation" onClick=${cancel}><${Icon} name="trash" size=${17} /></button>`}
-					<span class="rec-dot"></span><span class="mono small">${clock(listen?.elapsed ?? 0)}</span>
-					<${Tag} tone="soft">${holding ? '‹ Slide to cancel · ↑ to lock'
-						: !active || listen.state === 'preparing' ? 'Starting the microphone…'
-						: 'Listening · tap ■ to edit'}<//>
-				</div>`
-			: chips && html`<div class="row gap chips">${chips}</div>`}
+		${recording && html`<div class="row gap chips recording">
+			${!holding && html`<button class="icon-button glass small-icon danger" aria-label="Cancel dictation" onClick=${cancel}><${Icon} name="trash" size=${17} /></button>`}
+			<span class="rec-dot"></span><span class="mono small">${clock(listen?.elapsed ?? 0)}</span>
+			<${Tag} tone="soft">${holding ? '‹ Slide to cancel · ↑ to lock'
+				: !active || listen.state === 'preparing' ? 'Starting the microphone…'
+				: 'Listening · tap ■ to edit'}<//>
+		</div>`}
 		<div class="row gap end">
 			<div class="field-wrap">
 				<textarea ref=${field} class=${`field glass ${active ? 'live' : ''}`} rows="1" aria-label="Message Mycroft"

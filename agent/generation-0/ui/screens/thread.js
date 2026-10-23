@@ -101,6 +101,10 @@ export function Thread({ id }) {
 		setSheet(null)
 	}
 
+	// Over the composer, or over the conversation's dock in its place.
+	const status = !draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
+		onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`
+
 	return html`
 		<main class="screen thread">
 			<header class="bar glass-bar">
@@ -120,15 +124,10 @@ export function Thread({ id }) {
 				${(error || view?.error) && html`<p class="card danger mono small">${error || view.error}</p>`}
 				<div class=${`composer-space ${talk ? 'talking' : ''}`}></div>
 			</div>
-			${talk && html`<${TalkDock} talk=${talk} model=${view?.model === 'on-device' && 'Apple on-device'} above=${!draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
-				onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`} />`}
+			${talk && html`<${TalkDock} talk=${talk} above=${status} />`}
 			${!talk && html`<${Composer} owner=${draft ? 'new' : id} busy=${busy} preferred=${whileWorking} onTalk=${startTalk}
 				placeholder=${draft ? 'Ask Mycroft anything…' : busy ? (whileWorking === 'steer' ? 'Steer the run…' : 'Queue a message…') : 'Message Mycroft'}
-				chips=${(meta?.machine || view?.model === 'on-device') && html`${meta?.machine && html`<${Tag}>${meta.machine}<//>`}
-					${view?.model === 'on-device' && html`<${Tag} tone="warning">Apple on-device<//>`}`}
-				above=${!draft && html`<${RunStatus} view=${view} atEnd=${atEnd} onEnd=${toEnd} onQueue=${() => setSheet('queue')}
-					onResume=${() => call('thread.resume', { id }).catch((e) => setError(e.message))} />`}
-				onSubmit=${submit} onStop=${() => call('thread.stop', { id })} onError=${setError} />`}
+				above=${status} onSubmit=${submit} onStop=${() => call('thread.stop', { id })} onError=${setError} />`}
 		</main>
 		${sheet === 'queue' && html`<${QueueSheet} id=${id} items=${queued} busy=${busy} onEdit=${editQueued} onError=${setError} onClose=${() => setSheet(null)} />`}
 		${sheet === 'rename' && meta && html`<${RenameSheet} thread=${meta} onClose=${() => setSheet(null)} />`}
@@ -468,7 +467,7 @@ const fragmentStyle = '<style>html,body{margin:0}body{padding:14px;font:15px/1.4
 /** The agent's HTML as a document: a full page keeps its own head (with the rules added), a fragment gets a body. */
 function frameDocument(source) {
 	if (/<html[\s>]|<!doctype/i.test(source)) {
-		if (/<head[^>]*>/i.test(source)) return source.replace(/<head[^>]*>/i, (head) => head + frameHead)
+		if (/<head(\s[^>]*)?>/i.test(source)) return source.replace(/<head(\s[^>]*)?>/i, (head) => head + frameHead)
 		return source.replace(/<html[^>]*>/i, (tag) => `${tag}<head>${frameHead}</head>`)
 	}
 	return `<!doctype html><html><head>${frameHead}${fragmentStyle}</head><body>${source}</body></html>`
