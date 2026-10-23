@@ -83,7 +83,8 @@ export function summarize(args) {
 	return (typeof value === 'string' ? value : JSON.stringify(value)).replace(/\s+/g, ' ')
 }
 
-// MARK: Markdown — small and strict: everything is escaped, only a few tags come out, links only to http(s).
+// MARK: Markdown — small and strict: everything is escaped, only a few tags come out, links only to http(s) and to
+// threads (#/t/ID, which the infinite chat writes).
 
 const escape = (text) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 
@@ -101,7 +102,7 @@ function inline(text) {
 	const restore = (out) => out.replace(/\u0000(\d+)\u0000/g, (_, i) => restore(kept[i]))
 	const out = escape(text.replace(/\u0000/g, ''))
 		.replace(/`([^`]+)`/g, (_, code) => keep(`<code>${code}</code>`))
-		.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)|(^|[\s(])(https?:\/\/[^\s)\u0000]+)/g, (_, label, href, before, url) =>
+		.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+|#\/t\/\d+)\)|(^|[\s(])(https?:\/\/[^\s)\u0000]+)/g, (_, label, href, before, url) =>
 			href ? keep(`<a href="${href}">${emphasis(label)}</a>`) : before + keep(`<a href="${url}">${url}</a>`))
 	return restore(emphasis(out))
 }

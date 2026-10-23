@@ -172,7 +172,10 @@ final class AppModel {
     /// Opens the harness with the active generation; if that generation can't load, falls back once.
     private func openHarness() async throws -> Harness {
         let open = { [self] in
-            try await Harness.open(.sqlite(at: Self.databaseURL), models: models, extensions: try await extensions(), settings: Self.settings)
+            let extensions = try await extensions()
+            var settings = Self.settings
+            settings.extensions = extensions.map(\.name).filter { !Self.infiniteOnly.contains($0) }
+            return try await Harness.open(.sqlite(at: Self.databaseURL), models: models, extensions: extensions, settings: settings)
         }
         do {
             return try await open()
@@ -191,9 +194,12 @@ final class AppModel {
     private func extensions() async throws -> [Extension] {
         [
             try await generations.activeExtension(), selfExtension(), HandsTools.makeExtension(), CuaTools.makeExtension(),
-            ShowTools.makeExtension(), Memory.makeExtension(), .toolSearch(), .codemode(),
+            ShowTools.makeExtension(), Memory.makeExtension(), ThreadTools.makeExtension(), .toolSearch(), .codemode(),
         ]
     }
+
+    /// The extensions only the infinite chat selects: its memory, and its threads (it coordinates the others).
+    nonisolated static let infiniteOnly = ["mycroft.memory", ThreadTools.name]
 
     /// Tool calls of one step run in parallel, so work on several machines happens at the same time.
     ///
@@ -325,8 +331,17 @@ final class AppModel {
     /// The infinite chat: one thread, made once, that the screen opens from above the list.
     private func ensureInfinite(_ harness: Harness) async -> ConversationID? {
         do {
-            if let infinite = try await harness.document(Threads.document).items.first(where: { $0.infinite == true }) { return infinite.id }
-            let conversation = try await harness.createConversation(agent: Self.agent)
+            let only = AgentChange.Extensions.edit(add: Self.infiniteOnly)
+            if let infinite = try await harness.document(Threads.document).items.first(where: { $0.infinite == true }) {
+                // A chat made before an extension joined `infiniteOnly` selects it now.
+                if let conversation = try await harness.conversation(infinite.id), try await conversation.agentState().extensions != only {
+                    try await conversation.configure(AgentChange(extensions: only))
+                }
+                return infinite.id
+            }
+            var agent = Self.agent
+            agent.extensions = only
+            let conversation = try await harness.createConversation(agent: agent)
             var meta = ThreadMeta(id: conversation.id, title: "Mycroft", createdAt: .now, updatedAt: .now)
             meta.infinite = true
             try await harness.update(Threads.document) { [meta] in $0.items.append(meta) }
@@ -340,9 +355,18 @@ final class AppModel {
 
     /// Creates a thread with its first message: until then a new thread is only a draft on the screen. `voice`: it
     /// starts in a conversation.
-    func startThread(with text: String, voice: Bool = false) async throws -> ThreadMeta {
-        let meta = try await newThread()
+    /// `parent`, `title`: the infinite chat starts threads (ThreadTools) with a title and itself as their parent.
+    func startThread(with text: String, voice: Bool = false, parent: ConversationID? = nil, title: String? = nil) async throws -> ThreadMeta {
+        var meta = try await newThread()
         do {
+            if parent != nil || title != nil {
+                meta.parent = parent
+                if let title { meta.title = title }
+                try await edit(meta.id) { [meta] in
+                    $0.parent = meta.parent
+                    $0.title = meta.title
+                }
+            }
             if voice { try await setVoice(true, in: meta.id) }
             try await send(text, to: meta)
         } catch {
@@ -391,6 +415,8 @@ final class AppModel {
     func fork(_ thread: ThreadMeta, at entry: EntryID) async throws -> ThreadMeta {
         guard let harness else { throw StartError.notReady }
         let fork = try await conversation(of: thread).fork(at: entry)
+        // A fork of the infinite chat is an ordinary thread: no memory, no coordinating.
+        if thread.infinite == true { try await fork.configure(AgentChange(reset: [.extensions])) }
         var meta = ThreadMeta(id: fork.id, title: "Fork · \(thread.title)", createdAt: .now, updatedAt: .now)
         meta.parent = thread.id
         try await harness.update(Threads.document) { [meta] in $0.items.append(meta) }

@@ -118,7 +118,7 @@ export function Thread({ id }) {
 			<div class="scroll transcript" ref=${scroller} onScroll=${onScroll}>
 				${draft
 					? html`<section class="draft-hero"><h1>What should Mycroft do?</h1></section>`
-					: view ? html`${parent && html`<button class="forked-from faint small" onClick=${() => go(`#/t/${parent.id}`)}><${Icon} name="fork" size=${13} /><span class="ellipsis">Forked from ${parent.title}</span></button>`}
+					: view ? html`${parent && html`<button class="forked-from faint small" onClick=${() => go(`#/t/${parent.id}`)}><${Icon} name="fork" size=${13} /><span class="ellipsis">${parent.infinite ? 'Started from Mycroft ∞' : `Forked from ${parent.title}`}</span></button>`}
 						<${Transcript} view=${view} thread=${meta} onError=${setError} onRetry=${(text) => submit(text, 'send')} />`
 					: html`<div class="center"><${Spinner} /></div>`}
 				${(error || view?.error) && html`<p class="card danger mono small">${error || view.error}</p>`}

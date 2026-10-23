@@ -65,6 +65,8 @@ Imports are relative (`./lib.js`) except the runtime: `import { html, render, us
              visitedAt?, finishedAt?, outcome?: 'done'|'failed'|'stopped', parent? }],   // newest first, not archived
   archived: [ …the same, archived ],
   infinite: { …a thread, infinite: true } | null,   // the infinite chat: one thread that never ends, in neither list
+                                                   // parent: the thread a fork came from, or the infinite chat when
+                                                   // it started the thread; its answers link threads as #/t/ID
   busy: [threadId],                                 // threads with a run going
   signIn: { state: 'unknown'|'signedOut'|'signedIn'|'waiting'|'failed', code?, url?, message? },
   dictation: { bundled: bool, ready: bool },   // Fluid Speech Mini, the dictation model: in this build; loaded
