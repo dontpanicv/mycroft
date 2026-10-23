@@ -15,7 +15,9 @@ final class ConversationAudio {
     /// Without it the conversation doesn't listen while Mycroft speaks.
     private(set) var echoCancelled = false
 
-    @ObservationIgnored private let engine: AVAudioEngine
+    /// The listener's engine, which it replaces on each restart.
+    @ObservationIgnored private let currentEngine: () -> AVAudioEngine
+    private var engine: AVAudioEngine { currentEngine() }
     /// Starts the listener's audio again, on a new route; false if it failed (and the listener stopped).
     @ObservationIgnored private let restart: () -> Bool
     /// The route the audio is set up for: headphones (no echo cancellation) or the speaker.
@@ -26,9 +28,9 @@ final class ConversationAudio {
     @ObservationIgnored private var reroutes: [Date] = []
     @ObservationIgnored private let log = Logger(subsystem: "dev.mycroft", category: "listener")
 
-    init(speaker: Speaker, engine: AVAudioEngine, restart: @escaping () -> Bool) {
+    init(speaker: Speaker, engine: @escaping () -> AVAudioEngine, restart: @escaping () -> Bool) {
         self.speaker = speaker
-        self.engine = engine
+        self.currentEngine = engine
         self.restart = restart
     }
 
@@ -161,7 +163,7 @@ final class ConversationAudio {
             return
         }
         log.notice("conversation audio: route changed, headphones: \(headphones)")
-        Journal.note("talk_route", ["headphones": "\(headphones)", "route": Self.route])
+        Journal.note("talk_route", ["headphones": "\(headphones)", "route": Self.route, "running": "\(engine.isRunning)"])
         // What Mycroft was saying starts again on the new route, from the sentence it was in.
         let unsaid = speaker.halt()
         guard restart() else { return }

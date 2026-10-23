@@ -278,6 +278,7 @@ final class VoiceChat {
 
     private func fail(_ message: String) {
         log.error("conversation failed: \(message)")
+        Journal.note("talk_failed", ["error": message, "route": Listener.route])
         end()
         error = message
     }

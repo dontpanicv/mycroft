@@ -57,9 +57,13 @@ final class Listener {
     /// Counts clears, so a transcription that finishes after its words were cleared is dropped.
     @ObservationIgnored private var turn = 0
     @ObservationIgnored private var framesFed: Int64 = 0
-    @ObservationIgnored private let engineIO = AVAudioEngine()
+    /// A new one for each start, and at each restart for a new route (``restartAudio()``).
+    @ObservationIgnored private var engineIO = AVAudioEngine()
     @ObservationIgnored private let player = AVAudioPlayerNode()
     @ObservationIgnored nonisolated(unsafe) private var converter: AVAudioConverter?
+    @ObservationIgnored private var engineChanges: NSObjectProtocol?
+    /// When iOS last stopped the engine and it started again.
+    @ObservationIgnored private var resumes: [Date] = []
     @ObservationIgnored private let log = Logger(subsystem: "dev.mycroft", category: "listener")
 
     /// The samples from `audioStart` (a frame index) on.
@@ -129,7 +133,7 @@ final class Listener {
         lastError = nil
         if state == .on { return }
         if let speaker {
-            mode = .conversation(ConversationAudio(speaker: speaker, engine: engineIO) { [weak self] in self?.restartAudio() ?? false })
+            mode = .conversation(ConversationAudio(speaker: speaker, engine: { [unowned self] in self.engineIO }) { [weak self] in self?.restartAudio() ?? false })
         } else {
             mode = .dictation
         }
@@ -319,6 +323,7 @@ final class Listener {
 
     private func fail(_ error: Error) {
         log.error("listener failed: \(error)")
+        Journal.note("listener_failed", ["error": error.localizedDescription, "route": Self.route])
         state = .failed(error.localizedDescription)
         teardown()
     }
@@ -336,6 +341,8 @@ final class Listener {
         ticker = nil
         refreshing?.cancel()
         refreshing = nil
+        if let engineChanges { NotificationCenter.default.removeObserver(engineChanges) }
+        engineChanges = nil
         engineIO.inputNode.removeTap(onBus: 0)
         engineIO.stop()
         classifier?.stop()
@@ -344,6 +351,9 @@ final class Listener {
         conversation?.stop()
         mode = .dictation
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // An engine that ran keeps what it learned of the hardware: after a failed start (another app holding the
+        // audio, say) every later start failed with -10868. The next start gets a new one.
+        engineIO = AVAudioEngine()
     }
 
     private func startAudio() throws {
@@ -352,14 +362,21 @@ final class Listener {
         case .dictation: try setUpDictation(session)
         case .conversation(let conversation): try conversation.setUp(session)
         }
-        if player.engine == nil {
+        if player.engine !== engineIO {
+            player.engine?.detach(player)
             engineIO.attach(player)
             try engineIO.connectNode(player, to: engineIO.mainMixerNode, format: Self.playFormat)
         }
         conversation?.connect()
-        // The tap takes the microphone's own format, whatever it is by now: echo cancellation changes it after the
-        // session is set up, and a tap in a stale format throws. The converter follows the buffers (`captured`).
+        try runEngine()
+    }
+
+    /// Starts the engine as the session is set up now. The tap takes the microphone's own format, whatever it is by
+    /// now: echo cancellation changes it after the session is set up, and a tap in a stale format throws. The
+    /// converter follows the buffers (`captured`).
+    private func runEngine() throws {
         let node = engineIO.inputNode
+        node.removeTap(onBus: 0)
         converter = nil
         node.installTap(onBus: 0, bufferSize: 2048, format: nil, block: AudioTap.block { [weak self] buffer in
             self?.captured(buffer)
@@ -372,6 +389,27 @@ final class Listener {
             log.error("listener: the tone can't play (\(error))")
         }
         conversation?.started()
+        guard engineChanges == nil else { return }
+        engineChanges = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engineIO, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.engineChanged() }
+        }
+    }
+
+    /// iOS stops the engine when the microphone or output changes format (AirPods' call profile, echo cancellation
+    /// settling after a restart), and nothing is heard until it starts again: as it is set up, so this can't loop on
+    /// its own setup. Headphones coming or going need a new setup as well (``ConversationAudio``).
+    private func engineChanged() {
+        guard listening, !engineIO.isRunning else { return }
+        resumes = resumes.filter { $0 > .now - 10 } + [.now]
+        Journal.note("listener_resumed", ["route": Self.route, "times": "\(resumes.count)"])
+        guard resumes.count <= 3 else { return fail(Failure("The microphone keeps stopping (\(Self.route)).")) }
+        do {
+            try runEngine()
+        } catch {
+            fail(error)
+        }
     }
 
     /// No voice processing: it is made for calls and smears speech for a recognizer. AirPods that can record at full
@@ -385,17 +423,33 @@ final class Listener {
         if !fullBandwidth { try session.setMode(.measurement) }
     }
 
-    /// Starts the audio again for a conversation's new route (``ConversationAudio``); false if it failed.
+    /// Starts the audio again for a conversation's new route (``ConversationAudio``), in a new engine: turning echo
+    /// cancellation on in one that already ran left it running but silent both ways. False if it failed.
     private func restartAudio() -> Bool {
+        if let engineChanges { NotificationCenter.default.removeObserver(engineChanges) }
+        engineChanges = nil
         engineIO.inputNode.removeTap(onBus: 0)
         engineIO.stop()
+        if engineIO.inputNode.isVoiceProcessingEnabled { try? engineIO.inputNode.setVoiceProcessingEnabled(false) }
+        engineIO = AVAudioEngine()
         do {
             try startAudio()
-            return true
         } catch {
             fail(error)
             return false
         }
+        // shortcut: checks the new engine hears, in the journal; remove once route switches are known to work on devices.
+        let frames = framesFed
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, self.listening else { return }
+            Journal.note("listener_restarted", [
+                "heardSeconds": String(format: "%.1f", Double(self.framesFed - frames) / Self.sampleRate),
+                "level": String(format: "%.2f", self.level), "running": "\(self.engineIO.isRunning)",
+                "echoCancelled": "\(self.echoCancelled)", "route": Self.route,
+            ])
+        }
+        return true
     }
 
     nonisolated private func captured(_ buffer: AVAudioPCMBuffer) {
