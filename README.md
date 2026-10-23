@@ -38,10 +38,30 @@ The design builds on Mario Zechner's "pim" ([Pi Durable](https://github.com/eare
 
 ## Credits
 
-- [Pi / Pi Durable / pi-env](https://github.com/earendil-works/pi) by Mario Zechner, Armin Ronacher and Earendil (MIT)
-- [PiDurableKit](https://github.com/finnvoor/PiDurableKit) (CC0) for showing Pi Durable on JavaScriptCore
-- [pi-phone](https://github.com/picassio/pi-phone) (MIT) for the Pi session hand-off pattern
-- [Cua Driver](https://github.com/trycua/cua) by Cua (MIT), linked into `hands` for desktop control
+Mycroft stands on other people's work. Thank you.
+
+**The idea.** Mario Zechner ([@badlogicgames](https://x.com/badlogicgames)) ran Pi Durable on an Android phone ("pim"): the brain on the phone, the hands elsewhere, an agent that edits itself. Mycroft is that idea brought to iOS ([research](docs/research/README.md)).
+
+**Built on**
+
+- [Pi, Pi Durable and pi-env](https://github.com/earendil-works/pi) (MIT) by Mario Zechner, Armin Ronacher ([@mitsuhiko](https://x.com/mitsuhiko)) and Earendil ([@earendilworks](https://x.com/earendilworks)). The agent runs on Pi Durable, and `hands` is built on the pi-env daemon ([NOTICE](hands/NOTICE)).
+- [PiDurableKit](https://github.com/finnvoor/PiDurableKit) (CC0) by Finn Voorhees: Pi Durable on JavaScriptCore, the app's runtime.
+- [Cua Driver](https://github.com/trycua/cua) (MIT) by Cua ([@trycua](https://x.com/trycua)), linked into `hands` for desktop control.
+- [Fluid Speech Mini](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-coreml) (CC-BY-4.0) by FluidVoice ([@FluidVoiceApp](https://x.com/FluidVoiceApp)) for dictation, built on NVIDIA's Parakeet TDT 0.6B v3 and Moondream's Parakeet Ultra.
+- [Phonon 31m](https://huggingface.co/gradium/phonon-31m-en) (Apache-2.0) by Gradium ([@GradiumAI](https://x.com/GradiumAI)), Mycroft's voice in a conversation. Jon Taylor ([@JonPTaylor](https://x.com/JonPTaylor)) pointed us to it.
+- [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) and the [Core ML conversions](https://huggingface.co/FluidInference/pocket-tts-coreml) by FluidInference, which run both speech models on the Neural Engine.
+- [Preact](https://preactjs.com) (MIT) and [htm](https://github.com/developit/htm) (Apache-2.0) for the agent's screen; [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) and [Schibsted Grotesk](https://github.com/schibsted/schibsted-grotesk) (SIL OFL) for its type ([licenses](docs/licenses/)).
+
+**Ideas taken from**
+
+- [UniiChat](https://github.com/VictorTaelin/UniiChat) (Apache-2.0) by Victor Taelin: the memory tree behind Mycroft ∞, the infinite chat ([ADR 0020](docs/decisions/0020-infinite-chat.md)).
+- [T3 Code](https://github.com/pingdotgg/t3code) (MIT) by Ping.gg: how threads work, with drafts, queue or steer, and fork ([ADR 0012](docs/decisions/0012-threads-like-t3.md)).
+- [pi-phone](https://github.com/picassio/pi-phone) (MIT) by Picassio ([@ocbieuvang](https://x.com/ocbieuvang)): handing a session off to Pi on a server.
+- [grep.ai](https://grep.ai/) and iOS 27's Liquid Glass: the visual style ([design direction](docs/DESIGN.md)).
+- Computer use before Cua ([ADR 0006](docs/decisions/0006-computer-use-with-jev.md), since replaced), which shaped the design: [jev-use](https://github.com/savka777/jev-use) by sav ([@savboj](https://x.com/savboj)), [Computah](https://github.com/musubipapi/computah) by Andy Gao ([@instantricecook](https://x.com/instantricecook)), [Jev](https://docs.typesafe.ai/) by typesafe.ai ([@typesafeai](https://x.com/typesafeai)) and [pi-computer-use](https://github.com/injaneity/pi-computer-use) by injaneity.
+- Rui Carmo ([@rcarmo](https://x.com/rcarmo)), whose Pi-on-iPhone report and [ios-linuxkit](https://github.com/rcarmo/ios-linuxkit) answered "can this run on iOS?", and Underdog's Bark 3.0, the first dictation model we built and measured ([ADR 0014](docs/decisions/0014-dictation-fluid-speech-mini.md)).
+
+The name is Mycroft Holmes, the brother who stays in his armchair while others do the legwork, and a nod to Mike in Heinlein's *The Moon Is a Harsh Mistress*.
 
 ## License
 
