@@ -1,5 +1,5 @@
 hands
-Part of Mycroft (https://github.com/kurkavojtech/mycroft), MIT License, see ../LICENSE.
+Part of Mycroft (https://github.com/dontpanicv/mycroft), MIT License, see ../LICENSE.
 
 hands is based on the pi-env daemon of Pi (https://github.com/earendil-works/pi, packages/env/daemon) by Mario
 Zechner, Armin Ronacher and Earendil Works. Its source files in src/ (all except cli.rs, cua.rs, install.rs, jobs.rs,

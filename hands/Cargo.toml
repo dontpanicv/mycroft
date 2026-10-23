@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "Mycroft's hands: the execution daemon the Mycroft iPhone app pairs with, with supervised jobs, for macOS and Linux"
 license = "MIT"
-repository = "https://github.com/kurkavojtech/mycroft"
+repository = "https://github.com/dontpanicv/mycroft"
 publish = false
 
 [[bin]]

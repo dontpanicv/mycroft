@@ -287,7 +287,7 @@ pub fn systemd_unit(binary: &Path, bind: Option<IpAddr>, environment: &[(&str, S
     format!(
         "[Unit]
 Description=hands for Mycroft: the supervisor of jobs and the paired phone's listener
-Documentation=https://github.com/kurkavojtech/mycroft/tree/main/hands
+Documentation=https://github.com/dontpanicv/mycroft/tree/main/hands
 
 [Service]
 ExecStart={binary} {arguments}
