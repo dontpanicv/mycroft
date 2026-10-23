@@ -60,7 +60,7 @@ main() {
 	name=hands-$os-$arch
 
 	tmp=$(mktemp -d 2>/dev/null || mktemp -d -t mycroft) || fail "cannot create a temporary directory"
-	curl -fsSLk --retry 3 --retry-all-errors --pinnedpubkey "sha256//$PIN" -o "$tmp/hands" "$BASE/$name" </dev/null ||
+	curl -fsSLk --retry 3 --pinnedpubkey "sha256//$PIN" -o "$tmp/hands" "$BASE/$name" </dev/null ||
 		fail "could not download $name from the phone"
 
 	actual=$(sha256 "$tmp/hands") || exit 1

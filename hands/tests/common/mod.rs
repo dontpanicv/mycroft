@@ -1,12 +1,13 @@
-//! A minimal protocol client for the integration tests: it starts `hands serve` with a temporary state dir
-//! (`HANDS_STATE_DIR`, never the real one) and speaks the framed protocol of docs/protocol.md.
+//! A minimal protocol client for the integration tests: it starts `hands __serve`, as the listener does for each
+//! connection, with a temporary state dir (`HANDS_STATE_DIR`, never the real one) and speaks the framed protocol of
+//! docs/protocol.md.
 
 #![allow(dead_code)]
 
 pub mod phone;
 
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -45,7 +46,7 @@ pub fn read_frame(input: &mut impl Read) -> Option<(u8, u32, Value, Vec<u8>)> {
     Some((body[0], id, json, body[9 + json_length..].to_vec()))
 }
 
-/// A temporary state dir; dropping it cancels its jobs, stops its supervisor and deletes it.
+/// A temporary state dir; dropping it cancels its jobs, stops its supervisor and listener, and deletes it.
 pub struct StateDir {
     pub path: PathBuf,
 }
@@ -98,12 +99,23 @@ impl Drop for StateDir {
             }
             self.supervisor(json!({ "op": "shutdown" }));
         }
+        // A listener `hands pair` started detached outlives the test otherwise, when its supervisor was not up yet
+        // to take the shutdown (a pairing that failed at once). Only while it still holds its lock: the pid may be
+        // gone, and reused.
+        if let Ok(lock) = std::fs::File::open(self.path.join("listener.lock")) {
+            use std::os::fd::AsRawFd;
+            let held = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
+            let pid = std::fs::read_to_string(self.path.join("listener.lock")).ok();
+            if let Some(pid) = pid.and_then(|pid| pid.trim().parse::<i32>().ok()).filter(|_| held) {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+        }
         let _ = std::fs::remove_dir_all(&self.path);
         let _ = std::fs::remove_dir_all(self.path.with_extension("work"));
     }
 }
 
-/// A `hands serve` process and its connection.
+/// A `hands __serve` process and its connection.
 pub struct Serve {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -113,12 +125,8 @@ pub struct Serve {
 
 impl Serve {
     pub fn start(state: &Path) -> Serve {
-        Serve::start_with(state, &["serve", "--stdio", "--token", "t0k3n"], "t0k3n")
-    }
-
-    pub fn start_with(state: &Path, args: &[&str], token: &str) -> Serve {
         let mut child = Command::new(HANDS)
-            .args(args)
+            .arg("__serve")
             .env("HANDS_STATE_DIR", state)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -126,10 +134,7 @@ impl Serve {
             .spawn()
             .unwrap();
         let stdin = child.stdin.take();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        stdout.read_line(&mut line).unwrap();
-        assert_eq!(line, format!("PI-ENV {token}\n"));
+        let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut serve = Serve {
             child,
             stdin,
@@ -212,8 +217,9 @@ impl Serve {
         self.child.id()
     }
 
-    /// End the connection as a dropped SSH session does: stdin closes, and serve exits after killing what it ran.
-    /// Its stdout must then end too: a supervisor or job holding it open would keep `ssh` from exiting.
+    /// End the connection as the listener does when the phone goes: stdin closes, and serve exits after killing
+    /// what it ran. Its stdout must then end too: a supervisor or job holding it open would keep the listener's
+    /// reader waiting.
     pub fn disconnect(mut self) {
         self.stdin.take();
         let deadline = Instant::now() + Duration::from_secs(10);

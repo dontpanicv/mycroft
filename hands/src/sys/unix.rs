@@ -1,4 +1,4 @@
-//! Linux, macOS and Android.
+//! Linux and macOS.
 
 use super::{OpenMode, ShellConfig, path_exists};
 use crate::errors::Failure;
@@ -7,9 +7,9 @@ use std::ffi::{CString, OsStr};
 use std::fs::{File, Metadata, OpenOptions};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{FileExt, MetadataExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// libuv's name for an OS error.
@@ -47,8 +47,6 @@ pub fn os_error_name(error: &io::Error) -> &'static str {
     }
 }
 
-pub const PATH_SEPARATOR: &str = "/";
-
 pub fn read_at(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
     file.read_at(buffer, offset)
 }
@@ -63,22 +61,12 @@ pub fn identity(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-/// Node's `os.tmpdir()`; Termux's Node falls back to `$PREFIX/tmp`.
+/// Node's `os.tmpdir()`.
 pub fn tmpdir() -> String {
     let configured = ["TMPDIR", "TMP", "TEMP"]
         .iter()
         .find_map(|key| std::env::var(key).ok().filter(|value| !value.is_empty()));
-    let mut path = configured.unwrap_or_else(|| {
-        if cfg!(target_os = "android") {
-            format!(
-                "{}/tmp",
-                std::env::var("PREFIX")
-                    .unwrap_or_else(|_| "/data/data/com.termux/files/usr".into())
-            )
-        } else {
-            "/tmp".into()
-        }
-    });
+    let mut path = configured.unwrap_or_else(|| "/tmp".into());
     if path.len() > 1 && path.ends_with('/') {
         path.pop();
     }
@@ -105,26 +93,6 @@ pub fn mkdtemp(prefix: &str) -> io::Result<String> {
     Ok(OsStr::from_bytes(&buffer).to_string_lossy().into_owned())
 }
 
-/// Open a regular file for positional reads, without blocking on FIFOs and, with `no_follow`, without following a
-/// final symbolic link.
-pub fn open_reader(path: &str, no_follow: bool) -> Result<File, Failure> {
-    let mut flags = libc::O_NONBLOCK;
-    if no_follow {
-        flags |= libc::O_NOFOLLOW;
-    }
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(flags)
-        .open(path)
-        .map_err(|error| {
-            if no_follow && matches!(error.raw_os_error(), Some(libc::ELOOP) | Some(libc::EMLINK)) {
-                Failure::new("SYMLINK", "Refusing to follow a symbolic link").path(path)
-            } else {
-                Failure::io(&error, "open", path)
-            }
-        })
-}
-
 /// Open a file in one of Node's write modes.
 pub fn open(path: &str, mode: OpenMode) -> io::Result<File> {
     let mut options = OpenOptions::new();
@@ -132,21 +100,8 @@ pub fn open(path: &str, mode: OpenMode) -> io::Result<File> {
         OpenMode::Read => options.read(true),
         OpenMode::Write => options.write(true).create(true).truncate(true),
         OpenMode::Append => options.append(true).create(true),
-        OpenMode::ReadWrite => options.read(true).write(true),
     };
     options.open(path)
-}
-
-pub fn realpath(path: &str) -> io::Result<String> {
-    std::fs::canonicalize(path).map(|resolved| resolved.to_string_lossy().into_owned())
-}
-
-pub fn rename(from: &str, to: &str) -> io::Result<()> {
-    std::fs::rename(from, to)
-}
-
-pub fn remove_file(path: &str) -> io::Result<()> {
-    std::fs::remove_file(path)
 }
 
 /// A pipe a reader thread can poll, so that it stops when the command settles.
@@ -195,18 +150,6 @@ pub fn read_pipe(mut pipe: impl Pipe, stop: &AtomicBool, mut on_data: impl FnMut
     }
 }
 
-/// Readers poll `stop` every 100 ms.
-pub fn interrupt_reader(_reader: &std::thread::JoinHandle<()>) {}
-
-/// The program an argv command runs; `Command` searches `PATH` like `execvp`, as libuv does.
-pub fn resolve_program(
-    program: &str,
-    _cwd: &str,
-    _env: &Map<String, Value>,
-) -> Result<String, Failure> {
-    Ok(program.to_string())
-}
-
 fn which_bash() -> Option<String> {
     let output = Command::new("which")
         .arg("bash")
@@ -230,7 +173,6 @@ pub fn shell_config(shell_path: Option<&str>) -> Result<ShellConfig, Failure> {
     let shell = |program: &str| ShellConfig {
         program: program.into(),
         args: vec!["-c".into()],
-        command_on_stdin: false,
     };
     if let Some(configured) = shell_path {
         if path_exists(configured) {
@@ -281,8 +223,6 @@ pub fn configure(
     }
 }
 
-pub fn after_spawn(_child: &Child) {}
-
 /// Kill the command's process group, or the process if the group is gone.
 pub fn kill_tree(pid: u32) {
     let pid = pid as i32;
@@ -301,23 +241,4 @@ pub fn exit_code(status: ExitStatus) -> i64 {
             .code()
             .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
     )
-}
-
-/// The bytes of a file name, which libuv sorts directory listings by.
-pub fn raw_name(name: &OsStr) -> Option<Vec<u8>> {
-    Some(name.as_bytes().to_vec())
-}
-
-/// Windows only: the per-drive working directories of the `=C:` variables.
-pub fn drive_cwds() -> Map<String, Value> {
-    Map::new()
-}
-
-pub fn read_dir(path: &str) -> io::Result<std::fs::ReadDir> {
-    std::fs::read_dir(path)
-}
-
-/// Device and inode of `path`; the metadata already has them.
-pub fn path_identity(_path: &str, metadata: &Metadata, _follow: bool) -> (u64, u64) {
-    identity(metadata)
 }

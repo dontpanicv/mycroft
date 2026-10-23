@@ -1,5 +1,5 @@
 //! Pairing and the listener (docs/pairing.md), end to end: a fake phone's HTTPS pairing server, `hands pair`, and a
-//! WebSocket client with the phone's key talking pi-env through the listener. Every test uses its own temporary
+//! WebSocket client with the phone's key talking to `serve` through the listener. Every test uses its own temporary
 //! state dir and binds the listener to 127.0.0.1 only.
 
 mod common;
@@ -7,7 +7,7 @@ mod common;
 use common::phone::{
     FakePhone, PhoneKey, Socket, authenticate, base64, closes, connect, hex, listener_identity, paired_reply, sha256,
 };
-use common::{HANDS, StateDir, eventually, read_frame, write_frame};
+use common::{HANDS, StateDir, read_frame, write_frame};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
@@ -28,7 +28,7 @@ fn mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-/// Send a pi-env request as one binary message and wait for its result or error, checking that every binary
+/// Send a request as one binary message and wait for its result or error, checking that every binary
 /// message carries exactly one frame.
 fn call(socket: &mut Socket, id: u32, request: Value) -> Result<(Value, Vec<u8>), Value> {
     let mut frame = Vec::new();
@@ -61,7 +61,7 @@ fn pair(state: &StateDir, base: &str, pin: &str) -> std::process::Output {
 }
 
 #[test]
-fn pair_then_authenticate_and_use_pi_env_through_the_listener() {
+fn pair_then_authenticate_and_use_serve_through_the_listener() {
     let state = StateDir::new();
     let key = PhoneKey::from_seed(7);
     let reply = paired_reply("Test iPhone", &key);
@@ -115,7 +115,7 @@ fn pair_then_authenticate_and_use_pi_env_through_the_listener() {
     let answer = authenticate(&mut socket, &key, |nonce| auth_message(&cert_sha256, nonce));
     assert_eq!(answer, json!({ "type": "ready" }));
 
-    // pi-env through the listener.
+    // serve through the listener.
     let hello = ok(&mut socket, 1, json!({ "op": "hello", "protocol": 1 }));
     assert_eq!(hello["protocol"], 1);
     assert_eq!(hello["version"], env!("CARGO_PKG_VERSION"));
@@ -147,11 +147,12 @@ fn pair_then_authenticate_and_use_pi_env_through_the_listener() {
         }
     }
     assert_eq!(fs::read(&file).unwrap(), big);
-    let opened = ok(&mut socket, 6, json!({ "op": "open", "path": file }));
+    let opened = ok(&mut socket, 6, json!({ "op": "open", "path": file, "mode": "read" }));
+    assert_eq!(opened["stat"]["size"], big.len());
     let read = json!({ "op": "pread", "handle": opened["handle"], "offset": 0, "length": big.len() });
     let (_, read) = call(&mut socket, 8, read).unwrap();
     assert!(read == big, "pread through the listener returned {} bytes", read.len());
-    let missing = call(&mut socket, 7, json!({ "op": "lstat", "path": "/nonexistent/x" })).unwrap_err();
+    let missing = call(&mut socket, 7, json!({ "op": "open", "path": "/nonexistent/x", "mode": "read" })).unwrap_err();
     assert_eq!(missing["code"], "ENOENT");
     socket.close(None).unwrap();
 
@@ -187,17 +188,26 @@ impl Listener {
             .map(|(name, key)| json!({ "name": name, "publicKey": base64(&key.public()), "pairedAt": 1 }))
             .collect();
         fs::write(state.path.join("paired.json"), serde_json::to_vec(&phones).unwrap()).unwrap();
-        let child = Command::new(HANDS)
+        let log = state.path.join("test-listener.stderr");
+        let mut child = Command::new(HANDS)
             .args(["supervise", "--listen", "--bind", "127.0.0.1"])
             .env("HANDS_STATE_DIR", &state.path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(fs::File::create(&log).unwrap())
             .spawn()
             .unwrap();
-        eventually("the listener", || {
-            fs::read_to_string(state.path.join("listener.lock")).is_ok_and(|pid| pid.ends_with('\n'))
-        });
+        // Generous, as the other tests' processes compete for the machine; a listener that exits (its port taken)
+        // fails at once, with what it said.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !fs::read_to_string(state.path.join("listener.lock")).is_ok_and(|pid| pid.ends_with('\n')) {
+            let said = || fs::read_to_string(&log).unwrap_or_default();
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("the listener exited with {status}: {}", said());
+            }
+            assert!(std::time::Instant::now() < deadline, "timed out waiting for the listener: {}", said());
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         let (port, cert_sha256) = listener_identity(&state.path);
         Listener { child, port, cert_sha256 }
     }
@@ -247,7 +257,7 @@ fn an_unknown_key_is_unauthorized() {
     assert_eq!(answer, json!({ "type": "error", "code": "unauthorized" }));
     assert!(closes(&mut socket));
 
-    // Nothing but auth is accepted before ready: a pi-env frame is refused too.
+    // Nothing but auth is accepted before ready: a protocol frame is refused too.
     let mut socket = connect(listener.port, &cert, "/v1").unwrap();
     let hello = common::phone::read_json(&mut socket);
     assert_eq!(hello["type"], "hello");

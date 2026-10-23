@@ -15,7 +15,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const EXIT_STDIO_GRACE: Duration = Duration::from_millis(100);
@@ -188,26 +188,15 @@ impl Spill {
     }
 }
 
-fn spawn(
-    request: &ExecRequest,
-    program: &str,
-    args: &[String],
-    piped_stdin: bool,
-) -> std::io::Result<Child> {
+fn spawn(request: &ExecRequest, program: &str, args: &[String]) -> std::io::Result<Child> {
     let mut command = Command::new(program);
     command
         .current_dir(&request.cwd)
-        .stdin(if piped_stdin {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     sys::configure(&mut command, args, &request.env, request.inherit_env);
-    let child = command.spawn()?;
-    sys::after_spawn(&child);
-    Ok(child)
+    command.spawn()
 }
 
 /// Read one pipe on its own thread. Without an output window, reading waits while too much output is unsent.
@@ -217,7 +206,7 @@ fn spawn_reader(
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
     output: Option<Arc<Output>>,
-) -> JoinHandle<()> {
+) {
     thread::spawn(move || {
         sys::read_pipe(pipe, &stop, |bytes| {
             let delivered = sender.send(Message::Data(stream, bytes.to_vec())).is_ok();
@@ -227,7 +216,7 @@ fn spawn_reader(
             delivered
         });
         let _ = sender.send(Message::Eof(stream));
-    })
+    });
 }
 
 fn output_frame(id: u32, stream: &str, text: String, skipped: Option<Value>) -> Frame {
@@ -252,24 +241,17 @@ pub fn run(
     if control.aborted.load(Ordering::SeqCst) {
         return Err(Failure::new("aborted", "aborted"));
     }
-    // A string runs through the shell (as its last argument, or on stdin for legacy WSL bash); argv runs directly.
-    let (program, args, stdin_command) = match (&request.command, &request.argv) {
+    // A string runs through the shell, as its last argument; argv runs directly, `Command` searching `PATH` like
+    // `execvp`, as libuv does.
+    let (program, args) = match (&request.command, &request.argv) {
         (Some(command), _) => {
             let shell = sys::shell_config(request.shell_path.as_deref())?;
             let mut args = shell.args;
-            if shell.command_on_stdin {
-                (shell.program, args, Some(command.clone()))
-            } else {
-                args.push(command.clone());
-                (shell.program, args, None)
-            }
+            args.push(command.clone());
+            (shell.program, args)
         }
         (None, Some(argv)) => match argv.split_first() {
-            Some((first, rest)) => (
-                sys::resolve_program(first, &request.cwd, &request.env)?,
-                rest.to_vec(),
-                None,
-            ),
+            Some((first, rest)) => (first.clone(), rest.to_vec()),
             None => return Err(Failure::new("spawn_error", "Empty argv: no program to run")),
         },
         (None, None) => return Err(Failure::new("EINVAL", "exec needs command or argv")),
@@ -283,11 +265,8 @@ pub fn run(
             ),
         ));
     }
-    let mut child = spawn(&request, &program, &args, stdin_command.is_some())
+    let mut child = spawn(&request, &program, &args)
         .map_err(|error| Failure::new("spawn_error", error.to_string()))?;
-    if let (Some(command), Some(mut stdin)) = (stdin_command, child.stdin.take()) {
-        let _ = stdin.write_all(command.as_bytes());
-    }
     let pid = child.id();
     groups.lock().unwrap().insert(pid);
     let deadline = request.timeout.map(|timeout| Instant::now() + timeout);
@@ -298,22 +277,20 @@ pub fn run(
     } else {
         None
     };
-    let readers = [
-        spawn_reader(
-            0,
-            child.stdout.take().unwrap(),
-            sender.clone(),
-            stop.clone(),
-            gate.clone(),
-        ),
-        spawn_reader(
-            1,
-            child.stderr.take().unwrap(),
-            sender.clone(),
-            stop.clone(),
-            gate,
-        ),
-    ];
+    spawn_reader(
+        0,
+        child.stdout.take().unwrap(),
+        sender.clone(),
+        stop.clone(),
+        gate.clone(),
+    );
+    spawn_reader(
+        1,
+        child.stderr.take().unwrap(),
+        sender.clone(),
+        stop.clone(),
+        gate,
+    );
     let waiter = sender.clone();
     thread::spawn(move || {
         let _ = waiter.send(match child.wait() {
@@ -436,10 +413,8 @@ pub fn run(
         }
     }
     // Like Node destroying its streams: stop reading, so the pipes close even if a descendant still holds them.
+    // Readers poll `stop` every 100 ms.
     stop.store(true, Ordering::SeqCst);
-    for reader in &readers {
-        sys::interrupt_reader(reader);
-    }
     groups.lock().unwrap().remove(&pid);
     emit(&mut pending, 0, decoders[0].decode(&[], true));
     emit(&mut pending, 1, decoders[1].decode(&[], true));

@@ -1,8 +1,8 @@
 //! `hands install [--pair BASE --pin PIN] [--no-service] [--bind ADDR] [--dry-run] [--uninstall]`: put this binary at `~/.local/bin/hands` and run `hands supervise --listen` as a user service, a
 //! systemd user unit on Linux or a LaunchAgent on macOS, so jobs have a supervisor and the phone a listener that
-//! start with the user and survive SSH sessions. Running it again converges to the same state. `--dry-run` only
-//! prints the steps; `--uninstall` reverses them but keeps the state dir (job records and output, the certificate
-//! and the paired phones).
+//! start with the user. The service gets the `PATH` of the shell `install` runs in, so commands find what the user's
+//! terminal finds. Running it again converges to the same state. `--dry-run` only prints the steps; `--uninstall`
+//! reverses them but keeps the state dir (job records and output, the certificate and the paired phones).
 //!
 //! With `--pair` (what the phone's install script runs) it then pairs with the phone (pairing.rs) and prints only
 //! the result. If the service cannot start (no GUI login on a Mac, no user systemd), or with `--no-service`, the
@@ -205,11 +205,14 @@ pub fn service_path() -> PathBuf {
     config.join("systemd/user").join(UNIT)
 }
 
-/// A state dir chosen with `HANDS_STATE_DIR` must reach the service too.
-fn state_override() -> Option<String> {
-    std::env::var("HANDS_STATE_DIR")
-        .ok()
-        .filter(|dir| !dir.is_empty())
+/// What the service's environment carries over from the shell `install` runs in: its `PATH`, since launchd and
+/// systemd start services with a minimal one (no Homebrew, no `~/.cargo/bin`, no version managers), so `npm` or
+/// `cargo` would not be found by commands and jobs; and a state dir chosen with `HANDS_STATE_DIR`.
+fn service_environment() -> Vec<(&'static str, String)> {
+    ["PATH", "HANDS_STATE_DIR"]
+        .into_iter()
+        .filter_map(|key| Some((key, std::env::var(key).ok().filter(|value| !value.is_empty())?)))
+        .collect()
 }
 
 fn xml(text: &str) -> String {
@@ -227,19 +230,20 @@ fn service_args(bind: Option<IpAddr>) -> Vec<String> {
     args
 }
 
-pub fn launch_agent(binary: &Path, bind: Option<IpAddr>) -> String {
+pub fn launch_agent(binary: &Path, bind: Option<IpAddr>, environment: &[(&str, String)]) -> String {
     let arguments: String = service_args(bind)
         .iter()
         .map(|arg| format!("\t\t<string>{}</string>\n", xml(arg)))
         .collect();
     let log = xml(&state::log().to_string_lossy());
-    let environment = match state_override() {
-        Some(dir) => format!(
-            "\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>HANDS_STATE_DIR</key>\n\t\t\
-             <string>{}</string>\n\t</dict>\n",
-            xml(&dir)
-        ),
-        None => String::new(),
+    let environment = if environment.is_empty() {
+        String::new()
+    } else {
+        let variables: String = environment
+            .iter()
+            .map(|(key, value)| format!("\t\t<key>{}</key>\n\t\t<string>{}</string>\n", xml(key), xml(value)))
+            .collect();
+        format!("\t<key>EnvironmentVariables</key>\n\t<dict>\n{variables}\t</dict>\n")
     };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -271,12 +275,15 @@ pub fn launch_agent(binary: &Path, bind: Option<IpAddr>) -> String {
     )
 }
 
-pub fn systemd_unit(binary: &Path, bind: Option<IpAddr>) -> String {
-    let quote = |text: &str| format!("\"{}\"", text.replace('%', "%%").replace('"', "\\\""));
-    let environment = match state_override() {
-        Some(dir) => format!("Environment={}\n", quote(&format!("HANDS_STATE_DIR={dir}"))),
-        None => String::new(),
+pub fn systemd_unit(binary: &Path, bind: Option<IpAddr>, environment: &[(&str, String)]) -> String {
+    let quote = |text: &str| {
+        let escaped = text.replace('\\', "\\\\").replace('%', "%%").replace('"', "\\\"");
+        format!("\"{escaped}\"")
     };
+    let environment: String = environment
+        .iter()
+        .map(|(key, value)| format!("Environment={}\n", quote(&format!("{key}={value}"))))
+        .collect();
     format!(
         "[Unit]
 Description=hands for Mycroft: the supervisor of jobs and the paired phone's listener
@@ -343,7 +350,7 @@ fn install_steps(with_service: bool, bind: Option<IpAddr>) -> Result<Vec<Step>, 
         steps.extend(old_helper_steps(&domain));
         steps.push(Step::Write {
             path: service.clone(),
-            contents: launch_agent(&binary, bind),
+            contents: launch_agent(&binary, bind, &service_environment()),
         });
         steps.push(run(
             &["launchctl", "bootout", &format!("{domain}/{LABEL}")],
@@ -359,7 +366,7 @@ fn install_steps(with_service: bool, bind: Option<IpAddr>) -> Result<Vec<Step>, 
     } else {
         steps.push(Step::Write {
             path: service,
-            contents: systemd_unit(&binary, bind),
+            contents: systemd_unit(&binary, bind, &service_environment()),
         });
         // Fails without a user systemd (containers, some SSH sessions); pairing then runs the listener detached.
         steps.push(start(&["systemctl", "--user", "daemon-reload"], false));
@@ -546,7 +553,13 @@ mod tests {
 
     #[test]
     fn launch_agent_is_a_valid_plist() {
-        let plist = launch_agent(Path::new("/Users/a & b/.local/bin/hands"), "10.0.0.2".parse().ok());
+        let environment = [("PATH", "/opt/homebrew/bin:/Users/a & b/<bin>".to_string())];
+        let plist = launch_agent(Path::new("/Users/a & b/.local/bin/hands"), "10.0.0.2".parse().ok(), &environment);
+        assert!(plist.contains(
+            "\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>PATH</key>\n\t\t\
+             <string>/opt/homebrew/bin:/Users/a &amp; b/&lt;bin&gt;</string>\n\t</dict>\n"
+        ));
+        assert!(!launch_agent(Path::new("/h"), None, &[]).contains("EnvironmentVariables"));
         assert!(plist.contains("<string>dev.mycroft.hands</string>"));
         assert!(plist.contains("<string>/Users/a &amp; b/.local/bin/hands</string>"));
         assert!(plist.contains("<key>AbandonProcessGroup</key>"));
@@ -565,8 +578,16 @@ mod tests {
 
     #[test]
     fn systemd_unit_quotes_the_binary_and_spares_jobs() {
-        let unit = systemd_unit(Path::new("/home/a b/.local/bin/hands%1"), None);
+        let environment = [
+            ("PATH", "/home/a b/.cargo/bin:/usr/bin".to_string()),
+            ("HANDS_STATE_DIR", "/srv/50%\"\\x".to_string()),
+        ];
+        let unit = systemd_unit(Path::new("/home/a b/.local/bin/hands%1"), None, &environment);
         assert!(unit.contains("ExecStart=\"/home/a b/.local/bin/hands%%1\" supervise --listen\n"));
+        assert!(unit.contains(
+            "Environment=\"PATH=/home/a b/.cargo/bin:/usr/bin\"\nEnvironment=\"HANDS_STATE_DIR=/srv/50%%\\\"\\\\x\"\n"
+        ));
+        assert!(!systemd_unit(Path::new("/h"), None, &[]).contains("Environment="));
         assert!(unit.contains("KillMode=process\n"));
         assert!(unit.contains("WantedBy=default.target\n"));
     }

@@ -3,14 +3,13 @@
 use crate::errors::Failure;
 use crate::sys;
 use serde_json::{Value, json};
-use std::ffi::OsStr;
 use std::fs::{self, File, Metadata};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::Path;
 
 pub type Outcome<T> = Result<T, Failure>;
 
-/// `{ name, kind, size, mtimeSec, mtimeNsec, dev, ino }` of lstat or fstat metadata.
+/// `{ name, kind, size, mtimeSec, mtimeNsec, dev, ino }` of fstat metadata.
 pub fn info(path: &str, metadata: &Metadata) -> Value {
     let file_type = metadata.file_type();
     let kind = if file_type.is_file() {
@@ -37,18 +36,6 @@ pub fn info(path: &str, metadata: &Metadata) -> Value {
         "dev": dev,
         "ino": ino,
     })
-}
-
-pub fn lstat(path: &str) -> Outcome<Value> {
-    fs::symlink_metadata(path)
-        .map(|metadata| info(path, &metadata))
-        .map_err(|error| Failure::io(&error, "lstat", path))
-}
-
-pub fn realpath(path: &str) -> Outcome<Value> {
-    sys::realpath(path)
-        .map(|resolved| json!({ "path": resolved }))
-        .map_err(|error| Failure::io(&error, "realpath", path))
 }
 
 /// Node's recursive `mkdir`: an existing directory is fine, an existing file is `EEXIST`, a file in the way of a
@@ -92,23 +79,10 @@ pub fn mkdir_recursive(path: &Path) -> io::Result<()> {
     }
 }
 
-pub fn mkdir(path: &str, recursive: bool) -> Outcome<Value> {
-    let result = if recursive {
-        mkdir_recursive(Path::new(path))
-    } else {
-        fs::create_dir(path)
-    };
-    result
-        .map(|()| json!({}))
-        .map_err(|error| Failure::io(&error, "mkdir", path))
-}
-
-/// `writeFile`/`appendFile`: create missing parents like Node's recursive `mkdir`, then write. Returns the open file
-/// for further chunks.
-pub fn write(path: &str, append: bool, parents: bool, content: &[u8]) -> Outcome<File> {
+/// `writeFile`/`appendFile`: create missing parents like Node's recursive `mkdir`, then write.
+pub fn write(path: &str, append: bool, content: &[u8]) -> Outcome<()> {
     if let Some(parent) = Path::new(path)
         .parent()
-        .filter(|_| parents)
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         mkdir_recursive(parent)
@@ -121,90 +95,7 @@ pub fn write(path: &str, append: bool, parents: bool, content: &[u8]) -> Outcome
     };
     let mut file = sys::open(path, mode).map_err(|error| Failure::io(&error, "open", path))?;
     file.write_all(content)
-        .map_err(|error| Failure::io(&error, "write", path))?;
-    Ok(file)
-}
-
-fn open_existing_for_write(path: &str) -> Outcome<File> {
-    sys::open(path, sys::OpenMode::ReadWrite).map_err(|error| Failure::io(&error, "open", path))
-}
-
-pub fn truncate(path: &str, size: u64) -> Outcome<Value> {
-    let file = open_existing_for_write(path)?;
-    file.set_len(size)
-        .map_err(|error| Failure::io(&error, "ftruncate", path))?;
-    Ok(json!({}))
-}
-
-pub fn fsync(path: &str) -> Outcome<Value> {
-    // POSIX refuses to open a directory for writing; check first so Windows reports the same.
-    if fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
-        return Err(Failure::new(
-            "EISDIR",
-            format!("EISDIR: illegal operation on a directory, open '{path}'"),
-        )
-        .path(path));
-    }
-    let file = open_existing_for_write(path)?;
-    file.sync_all()
-        .map_err(|error| Failure::io(&error, "fsync", path))?;
-    Ok(json!({}))
-}
-
-pub fn rename(from: &str, to: &str) -> Outcome<Value> {
-    sys::rename(from, to)
-        .map(|()| json!({}))
-        .map_err(|error| Failure::io_between(&error, "rename", from, Some(to)))
-}
-
-/// Node's `fs.rm`: missing paths fail unless `force`; a directory without `recursive` fails with `ERR_FS_EISDIR`.
-pub fn rm(path: &str, recursive: bool, force: bool) -> Outcome<Value> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if force && error.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
-        Err(error) => return Err(Failure::io(&error, "lstat", path)),
-    };
-    let result = if metadata.is_dir() {
-        if !recursive {
-            return Err(Failure::new(
-                "ERR_FS_EISDIR",
-                format!("Path is a directory: rm returned EISDIR (is a directory) {path}"),
-            )
-            .path(path));
-        }
-        fs::remove_dir_all(path)
-    } else {
-        sys::remove_file(path)
-    };
-    result
-        .map(|()| json!({}))
-        .map_err(|error| Failure::io(&error, "rm", path))
-}
-
-/// A new directory named `prefix` plus six random characters, as libuv's `mkdtemp` creates it.
-pub fn mkdtemp(prefix: &str) -> Outcome<Value> {
-    sys::mkdtemp(prefix)
-        .map(|path| json!({ "path": path }))
-        .map_err(|error| Failure::io(&error, "mkdtemp", &format!("{prefix}XXXXXX")))
-}
-
-/// Open a regular file for positional reads; directories fail with `EISDIR`, other non-regular files with
-/// `NOT_REGULAR`, and with `no_follow` a final symbolic link with `SYMLINK`.
-pub fn open_reader(path: &str, no_follow: bool) -> Outcome<(File, Value)> {
-    let file = sys::open_reader(path, no_follow)?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| Failure::io(&error, "fstat", path))?;
-    if metadata.is_dir() {
-        return Err(
-            Failure::new("EISDIR", "EISDIR: illegal operation on a directory, read").path(path),
-        );
-    }
-    if !metadata.is_file() {
-        return Err(Failure::new("NOT_REGULAR", "Not a regular file").path(path));
-    }
-    let info = info(path, &metadata);
-    Ok((file, info))
+        .map_err(|error| Failure::io(&error, "write", path))
 }
 
 /// Up to `length` bytes at `offset`; fewer only at the end of the file.
@@ -221,38 +112,4 @@ pub fn pread(file: &File, path: &str, offset: u64, length: usize) -> Outcome<Vec
     }
     buffer.truncate(filled);
     Ok(buffer)
-}
-
-/// Up to `length` bytes from the current position: one `read` call, as Node's `readFile` makes for files of unknown
-/// size (FIFOs, devices).
-pub fn read(mut file: &File, path: &str, length: usize) -> Outcome<Vec<u8>> {
-    let mut buffer = vec![0u8; length];
-    loop {
-        match file.read(&mut buffer) {
-            Ok(read) => {
-                buffer.truncate(read);
-                return Ok(buffer);
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(Failure::io(&error, "read", path)),
-        }
-    }
-}
-
-/// One directory entry as Node lists it: the name decoded as UTF-8 (invalid bytes replaced), and lstat of the
-/// directory joined with that decoded name, so a name that is not valid UTF-8 reports `ENOENT` as in Node. `raw`
-/// carries the original bytes of such a name, which libuv sorts by.
-pub fn dir_entry(dir: &str, file_name: &OsStr) -> Value {
-    let name = file_name.to_string_lossy().into_owned();
-    let entry_path = Path::new(dir).join(&name).to_string_lossy().into_owned();
-    let mut entry = match fs::symlink_metadata(&entry_path) {
-        Ok(metadata) => json!({ "name": name, "info": info(&entry_path, &metadata) }),
-        Err(error) => {
-            json!({ "name": name, "error": Failure::io(&error, "lstat", &entry_path).to_json() })
-        }
-    };
-    if let Some(raw) = sys::raw_name(file_name).filter(|raw| *raw != name.as_bytes()) {
-        entry["raw"] = json!(raw);
-    }
-    entry
 }

@@ -15,7 +15,7 @@ const DEFAULT_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
 pub struct Options {
-    /// Include names starting with `.` (and, on Windows, hidden files).
+    /// Include names starting with `.`.
     pub hidden: bool,
     /// Skip what git ignores inside git work trees: `.gitignore` files, `.git/info/exclude`, the global excludes file.
     pub gitignore: bool,

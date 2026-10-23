@@ -1,7 +1,8 @@
 //! `hands supervise`: the long-lived process that owns supervised jobs (jobs.rs), so they outlive `serve` and the
-//! SSH connection. `serve` reaches it over the Unix socket `supervisor.sock` in the user-only state dir (state.rs),
-//! one request per connection, in pi-env's frames: a request frame `{ op, ... }`, answered by one result or error
-//! frame.
+//! phone's connection. `serve` reaches it over the Unix socket `supervisor.sock` in the user-only state dir
+//! (state.rs), one request per connection, in the frames of docs/protocol.md: a request frame `{ op, ... }`,
+//! answered by one result or error frame. Its operations ([`SupervisorOp`]) are its own: `serve` forwards `job.*` and `cua.*`
+//! here, and the CLI asks for `hello` (the supervisor's own, not `serve`'s), `access` and `shutdown`.
 //!
 //! One supervisor runs per state dir: it holds `supervisor.lock`. Started by launchd or systemd (`hands install`),
 //! it waits for the lock, taking over when an earlier supervisor exits. Started on demand by `serve` (`--detached`),
@@ -77,25 +78,73 @@ pub fn run(detached: bool) -> io::Result<()> {
     Ok(())
 }
 
+/// The operations of the supervisor socket. Not the client's (serve.rs): `job.*` and `cua.*` arrive forwarded by
+/// `serve`, the rest come from the CLI.
+#[derive(Clone, Copy, PartialEq)]
+enum SupervisorOp {
+    /// The supervisor's own state (pid, jobs, service, desktop), for `hands doctor`, `hands install` and
+    /// `hands permissions`. Not serve's `hello`: the client's `hello` never reaches the supervisor, `serve` answers
+    /// it itself.
+    Hello,
+    /// Ask macOS for a permission on behalf of hands (permissions.rs).
+    Access,
+    JobStart,
+    JobStatus,
+    JobOutput,
+    JobWait,
+    JobCancel,
+    JobList,
+    CuaTools,
+    CuaCall,
+    CuaCancel,
+    /// Exit after answering; jobs keep running and the next supervisor adopts them.
+    Shutdown,
+}
+
+impl SupervisorOp {
+    fn parse(name: &str) -> Option<SupervisorOp> {
+        Some(match name {
+            "hello" => SupervisorOp::Hello,
+            "access" => SupervisorOp::Access,
+            "job.start" => SupervisorOp::JobStart,
+            "job.status" => SupervisorOp::JobStatus,
+            "job.output" => SupervisorOp::JobOutput,
+            "job.wait" => SupervisorOp::JobWait,
+            "job.cancel" => SupervisorOp::JobCancel,
+            "job.list" => SupervisorOp::JobList,
+            "cua.tools" => SupervisorOp::CuaTools,
+            "cua.call" => SupervisorOp::CuaCall,
+            "cua.cancel" => SupervisorOp::CuaCancel,
+            "shutdown" => SupervisorOp::Shutdown,
+            _ => return None,
+        })
+    }
+}
+
 fn handle(jobs: &Arc<Jobs>, mut stream: UnixStream) {
     let Ok(Some(request)) = frame::read_frame(&mut stream) else {
         return;
     };
-    let op = request.json["op"].as_str().unwrap_or_default();
-    let reply = match dispatch(jobs, op, &request.json) {
+    let name = request.json["op"].as_str().unwrap_or_default();
+    let op = SupervisorOp::parse(name);
+    let reply = match op {
+        Some(op) => dispatch(jobs, op, name, &request.json),
+        None => Err(Failure::new("EINVAL", format!("unknown operation {name}"))),
+    };
+    let reply = match reply {
         Ok((json, payload)) => Frame::with_payload(RESULT, request.id, json, payload),
         Err(failure) => Frame::new(ERROR, request.id, failure.to_json()),
     };
     let _ = frame::write_frame(&mut stream, &reply);
-    if op == "shutdown" {
+    if op == Some(SupervisorOp::Shutdown) {
         jobs.exit();
     }
 }
 
-fn dispatch(jobs: &Arc<Jobs>, op: &str, json: &Value) -> Result<(Value, Vec<u8>), Failure> {
+fn dispatch(jobs: &Arc<Jobs>, op: SupervisorOp, name: &str, json: &Value) -> Result<(Value, Vec<u8>), Failure> {
     let plain = |value: Result<Value, Failure>| value.map(|value| (value, Vec::new()));
     match op {
-        "hello" => {
+        SupervisorOp::Hello => {
             let (count, running) = jobs.count();
             plain(Ok(json!({
                 "protocol": PROTOCOL,
@@ -110,18 +159,16 @@ fn dispatch(jobs: &Arc<Jobs>, op: &str, json: &Value) -> Result<(Value, Vec<u8>)
             })))
         }
         // Blocks this connection's thread while macOS asks the user, the first time.
-        "access" => plain(crate::permissions::access(json)),
-        "job.start" => plain(jobs.start(json)),
-        "job.status" => plain(jobs.status(json)),
-        "job.output" => jobs.output(json),
-        "job.wait" => plain(jobs.wait(json)),
-        "job.cancel" => plain(jobs.cancel(json)),
-        "job.list" => plain(Ok(jobs.list())),
+        SupervisorOp::Access => plain(crate::permissions::access(json)),
+        SupervisorOp::JobStart => plain(jobs.start(json)),
+        SupervisorOp::JobStatus => plain(jobs.status(json)),
+        SupervisorOp::JobOutput => jobs.output(json),
+        SupervisorOp::JobWait => plain(jobs.wait(json)),
+        SupervisorOp::JobCancel => plain(jobs.cancel(json)),
+        SupervisorOp::JobList => plain(Ok(jobs.list())),
         // Calls wait on the desktop; each connection has its own thread.
-        "cua.tools" | "cua.call" | "cua.cancel" => plain(cua::supervise(op, json)),
-        // Jobs keep running without a supervisor; the next one adopts them.
-        "shutdown" => plain(Ok(json!({}))),
-        _ => Err(Failure::new("EINVAL", format!("unknown operation {op}"))),
+        SupervisorOp::CuaTools | SupervisorOp::CuaCall | SupervisorOp::CuaCancel => plain(cua::supervise(name, json)),
+        SupervisorOp::Shutdown => plain(Ok(json!({}))),
     }
 }
 
@@ -174,7 +221,7 @@ fn connect(start: bool) -> Result<UnixStream, Failure> {
     }
 }
 
-/// Start `hands supervise --detached` in a new session, so it outlives this process and the SSH session.
+/// Start `hands supervise --detached` in a new session, so it outlives this process.
 fn start_detached() -> io::Result<()> {
     state::ensure()?;
     let log = OpenOptions::new()

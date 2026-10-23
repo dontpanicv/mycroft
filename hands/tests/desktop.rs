@@ -1,4 +1,4 @@
-//! `cua.tools` and `cua.call` through `hands serve`, which forwards them to the supervisor, against a fake supervisor
+//! `cua.tools` and `cua.call` through `hands __serve`, which forwards them to the supervisor, against a fake supervisor
 //! listening on `supervisor.sock` in a temporary state dir; and a real supervisor that launchd did not start, which
 //! has no desktop. Nothing here touches the real desktop or Cua Driver.
 
@@ -90,8 +90,8 @@ fn forwards_tools_and_calls_unchanged() {
     assert_eq!(result, clicked());
     let sent = &supervisor.requests("cua.call")[0];
     assert_eq!((&sent["name"], &sent["arguments"]), (&json!("click"), &arguments));
-    // Over SSH there is no paired phone: the session is ssh's.
-    assert_eq!(sent["client"], "ssh");
+    // Started without the listener there is no paired phone: the session is `local`.
+    assert_eq!(sent["client"], "local");
     assert!(sent["call"].as_str().is_some_and(|call| call.len() == 16), "{sent}");
 
     let error = serve.error(json!({ "op": "cua.call", "name": "nope" }));

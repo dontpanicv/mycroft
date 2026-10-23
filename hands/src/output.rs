@@ -1,4 +1,4 @@
-//! The single writer of stdout. Control frames (results, errors, pings, watch events) always go before bulk command
+//! The single writer of stdout. Control frames (results, errors, pings) always go before bulk command
 //! output, so a slow link delays output but never a cancel's result or a ping. Bulk output is bounded: readers of
 //! commands without an output window wait while too much of it is unsent, which slows the command down like a full
 //! pipe would.

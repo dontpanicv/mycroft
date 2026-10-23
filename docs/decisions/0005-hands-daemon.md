@@ -1,5 +1,7 @@
 # 0005 · `hands`: a pi-env-compatible daemon with a job supervisor
 
+> Superseded in part by [0019](0019-drop-pi-env-compat.md): `hands` is no longer pi-env-compatible and has no SSH transport.
+
 **Status:** proposed. The transport is superseded by [0008](0008-hands-transport-pairing.md); the desktop bullet by
 [0018](0018-computer-use-with-cua-driver.md): Cua Driver runs in the `hands` service itself, with `cua.tools` and `cua.call`.
 

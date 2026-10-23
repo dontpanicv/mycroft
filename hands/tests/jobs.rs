@@ -1,4 +1,4 @@
-//! Supervised jobs through `hands serve` (docs/jobs.md). Every test uses its own temporary state dir, so its own
+//! Supervised jobs through `hands __serve` (docs/jobs.md). Every test uses its own temporary state dir, so its own
 //! supervisor.
 
 mod common;
@@ -21,7 +21,7 @@ fn job_survives_serve_and_reattaches_with_full_output() {
     let pid = started["pid"].as_i64().unwrap() as i32;
     // The job belongs to the supervisor, not to this serve process.
     assert_ne!(pid as u32, first.pid());
-    // pi-env's disconnect path: stdin ends and serve kills every command it started, then exits.
+    // The listener's disconnect path: stdin ends and serve kills every command it started, then exits.
     first.disconnect();
     assert!(alive(pid), "the job died with the connection");
 

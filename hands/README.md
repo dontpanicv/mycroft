@@ -2,7 +2,7 @@
 
 `hands` is the executing half of Mycroft. It's a small daemon for **macOS and Linux** that you install on your Macs and servers. The brain on the iPhone pairs with it and connects to its TLS listener, and uses it to work with files, run commands and jobs, and on macOS to drive the desktop.
 
-> Status: 0.2 (milestone M5). Files, exec, PTY and `listFiles` work as in pi-env, and supervised jobs are added. The paired TLS listener replaces SSH as the default transport ([ADR 0008](../docs/decisions/0008-hands-transport-pairing.md), [docs/pairing.md](docs/pairing.md)); SSH still works. On macOS, desktop control (`cua.tools`, `cua.call`) is [Cua Driver](https://github.com/trycua/cua), linked into `hands` and run by its service ([ADR 0018](../docs/decisions/0018-computer-use-with-cua-driver.md)). See [ADR 0005](../docs/decisions/0005-hands-daemon.md).
+> Status: 0.2 (milestone M5). Files, exec and `listFiles` come from pi-env, and supervised jobs are added. The phone connects only through the paired TLS listener ([ADR 0008](../docs/decisions/0008-hands-transport-pairing.md), [docs/pairing.md](docs/pairing.md)); pi-env compatibility and SSH are gone ([ADR 0019](../docs/decisions/0019-drop-pi-env-compat.md)). On macOS, desktop control (`cua.tools`, `cua.call`) is [Cua Driver](https://github.com/trycua/cua), linked into `hands` and run by its service ([ADR 0018](../docs/decisions/0018-computer-use-with-cua-driver.md)). See [ADR 0005](../docs/decisions/0005-hands-daemon.md).
 
 `hands` is built on the pi-env daemon of [Pi](https://github.com/earendil-works/pi) (MIT). See [NOTICE](NOTICE).
 
@@ -23,7 +23,7 @@ On a Mac, `install` then walks you through the permissions Mycroft needs, one at
 
 The command works once and expires after 10 minutes.
 
-**By hand** (development, or servers reached over SSH):
+**By hand** (development, or a server without a terminal near the phone):
 
 ```sh
 scripts/build-release.sh            # builds dist/hands-<os>-<arch> for all four targets, and SHA256SUMS
@@ -33,7 +33,7 @@ hands pair --with BASE --pin PIN    # pair with a phone, given the BASE and PIN 
 hands permissions                   # macOS: asks for what Mycroft needs, desktop control included
 ```
 
-`hands install` copies the binary to `~/.local/bin/hands` and runs `hands supervise --listen` as a user service. That process is the supervisor of jobs and the phone's listener:
+`hands install` copies the binary to `~/.local/bin/hands` and runs `hands supervise --listen` as a user service. That process is the supervisor of jobs and the phone's listener. The service gets the `PATH` of the shell `install` runs in, since launchd and systemd give services a minimal one: commands and jobs then find `npm`, `brew`, `cargo` or `gh` as your terminal does. Run `hands install` again after changing your `PATH` for good.
 
 - **Linux:** a systemd user unit, `~/.config/systemd/user/hands.service` (`KillMode=process`, so stopping or upgrading the supervisor leaves jobs running). It also runs `loginctl enable-linger`, so the supervisor keeps running without a login session.
 - **macOS:** a LaunchAgent, `~/Library/LaunchAgents/dev.mycroft.hands.plist` (label `dev.mycroft.hands`), loaded with `launchctl bootstrap gui/<uid>`. On a Mac with no GUI login (SSH only), loading fails and the agent loads at the next login.
@@ -46,7 +46,7 @@ Running `hands install` again converges to the same state:
 
 On macOS, install and `--uninstall` also remove the separate desktop helper an earlier version installed (see [Where things live](#where-things-live)).
 
-With `--pair`, if the service cannot start (or with `--no-service`), the listener runs detached until the machine restarts. `hands serve` still starts a supervisor on demand when none is running; on macOS that one has no desktop control.
+With `--pair`, if the service cannot start (or with `--no-service`), the listener runs detached until the machine restarts. A connection still starts a supervisor on demand when none is running; on macOS that one has no desktop control.
 
 ## Commands
 
@@ -57,7 +57,6 @@ hands paired [--json]                 # list the paired phones
 hands unpair <name>                   # remove a paired phone (by name or public key)
 hands supervise [--listen] [--bind ADDR] [--detached]
                                       # the supervisor that owns jobs; with --listen, also the phone's listener
-hands serve --stdio [--token <hex>]   # pi-env protocol 1 on stdin/stdout: over ssh, and per listener connection
 hands jobs [--json]                   # list supervised jobs (from disk if no supervisor is running)
 hands permissions [--check] [--json]  # macOS: walk through what Mycroft needs approved, one at a time; Linux: report
 hands doctor                          # binary, version, OS/arch, state dir, supervisor, listener, paired phones, jobs,
@@ -67,14 +66,12 @@ hands version
 
 **The listener** ([docs/pairing.md](docs/pairing.md)) serves WebSocket over TLS 1.3, on a port chosen once, with a self-signed ECDSA P-256 certificate whose SHA-256 the phone pins.
 - **Authentication.** The phone authenticates by signing a fresh nonce with its paired Ed25519 key. Nothing else is accepted before that, and the handshake must finish within 10 s.
-- **Frames.** After that, each binary message is one pi-env frame. The listener passes the frames to and from a `hands serve` child of its own, so the operations are the same as over SSH.
+- **Frames.** After that, each binary message is one frame of [docs/protocol.md](docs/protocol.md). The listener passes the frames to and from a `hands __serve` child of its own, one per connection, so a crash in one connection's requests ends only that connection.
 - **Discovery.** The listener advertises itself over Bonjour as `_mycroft-hands._tcp`.
 
-**pi-env compatibility.** `hands serve --token <hex>` is exactly the command pi-env's `Connection` runs, so `RemoteExecutionEnv` can use `hands` as its daemon. `--stdio` is accepted and implied. Without `--token`, the sync line is `PI-ENV hands`. Run with no arguments and a non-terminal stdin, `hands` also serves.
+## Protocol
 
-## Protocol additions
-
-The wire protocol is pi-env's protocol 1, unchanged: [docs/protocol.md](docs/protocol.md) and [docs/semantics.md](docs/semantics.md). `hands` adds operations and lists them in `hello.features`. `hello.version` is the `hands` version.
+The wire protocol is pi-env's protocol 1, trimmed to what the Mycroft app sends: `hello`, `write`, `open`, `pread`, `close`, `listFiles` and `exec` ([docs/protocol.md](docs/protocol.md), [docs/semantics.md](docs/semantics.md)). Any other operation fails with `EINVAL`. `hands` adds these and lists them, with `listFiles`, in `hello.features`. `hello.version` is the `hands` version.
 
 | op | does |
 |---|---|
@@ -89,16 +86,16 @@ The wire protocol is pi-env's protocol 1, unchanged: [docs/protocol.md](docs/pro
 
 [docs/jobs.md](docs/jobs.md) specifies the fields, results and error codes (`EINVAL`, `not_found`, `spawn_error`, `aborted`, `supervisor_unavailable`, `not_service`, ...).
 
-**How jobs outlive the connection.** pi-env kills its commands when the connection drops (stdin ends, or 30 s without bytes). It has to: the brain is a phone that sleeps. Jobs belong to the supervisor instead, so `exec` keeps pi-env's behaviour and `job.*` don't die with the connection. The supervisor runs each job through a tiny runner that leads the job's process group and records the exit code in the job's directory. A job survives `serve` exiting and the supervisor restarting, and its output and exit code can be read after the job ends. Finished jobs are kept for 7 days or until there are 200 of them.
+**How jobs outlive the connection.** `serve` kills its commands when the connection drops (stdin ends, or 30 s without bytes), as pi-env does. Jobs belong to the supervisor instead, so `exec` keeps that behaviour and `job.*` don't die with the connection: the brain is a phone that sleeps. The supervisor runs each job through a tiny runner that leads the job's process group and records the exit code in the job's directory. A job survives `serve` exiting and the supervisor restarting, and its output and exit code can be read after the job ends. Finished jobs are kept for 7 days or until there are 200 of them.
 
 ## Desktop control (macOS)
 
 `hands` links [Cua Driver](https://github.com/trycua/cua) (MIT) as a library: the `cua-driver-sdk` crate and its `cua-driver-core`, `cursor-overlay` and `platform-macos`, pinned to the tag `cua-driver-rs-v0.38.0`. It reads one window at a time (accessibility tree and screenshot, with `element_token`s and diff re-reads), acts in the background without moving your pointer or switching apps, batches steps with checks (`run_steps`), and shows an agent cursor. There is nothing else to install: no Cua app, no `cua-driver` CLI. Linux builds don't have it: they are static musl, and Cua's Linux crates link X11.
 
 - **Where it runs.** In the supervisor that launchd starts, the `dev.mycroft.hands` service. macOS gives Accessibility and Screen Recording to the responsible process; started by launchd, that is `hands` itself. The supervisor creates the driver once at startup, as Cua's own service does (`CuaDriver::try_create_service_for_host`, with `host_owns_permission_ux`: `hands permissions` asks). The agent cursor takes the main thread's AppKit loop, and the supervisor accepts connections on another thread. A supervisor that `serve` started on demand has no desktop, and `cua.*` fail with `not_service`.
-- **How calls get there.** `hands serve` forwards `cua.tools` and `cua.call` over `supervisor.sock`, like `job.*`, with the client (the paired phone's name, or `ssh`) and a call id. Each client keeps one Cua session across reconnects, so element tokens stay valid. Cancelling a `cua.call` aborts the driver call.
+- **How calls get there.** `serve` forwards `cua.tools` and `cua.call` over `supervisor.sock`, like `job.*`, with the client (the paired phone's name, or `local`) and a call id. Each client keeps one Cua session across reconnects, so element tokens stay valid. Cancelling a `cua.call` aborts the driver call.
 - **What is offered.** Cua's tools as Cua describes them, except `parse_visual_regions` (Cua's perception model isn't linked) and Computer History (`history_*`, off). The phone offers them to its model under their own names, and asks the user before risky actions.
-- **Status.** The supervisor's `hello` has `desktop: { version }` or `desktop: { off: why }`; `hands doctor` shows it.
+- **Status.** The supervisor's own `hello` has `desktop: { version }` or `desktop: { off: why }`; `hands doctor` shows it.
 
 ### Permissions on macOS
 
@@ -153,10 +150,10 @@ The key, the certificate, `listener.json` and `paired.json` are mode 0600. `HAND
 
 - **One listening port, closed to anyone unpaired.** The listener accepts TLS 1.3 only. Until a peer proves it holds a paired phone's Ed25519 key, it accepts nothing but the `auth` message. The signature covers the listener's certificate hash and a fresh nonce, so it can't be replayed or relayed through another certificate. `--bind` limits the listener to one interface, such as the Tailscale one.
 - **Pairing trusts the channel and the code.** The short install command fetches the script over plain HTTP, so it trusts the network path: WireGuard on Tailscale and NetBird, the Wi-Fi otherwise. Everything after that is pinned to the phone's public key (curl `--pinnedpubkey`, and `hands` with rustls), and the pinned command pins the script as well. `hands` sends nothing to a certificate that doesn't match the pin. The one-time setup code expires after 10 minutes, and the phone stops serving after 100 wrong codes. The phone pins the listener's `certSha256` from then on.
-- **Same user.** The supervisor's Unix socket is user-only, in the user-only state dir. Over SSH (`hands serve --stdio`), the phone pins the host key as before.
+- **Same user.** The supervisor's Unix socket is user-only, in the user-only state dir.
 - **No credentials, no models.** No model credentials or API keys ever reach `hands`, and it runs no model: the LLMs are called from the phone, and Cua's perception model is not linked.
-- **What is stored.** Jobs inherit `serve`'s environment, which may contain secrets, but the environment is never written to disk. `job.json` records only the command or argv, `cwd`, state and timing. Job output is stored as is in the user-only state dir, so a command that prints a secret leaves it in `output.log` until retention deletes it.
-- **Same user.** Everything runs as the user who installed `hands`, and `hands` grants nothing beyond what that user's shell can do. Treat a paired phone, or its SSH key, as shell access to the host. `hands unpair` revokes a phone for new connections.
+- **What is stored.** Jobs inherit `serve`'s environment (the service's, with the `PATH` captured at install), which may contain secrets, but the environment is never written to disk. `job.json` records only the command or argv, `cwd`, state and timing. Job output is stored as is in the user-only state dir, so a command that prints a secret leaves it in `output.log` until retention deletes it.
+- **Same user.** Everything runs as the user who installed `hands`, and `hands` grants nothing beyond what that user's shell can do. Treat a paired phone as shell access to the host. `hands unpair` revokes a phone for new connections.
 - **Process groups.** Each job is its own session and process group. `job.cancel` signals only that group. The supervisor sends signals only while the job's runner, the group leader, is still alive, so a reused pid is never targeted.
 - **Desktop control.** On macOS, Accessibility and Screen Recording are granted to `hands` (the service), never to your terminal. A paired phone can then read and use any app's windows, and take screenshots, as well as run commands. Cua Driver runs only in that service, and each client gets its own Cua session. The phone asks the user before actions that look destructive (deleting, sending, paying, quitting, ...); that check is the phone's, not `hands`'.
 
@@ -169,21 +166,21 @@ cargo test        # unit tests from pi-env, plus integration tests in tests/ aga
 
 On macOS the first build clones Cua's git repository (about 630 MB), which Cargo keeps for later builds.
 
-The integration tests start `hands serve` and `hands supervise --listen` with a temporary `HANDS_STATE_DIR` under `/tmp`, bind the listener to 127.0.0.1, and never touch the real state dir or install anything. Each test stops its own supervisor when it finishes.
+The integration tests start `hands __serve` and `hands supervise --listen` with a temporary `HANDS_STATE_DIR` under `/tmp`, bind the listener to 127.0.0.1, and never touch the real state dir or install anything. Each test stops its own supervisor when it finishes.
 
-`tests/desktop.rs` runs `cua.tools` and `cua.call` through `hands serve` against a fake supervisor on a temporary `supervisor.sock`: both are forwarded and answered unchanged, each call carries `client` and `call`, a cancelled call sends `cua.cancel` and ends with `aborted`, malformed calls stop in `serve`, and a real supervisor that launchd did not start has no desktop. Nothing touches the real desktop or Cua Driver.
+`tests/desktop.rs` runs `cua.tools` and `cua.call` through `hands __serve` against a fake supervisor on a temporary `supervisor.sock`: both are forwarded and answered unchanged, each call carries `client` and `call`, a cancelled call sends `cua.cancel` and ends with `aborted`, malformed calls stop in `serve`, and a real supervisor that launchd did not start has no desktop. Nothing touches the real desktop or Cua Driver.
 
 `tests/pairing.rs` runs the whole flow against a fake phone (an HTTPS server with a self-signed certificate):
 - `hands pair` pairs the machine and writes `paired.json`;
-- a WebSocket client with the phone's key authenticates, and pi-env `hello`, files and `job.*` work through the listener;
+- a WebSocket client with the phone's key authenticates, and `hello`, files and `job.*` work through the listener;
 - wrong signatures, unknown keys, other messages before `auth`, other paths and a wrong pin are all refused;
 - the install script, served and piped to `sh`, `dash`, `zsh` and `bash`, downloads, verifies and runs a stub binary, and refuses a tampered one.
 
 Release builds use `opt-level = "z"`, LTO and one codegen unit, and are stripped. `scripts/build-release.sh` builds the two macOS binaries with cargo and the two static musl Linux binaries with `cargo zigbuild`.
 
 Layout:
-- `src/serve.rs` is pi-env's daemon loop (formerly its `main.rs`), with the `job.*` and `cua.*` dispatch added.
-- `src/supervisor.rs` contains the supervisor and its client.
+- `src/serve.rs` is pi-env's daemon loop (formerly its `main.rs`): one `Op` per operation the phone sends, with its lane (worker pool or own thread), and the `job.*` and `cua.*` forwarding.
+- `src/supervisor.rs` contains the supervisor, its own operations (`hello`, `access`, `shutdown`, and the forwarded `job.*` and `cua.*`) and its client.
 - `src/jobs.rs` contains the job table, persistence, runner and retention.
 - `src/listener.rs` contains the TLS WebSocket listener, its handshake and the frame proxy.
 - `src/pairing.rs` contains `hands pair`, the pairing client and `paired.json`.
@@ -193,7 +190,7 @@ Layout:
 - `src/install.rs` contains `hands install`.
 - `src/cli.rs` contains `hands jobs`, `paired`, `unpair` and `doctor`.
 - `src/cua.rs` is desktop control: `serve`'s forwarding of `cua.*`, and Cua Driver in the supervisor (sessions, cancellation, the agent cursor's main loop).
-- `src/permissions.rs` is `hands permissions`: the macOS walkthrough, the service's `access` op, and the Linux report.
+- `src/permissions/` is `hands permissions`: the items and the service's `access` op (`mod.rs`), the macOS walkthrough on the terminal (`walkthrough.rs`), and the Linux report (`linux.rs`).
 
 The other files come from pi-env.
 

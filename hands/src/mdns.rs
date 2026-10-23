@@ -2,7 +2,8 @@
 //! (the first 16 hex digits of `certSha256`), so the phone can find a paired machine whose address changed. Best
 //! effort: a failure is logged and nothing else depends on it.
 //!
-//! macOS registers with the system's mDNSResponder through `dns_sd`; Linux runs the pure-Rust `mdns-sd` responder.
+//! macOS registers with the system's mDNSResponder through `dns_sd`; Linux runs the pure-Rust `mdns-sd` responder,
+//! which also answers for `<name>.local`, the hostname pairing reports there (pairing.rs).
 //! Skipped when the listener is bound to a loopback address; `HANDS_MDNS=0` turns it off, `HANDS_MDNS=1` forces it.
 
 use crate::serve::VERSION;
@@ -13,12 +14,18 @@ pub const SERVICE: &str = "_mycroft-hands._tcp";
 /// Keeps the advertisement alive; dropping it withdraws it.
 pub struct Advertisement(#[allow(dead_code)] platform::Handle);
 
-pub fn advertise(name: &str, port: u16, cert_sha256: &str, bind: IpAddr) -> Option<Advertisement> {
+/// Whether a listener bound to `bind` advertises itself (and, on Linux, answers for `<name>.local`).
+pub fn enabled(bind: IpAddr) -> bool {
     match std::env::var("HANDS_MDNS").as_deref() {
-        Ok("0") => return None,
-        Ok("1") => {}
-        _ if bind.is_loopback() => return None,
-        _ => {}
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => !bind.is_loopback(),
+    }
+}
+
+pub fn advertise(name: &str, port: u16, cert_sha256: &str, bind: IpAddr) -> Option<Advertisement> {
+    if !enabled(bind) {
+        return None;
     }
     let cert = &cert_sha256[..cert_sha256.len().min(16)];
     let txt = [("name", name), ("version", VERSION), ("cert", cert)];

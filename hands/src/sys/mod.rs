@@ -1,35 +1,32 @@
-//! What differs between operating systems: error names, positional reads, temporary directories, opening readers,
-//! and starting and killing commands. Each implementation follows what Node (libuv) does on that system.
+//! The operating system: error names, positional reads, temporary directories, and starting and killing commands,
+//! each as Node (libuv) does it on macOS and Linux.
 
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
-// pi-env also runs on Windows; hands targets macOS and Linux only (supervised jobs use Unix sockets and sessions).
+// hands targets macOS and Linux only (supervised jobs use Unix sockets and sessions).
 #[cfg(not(unix))]
 compile_error!("hands supports macOS and Linux only");
 
-/// How a string command runs: the shell, its arguments before the command, and whether the command goes to its
-/// stdin instead of its arguments (legacy WSL `bash.exe`).
+/// How a string command runs: the shell and its arguments before the command.
 pub struct ShellConfig {
     pub program: String,
     pub args: Vec<String>,
-    pub command_on_stdin: bool,
 }
 
-/// How Node opens files: `r`, `writeFile` (`w`), `appendFile` (`a`), and `r+` for truncate and fsync.
+/// How Node opens files: `r`, `writeFile` (`w`) and `appendFile` (`a`).
 #[derive(Clone, Copy)]
 pub enum OpenMode {
     /// Node's `open(path, "r")`: any kind of file, blocking reads.
     Read,
     Write,
     Append,
-    ReadWrite,
 }
 
 /// An error code libuv reports where the system call itself reported another one, such as `ENOTDIR` from a recursive
-/// `mkdir` through a file, or `EISDIR` when Windows creates a file where a directory exists.
+/// `mkdir` through a file.
 #[derive(Debug)]
 pub struct Synthetic(pub &'static str);
 

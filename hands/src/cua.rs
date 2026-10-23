@@ -7,7 +7,7 @@
 //! takes the main thread's AppKit loop ([`run_main_loop`]). `serve`, one process per connection, forwards both
 //! operations over the supervisor socket, as it does `job.*`.
 //!
-//! - One Cua session per client: the paired phone's name (`HANDS_PEER`, set by the listener), or `ssh`. It outlives
+//! - One Cua session per client: the paired phone's name (`HANDS_PEER`, set by the listener), or `local`. It outlives
 //!   the connection, so element tokens stay valid while the phone reconnects. Cua's runtime ends a session after five
 //!   minutes without a call, for good: hands replaces it before then, under a new label, and retries a call Cua
 //!   refused because its session had ended.
@@ -24,8 +24,6 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-/// The operations `serve` forwards, in `hello.features` order.
-pub const OPS: &[&str] = &["cua.tools", "cua.call"];
 /// How often a forwarded call checks for a cancel.
 const CANCEL_SLICE: Duration = Duration::from_millis(200);
 
@@ -73,7 +71,7 @@ pub fn describe() -> String {
 
 /// The client a `serve` process acts for.
 fn client() -> String {
-    std::env::var("HANDS_PEER").ok().filter(|peer| !peer.is_empty()).unwrap_or_else(|| "ssh".into())
+    std::env::var("HANDS_PEER").ok().filter(|peer| !peer.is_empty()).unwrap_or_else(|| "local".into())
 }
 
 /// `serve`'s side: forward one `cua.*` request to the supervisor.
@@ -301,7 +299,7 @@ mod host {
             if !offered(&name) {
                 return Err(Failure::new("EINVAL", format!("unknown tool {name}")));
             }
-            let client = json["client"].as_str().unwrap_or("ssh");
+            let client = json["client"].as_str().unwrap_or("local");
             let call = json["call"].as_str().unwrap_or_default();
             let result = self.call_in(self.session(client)?, &name, &json["arguments"], call)?;
             if !ended(&result) {
@@ -370,7 +368,7 @@ mod host {
             })
     }
 
-    /// A driver error as a pi-env failure: Cua's own code for a refused tool call.
+    /// A driver error as a protocol failure: Cua's own code for a refused tool call.
     fn failure(error: DriverError) -> Failure {
         let code = match &error {
             DriverError::InvalidArguments { .. } => "EINVAL",

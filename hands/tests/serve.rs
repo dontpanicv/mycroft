@@ -1,4 +1,5 @@
-//! pi-env compatibility of `hands serve`, and the command-line surfaces. Desktop control is in desktop.rs.
+//! The operations of `hands __serve` that the phone sends, and the command-line surfaces. Desktop control is in
+//! desktop.rs, jobs in jobs.rs.
 
 mod common;
 
@@ -8,47 +9,61 @@ use std::fs;
 use std::process::{Command, Stdio};
 
 #[test]
-fn speaks_pi_env_protocol_1() {
+fn answers_what_the_phone_sends() {
     let state = StateDir::new();
-    // Exactly what pi-env's `Connection` runs, without --stdio.
-    let mut serve = Serve::start_with(&state.path, &["serve", "--token", "abc123"], "abc123");
+    let mut serve = Serve::start(&state.path);
     let hello = serve.ok(json!({ "op": "hello", "protocol": 1 }));
     assert_eq!(hello["os"], std::env::consts::OS);
     assert_eq!(hello["arch"], std::env::consts::ARCH);
+    assert_eq!(hello["version"], env!("CARGO_PKG_VERSION"));
+    assert!(hello["home"].as_str().is_some_and(|home| !home.is_empty()));
     let features: Vec<&str> = hello["features"]
         .as_array()
         .unwrap()
         .iter()
         .map(|feature| feature.as_str().unwrap())
         .collect();
-    for feature in [
+    let mut expected = vec![
         "listFiles", "job.start", "job.status", "job.output", "job.wait", "job.cancel", "job.list",
-    ] {
-        assert!(features.contains(&feature), "{feature} missing from {features:?}");
+    ];
+    if cfg!(target_os = "macos") {
+        expected.extend(["cua.tools", "cua.call"]);
     }
-    assert_eq!(features.contains(&"cua.call"), cfg!(target_os = "macos"));
+    assert_eq!(features, expected);
     assert_eq!(hello["cua"].is_object(), cfg!(target_os = "macos"));
 
+    // write (creating parents), then open, pread and close, as the phone reads a file.
     let work = state.work();
-    let file = work.join("a.txt");
+    let file = work.join("new/dir/a.txt");
     let file = file.to_str().unwrap();
     let id = serve.send_payload(json!({ "op": "write", "path": file, "append": false }), b"hello");
     serve.reply(id).unwrap();
-    let info = serve.ok(json!({ "op": "lstat", "path": file }));
-    assert_eq!(info["kind"], "file");
-    assert_eq!(info["size"], 5);
+    let id = serve.send_payload(json!({ "op": "write", "path": file, "append": true }), b" world");
+    serve.reply(id).unwrap();
+    let opened = serve.ok(json!({ "op": "open", "path": file, "mode": "read" }));
+    assert_eq!(opened["stat"]["kind"], "file");
+    assert_eq!(opened["stat"]["size"], 11);
+    let read = serve.request(json!({ "op": "pread", "handle": opened["handle"], "offset": 6, "length": 100 }));
+    assert_eq!(read.unwrap().1, b"world");
+    serve.ok(json!({ "op": "close", "handle": opened["handle"] }));
+    let closed = serve.error(json!({ "op": "pread", "handle": opened["handle"], "offset": 0, "length": 1 }));
+    assert_eq!(closed["code"], "EBADF");
+    let missing = serve.error(json!({ "op": "open", "path": "/nonexistent/x", "mode": "read" }));
+    assert_eq!(missing["code"], "ENOENT");
 
     let exec = serve.request(json!({
         "op": "exec",
         "command": "echo out; echo err >&2; exit 4",
         "cwd": work,
-        "env": {},
+        "timeoutMs": 10_000,
     }));
     assert_eq!(exec.unwrap().0["exitCode"], 4);
-    let missing = serve.error(json!({ "op": "lstat", "path": "/nonexistent/x" }));
-    assert_eq!(missing["code"], "ENOENT");
-    let unknown = serve.error(json!({ "op": "nope" }));
-    assert_eq!(unknown["code"], "EINVAL");
+
+    // What only pi-env sent is gone (decision 0019).
+    for op in ["nope", "lstat", "writeChunk", "opendir", "scanLines", "watch", "pty"] {
+        let unknown = serve.error(json!({ "op": op, "path": file }));
+        assert_eq!(unknown["code"], "EINVAL", "{op}");
+    }
 }
 
 #[test]
@@ -72,25 +87,18 @@ fn exec_still_dies_with_the_connection() {
 }
 
 #[test]
-fn serves_on_stdin_without_arguments() {
-    let state = StateDir::new();
-    let serve = Serve::start_with(&state.path, &[], "hands");
-    serve.disconnect();
-}
-
-#[test]
 fn version_and_usage() {
     let version = Command::new(HANDS).arg("version").output().unwrap();
     assert_eq!(
         String::from_utf8(version.stdout).unwrap(),
         format!("hands {}\n", env!("CARGO_PKG_VERSION"))
     );
-    let unknown = Command::new(HANDS)
-        .arg("frobnicate")
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert_eq!(unknown.status.code(), Some(2));
+    // No command, `serve` (the SSH transport that is gone) and unknown commands are usage errors.
+    for args in [&[][..], &["serve"][..], &["serve", "--stdio"][..], &["frobnicate"][..]] {
+        let output = Command::new(HANDS).args(args).stdin(Stdio::piped()).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
 }
 
 #[test]
@@ -104,6 +112,7 @@ fn install_dry_run_changes_nothing() {
             .args(args)
             .env("HOME", &home)
             .env("HANDS_STATE_DIR", &state.path)
+            .env("PATH", "/usr/bin:/bin:/opt/marker/bin")
             .env_remove("XDG_CONFIG_HOME")
             .output()
             .unwrap();
@@ -116,6 +125,8 @@ fn install_dry_run_changes_nothing() {
         }
         // The service runs the listener.
         assert!(text.contains("supervise") && text.contains("--listen"), "{text}");
+        // With the PATH of the shell install runs in.
+        assert!(text.contains("/usr/bin:/bin:/opt/marker/bin"), "{text}");
         if args.contains(&"--pair") {
             assert!(text.contains("would start the listener if the service has not, and pair"), "{text}");
         }

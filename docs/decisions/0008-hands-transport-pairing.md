@@ -1,5 +1,7 @@
 # 0008 · Hands transport: a paired TLS listener by default, SSH as an option
 
+> Superseded in part by [0019](0019-drop-pi-env-compat.md): SSH (point 5) is no longer a transport.
+
 **Status:** accepted (18 Oct 2026). Supersedes the transport part of 0005.
 
 ## Context

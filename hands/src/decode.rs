@@ -23,12 +23,7 @@ impl StreamDecoder {
     }
 }
 
-/// A decoder for a byte range that does not start at the beginning of its input: no BOM handling at all.
-pub fn range_decoder() -> Decoder {
-    UTF_8.new_decoder_without_bom_handling()
-}
-
-pub fn decode_into(decoder: &mut Decoder, bytes: &[u8], last: bool) -> String {
+fn decode_into(decoder: &mut Decoder, bytes: &[u8], last: bool) -> String {
     let capacity = decoder
         .max_utf8_buffer_length(bytes.len())
         .unwrap_or(bytes.len() * 3 + 16);
@@ -36,11 +31,6 @@ pub fn decode_into(decoder: &mut Decoder, bytes: &[u8], last: bool) -> String {
     let (_result, read, _replaced) = decoder.decode_to_string(bytes, &mut text, last);
     debug_assert_eq!(read, bytes.len());
     text
-}
-
-/// Whether decoding the whole input drops its first three bytes as a byte-order mark.
-pub fn starts_with_bom(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0xef, 0xbb, 0xbf])
 }
 
 #[cfg(test)]

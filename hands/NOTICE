@@ -3,9 +3,11 @@ Part of Mycroft (https://github.com/kurkavojtech/mycroft), MIT License, see ../L
 
 hands is based on the pi-env daemon of Pi (https://github.com/earendil-works/pi, packages/env/daemon) by Mario
 Zechner, Armin Ronacher and Earendil Works. Its source files in src/ (all except cli.rs, cua.rs, install.rs, jobs.rs,
-main.rs, state.rs and supervisor.rs) and docs/protocol.md and docs/semantics.md come from pi-env, with these
-changes: the crate and binary are named hands, the Windows backend was removed, main.rs became serve.rs, and serve
-gained the job.* and cua.* operations (docs/jobs.md). pi-env is used under the following license:
+listener.rs, main.rs, mdns.rs, pairing.rs, permissions/, state.rs, supervisor.rs and tls.rs) and docs/protocol.md
+and docs/semantics.md come from pi-env, with these changes: the crate and binary are named hands, the Windows
+backend was removed, main.rs became serve.rs, serve gained the job.* and cua.* operations (docs/jobs.md), and the
+operations the Mycroft app does not use (directory handles, chunked writes, scanLines, watch, pty and the path
+operations) were removed, with the SSH transport (decision 0019). pi-env is used under the following license:
 
 MIT License
 

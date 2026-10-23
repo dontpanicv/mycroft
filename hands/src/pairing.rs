@@ -3,7 +3,7 @@
 //! stores the phone's Ed25519 public key in `paired.json`, which the listener checks every `auth` against.
 
 use crate::serve::{VERSION, now_ms};
-use crate::{listener, state, tls};
+use crate::{listener, mdns, state, tls};
 use serde_json::{Value, json};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, TcpStream, ToSocketAddrs};
@@ -360,6 +360,18 @@ fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), String> {
     }
 }
 
+/// The name the phone should try first for this machine. On Linux a bare `gethostname` usually resolves nowhere the
+/// phone looks, so while the listener advertises itself it is `<name>.local`, which the listener's mDNS responder
+/// answers for (mdns.rs); the addresses only last until DHCP hands out others.
+fn reported_hostname(machine: &Machine, bind: Option<IpAddr>) -> String {
+    let bind = bind.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    if cfg!(target_os = "linux") && mdns::enabled(bind) {
+        format!("{}.local", machine.name)
+    } else {
+        machine.hostname.clone()
+    }
+}
+
 /// The request body of docs/pairing.md.
 pub fn request_body(port: u16, cert_sha256: &str, bind: Option<IpAddr>) -> Value {
     let machine = machine();
@@ -371,7 +383,7 @@ pub fn request_body(port: u16, cert_sha256: &str, bind: Option<IpAddr>) -> Value
         "port": port,
         "certSha256": cert_sha256,
         "addresses": addresses(bind),
-        "hostname": machine.hostname,
+        "hostname": reported_hostname(&machine, bind),
     })
 }
 
@@ -460,6 +472,19 @@ mod tests {
         assert_eq!(parse_base("https://phone.local").unwrap().port, 443);
         assert!(parse_base("http://1.2.3.4:5/S").is_err());
         assert!(parse_base("https://1.2.3.4:x/S").is_err());
+    }
+
+    #[test]
+    fn reports_a_local_name_on_linux_while_advertising() {
+        let machine = Machine { name: "box".into(), hostname: "box".into() };
+        let lan = "192.168.1.5".parse().ok();
+        let expected = if cfg!(target_os = "linux") { "box.local" } else { "box" };
+        if std::env::var_os("HANDS_MDNS").is_none() {
+            assert_eq!(reported_hostname(&machine, lan), expected);
+            assert_eq!(reported_hostname(&machine, None), expected);
+            // Bound to loopback, nothing is advertised.
+            assert_eq!(reported_hostname(&machine, "127.0.0.1".parse().ok()), "box");
+        }
     }
 
     #[test]

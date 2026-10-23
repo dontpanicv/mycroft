@@ -4,7 +4,6 @@ use crate::serve::{PROTOCOL, VERSION, now_ms};
 use crate::{install, jobs, listener, pairing, state, supervisor};
 use serde_json::{Value, json};
 use std::path::Path;
-use std::process::Command;
 
 /// `45s`, `12m`, `3h4m`, `2d3h`.
 fn duration(ms: u64) -> String {
@@ -150,7 +149,7 @@ fn present(path: &Path) -> String {
 /// `hands doctor`: what is installed and running, for humans and bug reports.
 pub fn doctor() -> i32 {
     let row = |name: &str, value: String| println!("{name:<12} {value}");
-    row("hands", format!("{VERSION} (pi-env protocol {PROTOCOL})"));
+    row("hands", format!("{VERSION} (protocol {PROTOCOL})"));
     row(
         "binary",
         std::env::current_exe()
@@ -225,12 +224,7 @@ pub fn doctor() -> i32 {
     row("installed", present(&install::binary_path()));
     row("service", present(&install::service_path()));
     if cfg!(target_os = "linux") {
-        let linger = Command::new("loginctl")
-            .args(["show-user", &std::env::var("USER").unwrap_or_default(), "-p", "Linger", "--value"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+        let linger = crate::permissions::linger();
         row(
             "linger",
             match linger.as_deref() {

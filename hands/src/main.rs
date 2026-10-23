@@ -1,7 +1,7 @@
-//! hands: the executing half of Mycroft. The brain on the phone speaks pi-env's protocol 1 (docs/protocol.md) plus
-//! supervised jobs (docs/jobs.md) to `hands serve`: through the paired TLS listener of `hands supervise --listen`
-//! (docs/pairing.md), or over SSH with `hands serve --stdio`. Jobs belong to `hands supervise`, a long-lived process
-//! per user, so they outlive the connection.
+//! hands: the executing half of Mycroft. The brain on the phone connects to the paired TLS listener of `hands
+//! supervise --listen` (docs/pairing.md) and speaks protocol 1 (docs/protocol.md) plus supervised jobs (docs/jobs.md)
+//! to a `hands __serve` the listener starts for each connection. Jobs belong to `hands supervise`, a long-lived
+//! process per user, so they outlive the connection.
 //!
 //! Based on the pi-env daemon of earendil-works/pi (MIT); see NOTICE.
 
@@ -20,14 +20,11 @@ mod mdns;
 mod output;
 mod pairing;
 mod permissions;
-mod pty;
-mod scan;
 mod serve;
 mod state;
 mod supervisor;
 mod sys;
 mod tls;
-mod watch;
 mod window;
 
 use serve::VERSION;
@@ -46,35 +43,21 @@ const USAGE: &str = "usage: hands <command>
   supervise [--listen] [--bind <ADDR>] [--detached]
                                     the long-lived supervisor that owns jobs and, on macOS, desktop control; with
                                     --listen, also the phone's TLS WebSocket listener
-  serve [--stdio] [--token <hex>]   the pi-env protocol on stdin/stdout (over ssh, and per listener connection)
   jobs [--json]                     list supervised jobs
   permissions [--check] [--json]    on macOS, walk through what Mycroft needs approved for hands, one at a time:
                                     Accessibility, Screen Recording, the Desktop, Documents and Downloads folders,
                                     Local Network and, optionally, Full Disk Access; --check only reports. On
                                     Linux, report the service and lingering
   doctor                            report the binary, supervisor, listener, paired phones, state dir and jobs
-  version                           print the version
+  version                           print the version";
 
-With no command and stdin not a terminal, hands serves on stdin/stdout.";
-
+/// `hands __serve`: what the listener runs for each connection, not a command for people.
 fn serve_main(args: &[String]) -> i32 {
-    // pi-env clients run `serve --token <hex>`; the token is echoed in the sync line (`PI-ENV <token>`).
-    let mut token = "hands".to_string();
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        match (arg.as_str(), args.as_slice().first()) {
-            ("--stdio", _) => {}
-            ("--token", Some(value)) => {
-                token = value.clone();
-                args.next();
-            }
-            _ => {
-                eprintln!("usage: hands serve [--stdio] [--token <hex>]");
-                return 2;
-            }
-        }
+    if !args.is_empty() {
+        eprintln!("usage: hands __serve");
+        return 2;
     }
-    if let Err(error) = serve::serve(&token) {
+    if let Err(error) = serve::serve() {
         eprintln!("hands: {error}");
         return 1;
     }
@@ -126,11 +109,7 @@ fn supervise_main(args: &[String]) -> i32 {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let rest = args.get(2..).unwrap_or_default();
-    // SAFETY: isatty only inspects the descriptor.
-    let interactive = unsafe { libc::isatty(0) } == 1;
     let code = match args.get(1).map(String::as_str) {
-        None if !interactive => serve_main(&[]),
-        Some("serve") => serve_main(rest),
         Some("supervise") => supervise_main(rest),
         Some("install") => install::main(rest),
         Some("pair") => pairing::main(rest),
@@ -143,6 +122,7 @@ fn main() {
             println!("hands {VERSION}");
             0
         }
+        Some("__serve") => serve_main(rest),
         Some("__job-runner") => jobs::runner(rest),
         Some("help" | "--help" | "-h") => {
             println!("{USAGE}");

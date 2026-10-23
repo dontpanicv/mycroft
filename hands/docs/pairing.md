@@ -134,13 +134,12 @@ Trust comes from the pinned TLS channel together with knowing `S`.
 
 ### After `ready`
 
-- Every binary message carries exactly one complete pi-env frame, including its 4-byte length prefix (see protocol.md), in both directions.
-- The listener runs one `hands serve --token <random>` child per connection:
-  - it strips the child's sync line;
+- Every binary message carries exactly one complete frame, including its 4-byte length prefix (see protocol.md), in both directions.
+- The listener runs one `hands __serve` child per connection, so a crash in one connection's requests ends only that connection:
   - it splits the child's stdout into frames;
   - it writes each incoming frame to the child's stdin.
 - When the WebSocket closes, the child is killed. Supervised jobs keep running.
-- Either side may send WebSocket pings. The listener closes connections that have been silent for 60 s; pi-env's own 5 s pings keep a healthy connection busy.
+- Either side may send WebSocket pings. The listener closes connections that have been silent for 60 s; the protocol's own 5 s pings, which `serve` sends, keep a healthy connection busy.
 
 ## 3. Discovery (optional)
 
@@ -217,7 +216,7 @@ These record how `hands` 0.2.0 reads the parts the sections above leave open. Th
 - **Error statuses.** `410`, `404` and `400` each produce their own message, and pairing then fails with exit status 1.
 - **`name` and `hostname`.**
   - On macOS: `scutil --get LocalHostName` (e.g. `mac-mini`) and `<that>.local`.
-  - Elsewhere: the first label of `gethostname()`, and `gethostname()` itself.
+  - On Linux: the first label of `gethostname()`, and `<that>.local` while the listener advertises itself (see Discovery below; its responder answers for that name). With discovery off, `gethostname()` itself.
   - The listener's `hello.name` is the same `name`.
 - **`addresses`.** The IPv4 addresses of interfaces that are up, excluding loopback and link-local (`169.254/16`). If the listener is bound to one address (`--bind`), it is that address only. IPv6 addresses are not sent.
 - **`paired.json`.** A JSON array of `{ "name", "publicKey", "pairedAt" }`, with mode 0600. `pairedAt` is Unix time in milliseconds, like the job timestamps in jobs.md.
@@ -237,7 +236,7 @@ These record how `hands` 0.2.0 reads the parts the sections above leave open. Th
   - It holds `listener.lock` and writes its pid there. When started by the service it waits for the lock; when started with `--detached` it exits if another listener holds the lock.
   - If another (on-demand) supervisor holds `supervisor.lock`, the listener serves anyway and takes the supervisor role when that supervisor exits.
   - `hands install` stops a running listener before (re)starting the service.
-- **Port.** The port is chosen at random from 49152–65535 by whichever comes first, `hands pair` or the listener, and is stored as `{ "port": N }` in `listener.json` (0600). It never changes after that. If it is taken when the listener starts, the listener fails and the service retries. Moving to another port means deleting `listener.json` and pairing again.
+- **Port.** The port is chosen at random from 20000–32767 (below the ports macOS and Linux hand out for port 0 and outgoing connections), free on both `0.0.0.0` and `127.0.0.1`, by whichever comes first, `hands pair` or the listener, and is stored as `{ "port": N }` in `listener.json` (0600). It never changes after that. If it is taken when the listener starts, the listener fails and the service retries. Moving to another port means deleting `listener.json` and pairing again.
 - **Certificate.** Common name `Mycroft hands on <name>`, subject alternative name `hands`, and rcgen's default validity (1975 to 4096). The phone pins `certSha256` and should not evaluate the name or the dates.
 - **Handshake.**
   - The upgrade path is matched without its query string. Any other path gets HTTP `404`.
@@ -252,10 +251,10 @@ These record how `hands` 0.2.0 reads the parts the sections above leave open. Th
   - The largest accepted message is 16 MiB + 4 bytes.
   - "Silent" means no message of any kind, pings included, for 60 s. Such a connection is closed with code 1001.
   - If `serve` exits, the connection is closed with code 1000.
-  - When the connection ends, `serve`'s stdin is closed, which makes it kill the commands it started and exit, as on a dropped SSH session. It is killed if it is still running after 3 s.
+  - When the connection ends, `serve`'s stdin is closed, which makes it kill the commands it started and exit. It is killed if it is still running after 3 s.
   - `serve` runs in the user's home directory, and its stderr goes to the supervisor log.
 - **Discovery.** The instance name is `name`.
-  - On macOS, registration goes through the system's mDNSResponder (`dns_sd`). On Linux, `hands` runs its own responder (`mdns-sd`).
+  - On macOS, registration goes through the system's mDNSResponder (`dns_sd`). On Linux, `hands` runs its own responder (`mdns-sd`), which also answers for `<name>.local`.
   - It is skipped when the listener is bound to a loopback address. `HANDS_MDNS=0` turns it off and `HANDS_MDNS=1` forces it on.
 
 **Install script**

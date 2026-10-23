@@ -1,6 +1,7 @@
 //! `hands supervise --listen`: the supervisor plus a WebSocket-over-TLS-1.3 listener for the phone (docs/pairing.md
 //! §2). A connection authenticates with the phone's paired Ed25519 key (`hello`, `auth`, `ready`); after that every
-//! binary message is one pi-env frame, proxied to and from a `hands serve --token <random>` child of its own.
+//! binary message is one protocol frame (docs/protocol.md), proxied to and from a `hands __serve` child of its own, so
+//! a crash in one connection's requests ends only that connection.
 //!
 //! One thread per connection, as everywhere else in hands. One listener runs per state dir: it holds
 //! `listener.lock` and writes its pid there. Started by the service it waits for the lock; started detached (by
@@ -12,7 +13,7 @@ use crate::{mdns, pairing, state, supervisor, tls};
 use rustls::{ServerConnection, StreamOwned};
 use serde_json::{Value, json};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -111,12 +112,19 @@ pub fn identity() -> io::Result<Identity> {
     Ok(Identity { port, cert })
 }
 
-/// A random port from the dynamic range that is free now.
+/// Ports the listener picks from: below the ranges systems hand out for "any free port" and outgoing connections
+/// (32768–60999 on Linux, 49152–65535 on macOS), so another program binding port 0 cannot get this one between the
+/// check and the listener's bind, or while the listener restarts.
+const PORTS: std::ops::Range<u16> = 20000..32768;
+
+/// A random port from [`PORTS`] that is free now. Checked on loopback too: a socket bound to one address does not
+/// stop a bind to the wildcard address, so that check alone would miss a port another listener holds on 127.0.0.1.
 fn free_port() -> io::Result<u16> {
     for _ in 0..100 {
         let [high, low] = tls::random::<2>();
-        let port = 49152 + (u16::from_be_bytes([high, low]) % (65536 - 49152) as u16);
-        if TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok() {
+        let port = PORTS.start + u16::from_be_bytes([high, low]) % (PORTS.end - PORTS.start);
+        let free = |address: Ipv4Addr| TcpListener::bind((address, port)).is_ok();
+        if free(Ipv4Addr::UNSPECIFIED) && free(Ipv4Addr::LOCALHOST) {
             return Ok(port);
         }
     }
@@ -275,7 +283,7 @@ pub fn run(bind: Option<IpAddr>, detached: bool) -> io::Result<()> {
         }
     });
     // The supervisor in the same process. Waits while another supervisor (one `serve` started) holds its lock;
-    // `hands serve` children reach whichever runs.
+    // `hands __serve` children reach whichever runs.
     let result = supervisor::run(false);
     drop(lock);
     result
@@ -419,35 +427,22 @@ fn authenticate(context: &Context, nonce: &str, text: &str) -> Result<String, St
     Ok(phone)
 }
 
-/// Start `hands serve --token <random>` for this connection, naming the phone it serves (cua.rs keys its desktop
-/// session by it).
-fn start_serve(phone: &str) -> io::Result<(Child, String)> {
-    let token = tls::hex(&tls::random::<16>());
-    let child = Command::new(std::env::current_exe()?)
-        .args(["serve", "--token", &token])
+/// Start `hands __serve` for this connection, naming the phone it serves (cua.rs keys its desktop session by it).
+fn start_serve(phone: &str) -> io::Result<Child> {
+    Command::new(std::env::current_exe()?)
+        .arg("__serve")
         .env("HANDS_PEER", phone)
         .current_dir(crate::sys::home())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .spawn()?;
-    Ok((child, token))
+        .spawn()
 }
 
-/// Read `serve`'s stdout: skip to its sync line, then pass each frame, with its length prefix, to `frames`, and
-/// nudge `wake`. Ends at the end of its output or when the receiver is gone.
-fn read_frames(stdout: impl Read, token: &str, frames: std::sync::mpsc::SyncSender<Vec<u8>>, mut wake: UnixStream) {
+/// Read `serve`'s stdout: pass each frame, with its length prefix, to `frames`, and nudge `wake`. Ends at the end
+/// of its output or when the receiver is gone.
+fn read_frames(stdout: impl Read, frames: std::sync::mpsc::SyncSender<Vec<u8>>, mut wake: UnixStream) {
     let mut stdout = BufReader::new(stdout);
-    let sync = format!("PI-ENV {token}\n").into_bytes();
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        match stdout.read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => return,
-            Ok(_) if line == sync => break,
-            Ok(_) => {}
-        }
-    }
     loop {
         let mut length = [0u8; 4];
         if stdout.read_exact(&mut length).is_err() {
@@ -468,19 +463,19 @@ fn read_frames(stdout: impl Read, token: &str, frames: std::sync::mpsc::SyncSend
     // Dropping `frames` and `wake` tells the proxy that serve's output ended.
 }
 
-/// Proxy pi-env frames between the authenticated socket and a `serve` child until either side ends.
+/// Proxy frames between the authenticated socket and a `serve` child until either side ends.
 fn proxy(mut socket: Socket, phone: &str) -> Result<(), String> {
-    let (mut child, token) = start_serve(phone).map_err(|error| format!("starting serve: {error}"))?;
+    let mut child = start_serve(phone).map_err(|error| format!("starting serve: {error}"))?;
     let stdin = child.stdin.take();
     let stdout = child.stdout.take().expect("piped stdout");
     let (wake_sender, mut wake) = UnixStream::pair().map_err(|error| error.to_string())?;
     let _ = wake_sender.set_nonblocking(true);
     let _ = wake.set_nonblocking(true);
     let (sender, frames) = sync_channel(QUEUED_FRAMES);
-    let reader = thread::spawn(move || read_frames(stdout, &token, sender, wake_sender));
+    let reader = thread::spawn(move || read_frames(stdout, sender, wake_sender));
     let result = pump(&mut socket, stdin, &frames, &mut wake);
-    // Closing stdin (pump has dropped it) ends `serve` as a dropped SSH session would: it kills the commands it
-    // started, not jobs, and exits. Kill it if it lingers.
+    // Closing stdin (pump has dropped it) ends `serve`: it kills the commands it started, not jobs, and exits. Kill
+    // it if it lingers.
     drop(frames);
     let deadline = Instant::now() + Duration::from_secs(3);
     while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
@@ -531,10 +526,10 @@ fn pump(
                     if !valid {
                         let _ = socket.close(Some(CloseFrame {
                             code: CloseCode::Protocol,
-                            reason: "one complete pi-env frame per binary message".into(),
+                            reason: "one complete frame per binary message".into(),
                         }));
                         let _ = socket.flush();
-                        return Err("a binary message that is not one pi-env frame".into());
+                        return Err("a binary message that is not one frame".into());
                     }
                     stdin
                         .write_all(&frame)
