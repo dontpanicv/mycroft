@@ -61,7 +61,7 @@ nonisolated enum SelfTools {
 
             Tool(
                 "self_write",
-                description: "Write a file of your next generation (the draft): extension.js, SELF.md, or anything under ui/ (new files too). The draft starts as a copy of the active generation. Nothing changes until self_activate.",
+                description: "Write a file of your next generation (the draft): extension.js, or anything under ui/ (new files too). SELF.md, ui/README.md and docs/ are the app's and can't be written. The draft starts as a copy of the active generation. Nothing changes until self_activate.",
                 parameters: .object([
                     "path": .string("Path relative to your generation, e.g. ui/style.css"),
                     "content": .string("The complete new file content"),

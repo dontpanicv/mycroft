@@ -82,7 +82,7 @@ final class Speaker {
         if let manager { return manager }
         if let loading { return try await loading.value }
         guard let directory = Self.directory else {
-            throw VoiceError("This build of Mycroft doesn't include Phonon (run ios/scripts/fetch-phonon.sh).")
+            throw Failure("This build of Mycroft doesn't include Phonon (run ios/scripts/fetch-phonon.sh).")
         }
         let voice = voice
         let task = Task {

@@ -33,15 +33,13 @@ final class InstallServer {
     private(set) var addresses: [LocalNetwork.Address] = []
     /// The address the commands use: the user's pick, else the first.
     var chosen: String?
-    private(set) var expiresAt = Date.now.addingTimeInterval(600)
+    var expiresAt: Date { gate.expiresAt }
 
     @ObservationIgnored private var web: NWListener?
     @ObservationIgnored private var secure: NWListener?
-    @ObservationIgnored private var code = ""
+    @ObservationIgnored private var gate = InstallGate(code: "")
     @ObservationIgnored private var pin = ""
-    @ObservationIgnored private var misses = 0
-    @ObservationIgnored private var used = false
-    @ObservationIgnored private var onPair: ((Machine) async throws -> Void)?
+    @ObservationIgnored private var onPair: ((Machine) async throws -> Machine)?
     @ObservationIgnored private let log = Logger(subsystem: "dev.mycroft", category: "install")
     private let queue = DispatchQueue(label: "dev.mycroft.install")
 
@@ -50,9 +48,6 @@ final class InstallServer {
     static let codeLength = 6
     /// Fixed so the command is easy to remember and a tailnet ACL can allow it; any free port if they're taken.
     static let ports: (web: UInt16, secure: UInt16) = (8484, 8485)
-    /// Wrong codes tolerated before the server stops, so the code can't be guessed.
-    static let maxMisses = 100
-
     var address: LocalNetwork.Address? { addresses.first { $0.ip == chosen } ?? addresses.first }
     private(set) var webPort: UInt16?
     private(set) var securePort: UInt16?
@@ -60,29 +55,29 @@ final class InstallServer {
     /// The short command for `ip`, to paste or type.
     func command(for ip: String) -> String {
         guard state == .waiting, let webPort else { return "" }
-        return "curl -fsS \(Self.urlHost(ip)):\(webPort)/\(code) | sh"
+        return "curl -fsS \(Self.urlHost(ip)):\(webPort)/\(gate.code) | sh"
     }
 
     /// The same install with curl pinned to this phone's certificate: safe on any network.
     func pinnedCommand(for ip: String) -> String {
         guard state == .waiting, let securePort else { return "" }
-        return "curl -fsSLk --pinnedpubkey sha256//\(pin) https://\(Self.urlHost(ip)):\(securePort)/\(code) | sh"
+        return "curl -fsSLk --pinnedpubkey sha256//\(pin) https://\(Self.urlHost(ip)):\(securePort)/\(gate.code) | sh"
     }
 
     var command: String { address.map { command(for: $0.ip) } ?? "" }
     var pinnedCommand: String { address.map { pinnedCommand(for: $0.ip) } ?? "" }
 
     /// Starts serving. `prefer` picks the first address on that network (the user's last pick); `onPair` stores the
-    /// machine. The server stops after the first successful pairing.
-    func start(prefer network: String? = nil, onPair: @escaping (Machine) async throws -> Void) {
+    /// machine and returns it as stored (its name may get a number). The server stops after the first successful pairing.
+    func start(prefer network: String? = nil, onPair: @escaping (Machine) async throws -> Machine) {
         self.onPair = onPair
         do {
             addresses = LocalNetwork.addresses()
             guard !addresses.isEmpty else {
-                throw InstallError("This iPhone isn't on a network a computer could reach. Join Wi-Fi, or turn on Tailscale or NetBird.")
+                throw Failure("This iPhone isn't on a network a computer could reach. Join Wi-Fi, or turn on Tailscale or NetBird.")
             }
             chosen = addresses.first { $0.network == network }?.ip
-            code = String((0..<Self.codeLength).map { _ in Self.alphabet.randomElement()! })
+            gate = InstallGate(code: String((0..<Self.codeLength).map { _ in Self.alphabet.randomElement()! }))
             let identity = try InstallIdentity.make()
             pin = identity.pin
             let tls = NWProtocolTLS.Options()
@@ -117,7 +112,7 @@ final class InstallServer {
                     case .ready:
                         if isSecure { self.securePort = listener.port?.rawValue } else { self.webPort = listener.port?.rawValue }
                         if self.webPort != nil, self.securePort != nil, self.state == .starting {
-                            self.expiresAt = .now.addingTimeInterval(600)
+                            self.gate.expiresAt = .now.addingTimeInterval(InstallGate.lifetime)
                             self.state = .waiting
                         }
                     case .failed(let error) where port != nil:
@@ -163,40 +158,31 @@ final class InstallServer {
         }
     }
 
-    /// The plain-HTTP listener serves only the script; the rest needs the pinned one.
     private func handle(_ request: HTTPRequest, secure: Bool, on connection: NWConnection) async -> HTTPResponse {
-        guard Date.now < expiresAt, state == .waiting || used else { return .status(404) }
-        let parts = request.path.split(separator: "/").map(String.init)
-        guard parts.first == code else {
-            misses += 1
-            if misses >= Self.maxMisses, !used {
-                state = .failed("Too many wrong setup codes reached this iPhone, so it stopped serving the install. Start again.")
-                stop()
-            }
-            return .status(404)
-        }
-        switch (request.method, parts.count > 1 ? parts[1] : nil) {
-        case ("GET", nil):
+        switch gate.admit(method: request.method, path: request.path, secure: secure, waiting: state == .waiting) {
+        case .script:
             // Point the script's downloads at the address the machine used: it's the one that works.
             let host = request.host ?? Self.host(of: connection.currentPath?.localEndpoint) ?? address?.ip ?? ""
             guard let script = installScript(host: host) else { return .status(500, "install script missing from the app") }
             return HTTPResponse(status: 200, contentType: "text/x-shellscript", body: Data(script.utf8))
-        case _ where !secure:
-            return .status(404, "use the address and port in the script")
-        case ("GET", let name?) where name.hasPrefix("hands-"):
+        case .binary(let name):
             guard let url = HandsBinaries.url(name), let data = try? Data(contentsOf: url) else {
                 return .status(404, "no \(name) in this build of Mycroft")
             }
             return HTTPResponse(status: 200, contentType: "application/octet-stream", body: data)
-        case ("POST", "pair"):
+        case .pair:
             return await pair(request.body, from: Self.host(of: connection.endpoint))
-        default:
+        case .refused(let status, let message):
+            return .status(status, message)
+        case .tooManyMisses:
+            state = .failed("Too many wrong setup codes reached this iPhone, so it stopped serving the install. Start again.")
+            stop()
             return .status(404)
         }
     }
 
+    /// Stores the machine. `gate` lets one request at a time get here; if it fails, the command can be run again.
     private func pair(_ body: Data, from source: String?) async -> HTTPResponse {
-        guard !used else { return .status(410, "this setup command was already used") }
         struct Request: Decodable {
             var name: String
             var os: String
@@ -209,16 +195,18 @@ final class InstallServer {
         }
         guard let request = try? JSONDecoder().decode(Request.self, from: body), request.certSha256.count == 64,
             (1...65535).contains(request.port)
-        else { return .status(400, "bad pairing request") }
+        else {
+            gate.pairingFailed()
+            return .status(400, "bad pairing request")
+        }
         let machine = Machine(
             name: request.name, hostname: request.hostname,
             addresses: [source].compactMap { $0 } + (request.addresses ?? []), port: request.port,
             certSha256: request.certSha256.lowercased(), os: request.os, arch: request.arch, version: request.version,
             pairedAt: .now)
         do {
-            try await onPair?(machine)
-            used = true
-            state = .paired(machine)
+            let stored = try await onPair?(machine) ?? machine
+            state = .paired(stored)
             let reply = try JSONSerialization.data(withJSONObject: [
                 "phoneName": PhoneIdentity.deviceName, "publicKey": try PhoneIdentity.publicKeyBase64(),
             ])
@@ -229,6 +217,7 @@ final class InstallServer {
             return HTTPResponse(status: 200, contentType: "application/json", body: reply)
         } catch {
             log.error("pairing failed: \(error)")
+            gate.pairingFailed()
             return .status(500, "pairing failed: \(error.localizedDescription)")
         }
     }
@@ -238,7 +227,7 @@ final class InstallServer {
             var script = try? String(contentsOf: url, encoding: .utf8),
             let securePort
         else { return nil }
-        script = script.replacingOccurrences(of: "@BASE@", with: "https://\(Self.urlHost(host)):\(securePort)/\(code)")
+        script = script.replacingOccurrences(of: "@BASE@", with: "https://\(Self.urlHost(host)):\(securePort)/\(gate.code)")
         script = script.replacingOccurrences(of: "@PIN@", with: pin)
         for target in HandsBinaries.targets {
             let hash = HandsBinaries.sha256(target) ?? "missing"
@@ -270,10 +259,60 @@ final class InstallServer {
     nonisolated static func urlHost(_ ip: String) -> String { ip.contains(":") ? "[\(ip)]" : ip }
 }
 
-struct InstallError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
+/// Who the install server answers: the setup code, for 10 minutes, with one pairing, until too many wrong codes. The
+/// plain-HTTP listener serves only the script; the binaries and the pairing need the pinned one.
+nonisolated struct InstallGate {
+    enum Verdict: Equatable {
+        case script
+        case binary(String)
+        /// This request may pair; nothing else can until it fails (`pairingFailed`).
+        case pair
+        case refused(Int, String?)
+        /// Stop serving: the code is being guessed.
+        case tooManyMisses
+    }
+
+    static let lifetime: TimeInterval = 600
+    /// Wrong codes tolerated before the server stops, so the code can't be guessed.
+    static let maxMisses = 100
+
+    let code: String
+    var expiresAt: Date
+    private(set) var misses = 0
+    private(set) var used = false
+
+    init(code: String, expiresAt: Date = .now.addingTimeInterval(lifetime)) {
+        self.code = code
+        self.expiresAt = expiresAt
+    }
+
+    /// `waiting`: the server is up and not paired yet. After the pairing, the install that made it may still finish.
+    mutating func admit(method: String, path: String, secure: Bool, waiting: Bool, now: Date = .now) -> Verdict {
+        guard now < expiresAt, waiting || used else { return .refused(404, nil) }
+        let parts = path.split(separator: "/").map(String.init)
+        guard !code.isEmpty, parts.first == code else {
+            misses += 1
+            return misses >= Self.maxMisses && !used ? .tooManyMisses : .refused(404, nil)
+        }
+        switch (method, parts.count > 1 ? parts[1] : nil) {
+        case ("GET", nil):
+            return .script
+        case _ where !secure:
+            return .refused(404, "use the address and port in the script")
+        case ("GET", let name?) where name.hasPrefix("hands-"):
+            return .binary(name)
+        case ("POST", "pair"):
+            // Taken before the pairing is stored, so two requests at once can't both pair.
+            guard !used else { return .refused(410, "this setup command was already used") }
+            used = true
+            return .pair
+        default:
+            return .refused(404, nil)
+        }
+    }
+
+    /// The pairing `admit` let through failed: the command can be run again.
+    mutating func pairingFailed() { used = false }
 }
 
 /// The `hands` binaries bundled in the app (hands/dist, built by hands/scripts/build-release.sh).
@@ -334,7 +373,7 @@ nonisolated enum InstallIdentity {
             kSecClass: kSecClassKey, kSecValueRef: secKey, kSecAttrApplicationTag: tag,
             kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ] as CFDictionary, nil))
-        guard let secCertificate = SecCertificateCreateWithData(nil, der as CFData) else { throw InstallError("certificate") }
+        guard let secCertificate = SecCertificateCreateWithData(nil, der as CFData) else { throw Failure("certificate") }
         try check(SecItemAdd([kSecClass: kSecClassCertificate, kSecValueRef: secCertificate, kSecAttrLabel: label] as CFDictionary, nil))
 
         var result: CFTypeRef?
@@ -346,7 +385,7 @@ nonisolated enum InstallIdentity {
             var certificate: SecCertificate?
             SecIdentityCopyCertificate(identity, &certificate)
             return certificate.map { SecCertificateCopyData($0) as Data } == der
-        }) else { throw InstallError("Could not create the install certificate's identity.") }
+        }) else { throw Failure("Could not create the install certificate's identity.") }
 
         let pin = Data(SHA256.hash(data: key.publicKey.derRepresentation)).base64EncodedString()
         return Made(identity: identity, pin: pin)
@@ -453,7 +492,7 @@ nonisolated struct HTTPRequest {
         let length = headers["content-length"].flatMap { Int($0) } ?? 0
         host = headers["host"].flatMap(Self.hostname)
         let bodyStart = end.upperBound
-        guard data.count - (bodyStart - data.startIndex) >= length else { return nil }
+        guard length >= 0, data.count - (bodyStart - data.startIndex) >= length else { return nil }
         method = String(start[0])
         path = String(start[1].split(separator: "?").first ?? "")
         body = data.subdata(in: bodyStart..<(bodyStart + length))

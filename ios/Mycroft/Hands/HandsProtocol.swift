@@ -1,9 +1,9 @@
 import Foundation
 
-/// The pi-env wire protocol that `hands serve` speaks (hands/docs/protocol.md).
+/// The wire protocol `hands` speaks (hands/docs/protocol.md), one frame per WebSocket message.
 ///
 /// Every frame: u32 length (bytes after it) · u8 type · u32 request id · u32 json length · JSON · raw payload.
-/// Big-endian. Before the first frame the daemon prints `PI-ENV <token>\n`; anything earlier is shell noise.
+/// Big-endian.
 nonisolated enum HandsProtocol {
     static let version = 1
     static let maxFrame = 16 * 1024 * 1024
@@ -38,53 +38,26 @@ nonisolated enum HandsProtocol {
         }
     }
 
-    struct ProtocolError: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
-    }
-
-    /// Accumulates bytes from stdout and yields whole frames, after skipping everything up to the sync line.
+    /// Accumulates bytes and yields whole frames.
     struct Reader {
         private var buffer = Data()
-        private var synced = false
-        private let syncLine: Data
-
-        /// For stdout of `hands serve` (SSH): skips everything up to the sync line.
-        init(token: String) {
-            syncLine = Data("PI-ENV \(token)\n".utf8)
-        }
-
-        /// For WebSocket messages, which carry whole frames and no sync line.
-        init(synced: Bool) {
-            syncLine = Data()
-            self.synced = synced
-        }
 
         mutating func feed(_ bytes: Data) throws -> [Frame] {
             buffer.append(bytes)
-            if !synced {
-                guard let range = buffer.range(of: syncLine) else {
-                    // Keep only a tail long enough to still contain a split sync line.
-                    if buffer.count > 64 * 1024 { buffer = buffer.suffix(syncLine.count) }
-                    return []
-                }
-                buffer.removeSubrange(buffer.startIndex..<range.upperBound)
-                synced = true
-            }
             var frames: [Frame] = []
             while buffer.count >= 4 {
                 let length = Int(buffer.bigEndianUInt32(at: 0))
                 guard length >= 9, length <= HandsProtocol.maxFrame else {
-                    throw ProtocolError(message: "bad frame length \(length)")
+                    throw Failure("bad frame length \(length)")
                 }
                 guard buffer.count >= 4 + length else { break }
                 let start = buffer.startIndex
                 guard let type = FrameType(rawValue: buffer[start + 4]) else {
-                    throw ProtocolError(message: "unknown frame type \(buffer[start + 4])")
+                    throw Failure("unknown frame type \(buffer[start + 4])")
                 }
                 let id = buffer.bigEndianUInt32(at: 5)
                 let jsonLength = Int(buffer.bigEndianUInt32(at: 9))
-                guard 9 + jsonLength <= length else { throw ProtocolError(message: "bad json length") }
+                guard 9 + jsonLength <= length else { throw Failure("bad json length") }
                 let jsonData = buffer.subdata(in: (start + 13)..<(start + 13 + jsonLength))
                 let payload = buffer.subdata(in: (start + 13 + jsonLength)..<(start + 4 + length))
                 let json = jsonLength == 0 ? [:] : (try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] ?? [:])

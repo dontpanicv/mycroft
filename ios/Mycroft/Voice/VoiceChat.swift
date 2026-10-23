@@ -52,8 +52,6 @@ final class VoiceChat {
     @ObservationIgnored private var echoUntil = Date.distantPast
     /// How long Mycroft's voice lingers in the microphone after it stops.
     static let echoTail: TimeInterval = 0.7
-    /// A thread this conversation created, until the thread list has it.
-    @ObservationIgnored private var created: ThreadMeta?
     @ObservationIgnored private let log = Logger(subsystem: "dev.mycroft", category: "voice-chat")
 
     static let owner = "talk"
@@ -118,7 +116,6 @@ final class VoiceChat {
         if let thread { Task { await setVoice(false, in: thread) } }
         phase = .off
         thread = nil
-        created = nil
         heard = ""
         status = nil
         muted = false
@@ -254,8 +251,8 @@ final class VoiceChat {
         if speaker.isSpeaking { interrupt() }
         do {
             if let thread {
-                guard let meta = (app.threads + app.archivedThreads).first(where: { $0.id == thread }) ?? created else {
-                    throw BridgeError("This thread no longer exists.")
+                guard let meta = app.thread(thread) else {
+                    throw Failure("This thread no longer exists.")
                 }
                 // Always a steer: talking to Mycroft while it works redirects it. (An idle thread takes it as a new
                 // message; `busy` from the last view can be a moment late.)
@@ -263,7 +260,6 @@ final class VoiceChat {
             } else {
                 let meta = try await app.startThread(with: text, voice: true)
                 guard isOn else { return }
-                created = meta
                 thread = meta.id
                 follow(meta.id)
             }

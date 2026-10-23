@@ -23,17 +23,23 @@ nonisolated enum ActivitySummary {
         case "self_activate": return Step(headline: activationHeadline, machine: nil, kind: .selfEdit)
         case "self_rollback": return Step(headline: "Rolling itself back", machine: nil, kind: .selfEdit)
         case "self_status": return Step(headline: "Checking its generations", machine: nil, kind: .read)
-        case "hands_exec", "bash":
+        case "hands_exec":
             return Step(headline: "Running `\(string("command") ?? "a command")`\(on)", machine: machine, kind: .command)
         case "hands_job_start":
             return Step(headline: "Started `\(string("command") ?? "a job")`\(on)", machine: machine, kind: .command)
-        case "hands_job_wait", "hands_job_output", "hands_job_status":
+        case "hands_job_wait":
             return Step(headline: "Watching a job\(on)", machine: machine, kind: .read)
-        case "hands_read", "read":
+        case "hands_job_cancel":
+            return Step(headline: "Stopping a job\(on)", machine: machine, kind: .command)
+        case "hands_jobs":
+            return Step(headline: "Checking the jobs\(on)", machine: machine, kind: .read)
+        case "hands_machines":
+            return Step(headline: "Checking the machines", machine: nil, kind: .read)
+        case "hands_read":
             return Step(headline: "Reading \(file(string("path")))\(on)", machine: machine, kind: .read)
-        case "hands_write", "write", "hands_edit", "edit":
+        case "hands_write", "hands_edit":
             return Step(headline: "Editing \(file(string("path")))\(on)", machine: machine, kind: .file)
-        case "hands_list", "ls":
+        case "hands_list":
             return Step(headline: "Looking through \(file(string("path")))\(on)", machine: machine, kind: .read)
         // Cua Driver's tools on a Mac (Desktop/CuaTools.swift).
         case "get_window_state", "get_accessibility_tree":
@@ -105,8 +111,5 @@ nonisolated enum ActivitySummary {
         return (path as NSString).lastPathComponent
     }
 
-    private static func clip(_ text: String) -> String {
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
-        return line.count > 40 ? String(line.prefix(39)) + "…" : line
-    }
+    private static func clip(_ text: String) -> String { CuaTools.clip(text) }
 }

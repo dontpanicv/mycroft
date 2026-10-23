@@ -1,4 +1,5 @@
 import Foundation
+import PiDurableKit
 import Testing
 
 @testable import Mycroft
@@ -13,6 +14,14 @@ struct GenerationStoreTests {
         try "module.exports = 0;".write(to: folder.appending(path: "extension.js"), atomically: true, encoding: .utf8)
         try "# self".write(to: folder.appending(path: "SELF.md"), atomically: true, encoding: .utf8)
         return folder
+    }
+
+    /// Makes state.json look as it did before generations recorded their layout.
+    private func forgetLayout(of agent: URL) throws {
+        let url = agent.appending(path: "state.json")
+        var state = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        state["layout"] = nil
+        try JSONSerialization.data(withJSONObject: state).write(to: url)
     }
 
     @Test func draftPromotesToNextGeneration() async throws {
@@ -91,6 +100,28 @@ struct GenerationStoreTests {
         #expect(await GenerationStore(root: agent).state.history.map(\.parent) == [nil, 0, 1, 0, 3])
     }
 
+    /// A fresh start forgets every generation and the draft, and starts again from the app's own.
+    @Test func resetStartsAgainFromGenerationZero() async throws {
+        let store = GenerationStore(root: root.appending(path: "agent"))
+        try await store.bootstrap(bundled: try bundled())
+        try await store.write("ui/a.js", content: "1")
+        _ = try await store.promoteDraft(note: "one")
+        try await store.write("ui/a.js", content: "2")
+        try await store.reset()
+        try await store.bootstrap(bundled: try bundled())
+        #expect(await store.state.history.map(\.generation) == [0])
+        #expect(await store.state.active == 0)
+        #expect(await !store.hasDraft)
+        #expect(await GenerationStore(root: root.appending(path: "agent")).state.history.count == 1)
+    }
+
+    @Test func aGenerationThatDoesntExistHasNoExtension() async throws {
+        let store = GenerationStore(root: root.appending(path: "agent"))
+        try await store.bootstrap(bundled: try bundled())
+        _ = try await store.extensionFor(generation: 0)
+        await #expect(throws: SelfError.self) { try await store.extensionFor(generation: 42) }
+    }
+
     @Test func crashLoopRollsBackToLastGood() async throws {
         let store = GenerationStore(root: root.appending(path: "agent"))
         try await store.bootstrap(bundled: try bundled())
@@ -125,6 +156,7 @@ struct GenerationStoreTests {
         // An older generation that copied the app's files, as generations used to: the copies go at the next start.
         try "screen v1".write(to: agent.appending(path: "generations/1/screen.js"), atomically: true, encoding: .utf8)
         try "# old self".write(to: agent.appending(path: "generations/1/SELF.md"), atomically: true, encoding: .utf8)
+        try forgetLayout(of: agent)
         let reopened = GenerationStore(root: agent)
         try await reopened.bootstrap(bundled: bundled)
 
@@ -174,5 +206,51 @@ struct DevImportTests {
         #expect(credential.json["refresh"]?.stringValue == "r-1")
         #expect(credential.json["accountId"]?.stringValue == "acct-123")
         #expect(credential.json["expires"]?.doubleValue == 2_000_000_000_000)
+    }
+}
+
+/// A fresh start's new database: the paired machines and nothing else.
+@Suite("Fresh start")
+struct FreshStartTests {
+    let folder = FileManager.default.temporaryDirectory.appending(path: "mycroft-fresh-\(UUID().uuidString)", directoryHint: .isDirectory)
+    var database: URL { folder.appending(path: "mycroft.sqlite") }
+
+    private func seed() async throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let session = try await Session.open(.sqlite(at: database))
+        try await session.update(Machines.document) { $0.items = [MachinesTests.machine("bender-2")] }
+        try await session.update(Threads.document) {
+            $0.items = [ThreadMeta(id: ConversationID(7), title: "Old", createdAt: .now, updatedAt: .now)]
+        }
+        try await session.close()
+    }
+
+    private func read() async throws -> (machines: [String], threads: Int) {
+        let session = try await Session.open(.sqlite(at: database))
+        let machines = try await session.document(Machines.document).items.map(\.name)
+        let threads = try await session.document(Threads.document).items.count
+        try await session.close()
+        return (machines, threads)
+    }
+
+    @Test func keepsThePairedMachines() async throws {
+        try await seed()
+        var swapped = false
+        #expect(try await AppModel.freshDatabase(at: database, beforeSwap: { swapped = true }) == nil)
+        #expect(swapped)
+        let after = try await read()
+        #expect(after.machines == ["bender-2"])
+        #expect(after.threads == 0)
+    }
+
+    /// A failure before the swap leaves the old database as it was, and the next try still keeps the machines.
+    @Test func aFailedTryChangesNothing() async throws {
+        try await seed()
+        struct Failed: Error {}
+        await #expect(throws: Failed.self) { try await AppModel.freshDatabase(at: database, beforeSwap: { throw Failed() }) }
+        #expect(try await read().threads == 1)
+        _ = try await AppModel.freshDatabase(at: database, beforeSwap: {})
+        let after = try await read()
+        #expect(after.machines == ["bender-2"] && after.threads == 0)
     }
 }

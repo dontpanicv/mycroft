@@ -9,7 +9,7 @@ import Testing
 struct HandsProtocolTests {
     @Test func frameRoundTrips() throws {
         let frame = HandsProtocol.Frame(type: .request, id: 7, json: ["op": "hello", "protocol": 1], payload: Data([1, 2, 3]))
-        var reader = HandsProtocol.Reader(synced: true)
+        var reader = HandsProtocol.Reader()
         let decoded = try reader.feed(try frame.encoded())
         #expect(decoded.count == 1)
         #expect(decoded[0].type == .request)
@@ -24,19 +24,9 @@ struct HandsProtocolTests {
         #expect(Array(data) == [0, 0, 0, 11, 6, 0, 0, 0, 0, 0, 0, 0, 2, 0x7B, 0x7D])
     }
 
-    @Test func skipsShellNoiseBeforeTheSyncLine() throws {
-        var reader = HandsProtocol.Reader(token: "abc")
-        let frame = try HandsProtocol.Frame(type: .result, id: 1, json: ["ok": true]).encoded()
-        #expect(try reader.feed(Data("Last login: Sun\nPI-EN".utf8)).isEmpty)
-        let frames = try reader.feed(Data("V abc\n".utf8) + frame.prefix(5))
-        #expect(frames.isEmpty)
-        let rest = try reader.feed(frame.dropFirst(5))
-        #expect(rest.count == 1 && rest[0].id == 1)
-    }
-
     @Test func rejectsOversizedFrames() {
-        var reader = HandsProtocol.Reader(synced: true)
-        #expect(throws: HandsProtocol.ProtocolError.self) { try reader.feed(Data([0xFF, 0xFF, 0xFF, 0xFF, 1])) }
+        var reader = HandsProtocol.Reader()
+        #expect(throws: Failure.self) { try reader.feed(Data([0xFF, 0xFF, 0xFF, 0xFF, 1])) }
     }
 
     @Test func parsesHTTPRequests() {
@@ -47,6 +37,48 @@ struct HandsProtocolTests {
         let post = HTTPRequest(parsing: Data("POST /k7m29qxa/pair HTTP/1.1\r\ncontent-length: 7\r\n\r\n{\"a\":1}".utf8))
         #expect(post?.body == Data("{\"a\":1}".utf8))
         #expect(get?.host == "x")
+        // A negative length must not reach the body's range (Swift stops the app on a reversed range).
+        #expect(HTTPRequest(parsing: Data("POST /k7m29qxa/pair HTTP/1.1\r\nContent-Length: -1\r\n\r\nx".utf8)) == nil)
+    }
+
+    @Test func theSetupCodeOpensOnlyTheScriptOverPlainHTTP() {
+        var gate = InstallGate(code: "k7m29q")
+        #expect(gate.admit(method: "GET", path: "/k7m29q", secure: false, waiting: true) == .script)
+        #expect(gate.admit(method: "GET", path: "/k7m29q/hands-darwin-arm64", secure: false, waiting: true) == .refused(404, "use the address and port in the script"))
+        #expect(gate.admit(method: "POST", path: "/k7m29q/pair", secure: false, waiting: true) == .refused(404, "use the address and port in the script"))
+        #expect(gate.admit(method: "GET", path: "/k7m29q/hands-darwin-arm64", secure: true, waiting: true) == .binary("hands-darwin-arm64"))
+        #expect(gate.admit(method: "GET", path: "/wrong", secure: true, waiting: true) == .refused(404, nil))
+        #expect(gate.admit(method: "GET", path: "/k7m29q", secure: true, waiting: false) == .refused(404, nil))
+    }
+
+    @Test func aSetupCodePairsOnce() {
+        var gate = InstallGate(code: "k7m29q")
+        #expect(gate.admit(method: "POST", path: "/k7m29q/pair", secure: true, waiting: true) == .pair)
+        // A second request while the first is being stored, and after it was.
+        #expect(gate.admit(method: "POST", path: "/k7m29q/pair", secure: true, waiting: true) == .refused(410, "this setup command was already used"))
+        #expect(gate.admit(method: "POST", path: "/k7m29q/pair", secure: true, waiting: false) == .refused(410, "this setup command was already used"))
+        // The install that paired may still finish its downloads.
+        #expect(gate.admit(method: "GET", path: "/k7m29q/hands-linux-x86_64", secure: true, waiting: false) == .binary("hands-linux-x86_64"))
+    }
+
+    @Test func aFailedPairingCanBeRetried() {
+        var gate = InstallGate(code: "k7m29q")
+        #expect(gate.admit(method: "POST", path: "/k7m29q/pair", secure: true, waiting: true) == .pair)
+        gate.pairingFailed()
+        #expect(gate.admit(method: "POST", path: "/k7m29q/pair", secure: true, waiting: true) == .pair)
+    }
+
+    @Test func aSetupCodeExpires() {
+        var gate = InstallGate(code: "k7m29q", expiresAt: .now.addingTimeInterval(-1))
+        #expect(gate.admit(method: "GET", path: "/k7m29q", secure: false, waiting: true) == .refused(404, nil))
+    }
+
+    @Test func tooManyWrongCodesStopTheServer() {
+        var gate = InstallGate(code: "k7m29q")
+        for _ in 1..<InstallGate.maxMisses {
+            #expect(gate.admit(method: "GET", path: "/guess", secure: false, waiting: true) == .refused(404, nil))
+        }
+        #expect(gate.admit(method: "GET", path: "/guess", secure: false, waiting: true) == .tooManyMisses)
     }
 
     /// The Host header becomes the script's download address, inside single quotes: only plain hosts get through.

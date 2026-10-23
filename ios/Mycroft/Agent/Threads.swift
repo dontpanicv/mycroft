@@ -8,8 +8,6 @@ nonisolated struct ThreadMeta: Codable, Sendable, Hashable, Identifiable {
     var createdAt: Date
     var updatedAt: Date
     var archived = false
-    /// The hands host this thread works on; nil means the phone only.
-    var machine: String?
     /// Kept at the top of the list.
     var pinned: Bool?
     /// Put away in the list's Settled shelf: by hand, or (on the screen) after three idle days. Sending a message

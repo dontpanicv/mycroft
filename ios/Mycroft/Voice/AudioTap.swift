@@ -16,10 +16,3 @@ nonisolated enum AudioTap {
         { _ in handle() }
     }
 }
-
-/// Why dictation or Mycroft's voice can't run, in words the screen shows.
-struct VoiceError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
-}

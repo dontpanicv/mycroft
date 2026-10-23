@@ -6,6 +6,12 @@ nonisolated enum Journal {
     private static let url = URL.documentsDirectory.appending(path: "journal.jsonl")
     private static let lock = NSLock()
 
+    static func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        try? FileManager.default.removeItem(at: url)
+    }
+
     static func note(_ event: String, _ fields: [String: String] = [:]) {
         var record = fields
         record["event"] = event

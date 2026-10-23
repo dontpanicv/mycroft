@@ -48,6 +48,22 @@ nonisolated struct MachineList: Codable, Sendable, Hashable {
         return starting.count == 1 ? starting[0] : nil
     }
 
+    /// Adds a machine that just paired. The same machine paired again (the same certificate) replaces itself; another
+    /// one whose name is taken gets a number ("raspberrypi-2"), as names are how the model and the user tell them apart.
+    /// Returns the machine as stored.
+    mutating func add(_ machine: Machine) -> Machine {
+        items.removeAll { $0.certSha256 == machine.certSha256 }
+        var machine = machine
+        let taken = Set(items.map { $0.name.lowercased() })
+        var number = 2
+        while taken.contains(machine.name.lowercased()) {
+            machine.name = "\(machine.name.replacing(/-\d+$/, with: ""))-\(number)"
+            number += 1
+        }
+        items.append(machine)
+        return machine
+    }
+
     /// A name's letters and digits, lowercased.
     private static func key(_ name: String) -> String {
         String(name.lowercased().filter { $0.isLetter || $0.isNumber })

@@ -15,7 +15,7 @@ struct ScreenToolsTests {
         let echo = Tool("echo", description: "Says the word back", parameters: .object(["word": .string("A word")])) {
             (args: [String: String], _) in "echo \(args["word"] ?? "")"
         }
-        let fail = Tool("fail", description: "Always fails") { (_: ToolCallContext) -> String in throw ToolError("nope") }
+        let fail = Tool("fail", description: "Always fails") { (_: ToolCallContext) -> String in throw Failure("nope") }
         let folder = FileManager.default.temporaryDirectory.appending(path: "screen-tools-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }

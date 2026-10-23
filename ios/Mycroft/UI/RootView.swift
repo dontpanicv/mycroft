@@ -73,7 +73,7 @@ struct RecoveryView: View {
     /// The previous generations, newest first: the last good one, the one before the active, and generation 0.
     private var earlier: [GenerationStore.Record] {
         let state = app.generation
-        let wanted = Set([state.lastGood, state.history.map(\.generation).filter { $0 < state.active }.max() ?? 0, 0])
+        let wanted = Set([state.lastGood, state.previous, 0])
             .subtracting([state.active])
         return state.history.filter { wanted.contains($0.generation) }.sorted { $0.generation > $1.generation }
     }

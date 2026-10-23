@@ -121,3 +121,25 @@ struct TurnEndTests {
         #expect(!Echo.interrupts("wait", of: "Wait a moment while I check."))
     }
 }
+
+/// The listener before it starts: what the page and a conversation see of it.
+@Suite("Listener")
+struct ListenerTests {
+    @Test func anIdleListenerIsOffAndDictating() async {
+        let listener = Listener()
+        let snapshot = listener.snapshot()
+        #expect(snapshot["state"] as? String == "off")
+        #expect(snapshot["text"] as? String == "")
+        #expect(snapshot["elapsed"] as? Int == 0)
+        // Echo cancellation is only ever on in a conversation.
+        #expect(!listener.echoCancelled)
+        // Nothing to stop, cancel or hand back.
+        #expect(await listener.stop() == "")
+        #expect(await listener.take() == "")
+        listener.cancel()
+        listener.clear()
+        listener.shutDown()
+        #expect(listener.state == .off)
+        #expect(listener.owner == nil)
+    }
+}

@@ -55,7 +55,7 @@ struct InstallServerProbeTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MYCROFT_SERVE"] != nil))
     func serveInstall() async throws {
         let server = InstallServer()
-        server.start { _ in }
+        server.start { $0 }
         for _ in 0..<50 where server.command.isEmpty { try await Task.sleep(for: .milliseconds(100)) }
         for address in server.addresses {
             print("INSTALL COMMAND (\(address.network)): \(server.command(for: address.ip))")

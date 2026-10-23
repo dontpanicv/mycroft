@@ -1,15 +1,27 @@
 import Foundation
 import PiDurableKit
 
-/// Development-only hand-over of credentials from the Mac into a Simulator build.
+/// Development-only hand-overs from the Mac, through the app's `Documents/import/` folder (`scripts/dev-run.sh` for a
+/// Simulator, `xcrun devicectl device copy to` for an iPhone):
+/// - `codex-auth.json`: `~/.codex/auth.json` (ChatGPT sign-in made by Codex), moved into the keychain. On a real
+///   iPhone, sign in with the device code instead: sharing one refresh token with Codex makes the two apps log each
+///   other out.
+/// - `fresh-start` (any content): a clean Mycroft for a demo, once (`AppModel.freshStart`); `scripts/dev-run.sh
+///   --fresh` drops it.
 ///
-/// `scripts/dev-import.sh` drops files into the app's `Documents/import/` folder:
-/// - `codex-auth.json`: `~/.codex/auth.json` (ChatGPT sign-in made by Codex)
-///
-/// On launch they are moved into the keychain and deleted. On a real iPhone, sign in with the device code instead:
-/// sharing one refresh token with Codex makes the two apps log each other out.
+/// Each is acted on at launch and deleted. Debug builds only: a Release build never looks.
 enum DevImport {
     static var folder: URL { URL.documentsDirectory.appending(path: "import", directoryHint: .isDirectory) }
+
+    private static var freshStartMarker: URL { folder.appending(path: "fresh-start") }
+
+    /// A fresh start was asked for and isn't done yet.
+    static var wantsFreshStart: Bool { FileManager.default.fileExists(atPath: freshStartMarker.path) }
+
+    /// The fresh start is done: the next launch must not do it again.
+    static func freshStartDone() throws {
+        try FileManager.default.removeItem(at: freshStartMarker)
+    }
 
     static func run(models: Models) async -> [String] {
         var imported: [String] = []

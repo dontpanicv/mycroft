@@ -14,6 +14,21 @@ struct MachinesTests {
             version: "0.4.0", pairedAt: .now)
     }
 
+    @Test func twoMachinesWithOneNameBothStay() {
+        func machine(_ name: String, cert: String) -> Machine {
+            var machine = Self.machine(name)
+            machine.certSha256 = cert
+            return machine
+        }
+        var list = MachineList()
+        #expect(list.add(machine("raspberrypi", cert: "a")).name == "raspberrypi")
+        #expect(list.add(machine("raspberrypi", cert: "b")).name == "raspberrypi-2")
+        #expect(list.add(machine("RaspberryPi", cert: "c")).name == "RaspberryPi-3")
+        // The same machine paired again replaces itself and keeps its name.
+        #expect(list.add(machine("raspberrypi", cert: "b")).name == "raspberrypi-2")
+        #expect(list.items.map(\.name).sorted() == ["RaspberryPi-3", "raspberrypi", "raspberrypi-2"])
+    }
+
     @Test func namesMatchLooselyButNeverAmbiguously() {
         let list = MachineList(items: [Self.machine("bender-2"), Self.machine("GLaDOS"), Self.machine("Work Mac")])
         #expect(list.named("bender-2")?.name == "bender-2")

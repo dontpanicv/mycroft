@@ -5,7 +5,7 @@ import os
 
 /// One authenticated connection to a paired machine's `hands` listener (hands/docs/pairing.md §2).
 ///
-/// WebSocket over TLS with the machine's certificate pinned, then the hello/auth/ready handshake, then pi-env frames
+/// WebSocket over TLS with the machine's certificate pinned, then the hello/auth/ready handshake, then frames
 /// (hands/docs/protocol.md), one per binary message. Requests are matched to replies by id.
 actor HandsConnection {
     struct Reply: @unchecked Sendable {
@@ -37,6 +37,11 @@ actor HandsConnection {
     private var nextID: UInt32 = 1
     private var pending: [UInt32: CheckedContinuation<Reply, Error>] = [:]
     private var pinger: Task<Void, Never>?
+    /// When the machine last sent anything. hands pings every 5 s, so silence means it's gone (a closed lid, a lost
+    /// network) even when TCP hasn't noticed yet.
+    private var lastHeard = ContinuousClock.now
+    private var lastPing = ContinuousClock.now
+    static let silenceLimit: Duration = .seconds(20)
     private let log = Logger(subsystem: "dev.mycroft", category: "hands")
 
     private init(machine: Machine, connection: NWConnection) {
@@ -177,6 +182,8 @@ actor HandsConnection {
                 await self?.ping()
             }
         }
+        lastHeard = .now
+        lastPing = .now
         info = try await request("hello", ["protocol": HandsProtocol.version])
     }
 
@@ -242,8 +249,21 @@ actor HandsConnection {
         pending.removeValue(forKey: id)?.resume(throwing: error)
     }
 
+    /// Pings the machine, or closes the connection when the machine has been silent too long: waiting requests fail as
+    /// lost, and the pool opens a new connection.
     private func ping() async {
-        guard !isClosed, let frame = try? HandsProtocol.Frame(type: .ping, id: 0).encoded() else { return }
+        guard !isClosed else { return }
+        let now = ContinuousClock.now
+        // A long gap since the last ping means iOS suspended the app: the silence was the phone's, so the machine gets
+        // time to answer again.
+        if now - lastPing > .seconds(15) { lastHeard = now }
+        lastPing = now
+        if now - lastHeard > Self.silenceLimit {
+            log.info("\(self.machine.name, privacy: .public) silent for \(Self.silenceLimit); closing")
+            close(lost: true)
+            return
+        }
+        guard let frame = try? HandsProtocol.Frame(type: .ping, id: 0).encoded() else { return }
         try? await send(frame, opcode: .binary)
     }
 
@@ -262,7 +282,9 @@ actor HandsConnection {
     }
 
     private func dispatch(_ data: Data) {
-        var reader = HandsProtocol.Reader(synced: true)
+        lastHeard = .now
+        lastPing = .now
+        var reader = HandsProtocol.Reader()
         guard let frames = try? reader.feed(data) else { return }
         for frame in frames {
             switch frame.type {

@@ -100,14 +100,12 @@ nonisolated enum HandsTools {
                 let machine = try await resolve(args.machine, call)
                 let key = "mycroft-\(call.taskId.rawValue)"
                 return try await HandsPool.shared.with(machine) { hands in
-                    var fields: [String: Any] = ["key": key, "command": args.command]
-                    if let cwd = args.cwd { fields["cwd"] = try await absolute(cwd, hands) }
-                    _ = try await hands.request("job.start", fields)
+                    _ = try await startJob(key, args, on: hands)
                     do {
                         return try await follow(key, on: hands, machine: machine, timeout: args.timeout_s ?? 60, call: call)
                     } catch is CancellationError {
                         // The user stopped the run: stop the command on the machine too (its whole process group).
-                        await Task.detached { _ = try? await hands.request("job.cancel", ["key": key]) }.value
+                        await Task.detached { _ = try? await hands.jobCancel(key: key) }.value
                         throw CancellationError()
                     }
                 }
@@ -126,9 +124,7 @@ nonisolated enum HandsTools {
                 let machine = try await resolve(args.machine, call)
                 let key = "mycroft-\(call.taskId.rawValue)"
                 return try await HandsPool.shared.with(machine) { hands in
-                    var fields: [String: Any] = ["key": key, "command": args.command]
-                    if let cwd = args.cwd { fields["cwd"] = try await absolute(cwd, hands) }
-                    let started = try await hands.request("job.start", fields)
+                    let started = try await startJob(key, args, on: hands)
                     return "Job \(key) is \(started.string("state") ?? "running") on \(machine.name)."
                 }
             }
@@ -154,7 +150,7 @@ nonisolated enum HandsTools {
                 parameters: .object(["machine": .string("Machine name"), "key": .string("Job key")])
             ) { (args: JobArguments, call) -> String in
                 let machine = try await resolve(args.machine, call)
-                let status = try await HandsPool.shared.with(machine) { try await $0.request("job.cancel", ["key": args.key]) }
+                let status = try await HandsPool.shared.with(machine) { try await $0.jobCancel(key: args.key) }
                 return "Job \(args.key) is \(status.string("state") ?? "cancelled")."
             }
 
@@ -163,12 +159,12 @@ nonisolated enum HandsTools {
                 parameters: .object(["machine": .string("Machine name")]), replay: .safe
             ) { (args: MachineArguments, call) -> String in
                 let machine = try await resolve(args.machine, call)
-                let reply = try await HandsPool.shared.with(machine) { try await $0.request("job.list") }
-                let jobs = (reply["jobs"] as? [[String: Any]]) ?? []
-                guard !jobs.isEmpty else { return "No jobs on \(machine.name)." }
-                return jobs.prefix(30).map { job in
-                    "\(job["key"] ?? "?")  \(job["state"] ?? "?")  exit \(job["exitCode"] ?? "-")  \(job["command"] ?? job["argv"] ?? "")"
-                }.joined(separator: "\n")
+                let lines = try await HandsPool.shared.with(machine) { hands in
+                    try await hands.jobList().prefix(30).map { job in
+                        "\(job["key"] ?? "?")  \(job["state"] ?? "?")  exit \(job["exitCode"] ?? "-")  \(job["command"] ?? job["argv"] ?? "")"
+                    }
+                }
+                return lines.isEmpty ? "No jobs on \(machine.name)." : lines.joined(separator: "\n")
             }
 
             Tool(
@@ -178,7 +174,11 @@ nonisolated enum HandsTools {
             ) { (args: PathArguments, call) -> String in
                 let machine = try await resolve(args.machine, call)
                 return try await HandsPool.shared.with(machine) { hands in
-                    try await readText(try await absolute(args.path, hands), on: hands)
+                    let file = try await readText(try await absolute(args.path, hands), on: hands)
+                    var notes: [String] = []
+                    if file.truncated { notes.append("(cut at \(maxText / 1024) KB: the file is longer)") }
+                    if file.text == nil { notes.append("(not UTF-8 text: shown with replacement characters)") }
+                    return ([String(decoding: file.data, as: UTF8.self)] + notes).joined(separator: "\n")
                 }
             }
 
@@ -192,7 +192,7 @@ nonisolated enum HandsTools {
                 let machine = try await resolve(args.machine, call)
                 return try await HandsPool.shared.with(machine) { hands in
                     let path = try await absolute(args.path, hands)
-                    _ = try await hands.request("write", ["path": path, "append": false], payload: Data(args.content.utf8))
+                    try await hands.write(path, Data(args.content.utf8))
                     return "Wrote \(args.content.utf8.count) bytes to \(path) on \(machine.name)."
                 }
             }
@@ -208,13 +208,20 @@ nonisolated enum HandsTools {
                 let machine = try await resolve(args.machine, call)
                 return try await HandsPool.shared.with(machine) { hands in
                     let path = try await absolute(args.path, hands)
-                    let text = try await readText(path, on: hands)
+                    // The whole file is written back, so it must have been read whole and as it is.
+                    let file = try await readText(path, on: hands)
+                    guard !file.truncated else {
+                        throw Failure("\(path) is over \(maxText / 1024) KB; edit it with a command (hands_exec) instead")
+                    }
+                    guard let text = file.text else {
+                        throw Failure("\(path) is not UTF-8 text; edit it with a command (hands_exec) instead")
+                    }
                     let count = text.components(separatedBy: args.old_text).count - 1
                     guard count == 1 else {
-                        throw ToolError("old_text occurs \(count) times in \(path); it must occur exactly once")
+                        throw Failure("old_text occurs \(count) times in \(path); it must occur exactly once")
                     }
                     let updated = text.replacingOccurrences(of: args.old_text, with: args.new_text)
-                    _ = try await hands.request("write", ["path": path, "append": false], payload: Data(updated.utf8))
+                    try await hands.write(path, Data(updated.utf8))
                     return "Edited \(path) on \(machine.name)."
                 }
             }
@@ -227,7 +234,7 @@ nonisolated enum HandsTools {
                 let machine = try await resolve(args.machine, call)
                 return try await HandsPool.shared.with(machine) { hands in
                     let path = try await absolute(args.path, hands)
-                    let reply = try await hands.request("listFiles", ["path": path, "maxEntries": 400])
+                    let reply = try await hands.listFiles(path, maxEntries: 400)
                     return listing(reply, root: path)
                 }
             }
@@ -240,7 +247,7 @@ nonisolated enum HandsTools {
         let list = try await call.harness.document(Machines.document)
         guard let machine = list.named(name) else {
             let names = list.items.map(\.name).joined(separator: ", ")
-            throw ToolError(names.isEmpty ? "No machines are paired." : "No machine named \(name). Paired: \(names)")
+            throw Failure(names.isEmpty ? "No machines are paired." : "No machine named \(name). Paired: \(names)")
         }
         return machine
     }
@@ -254,6 +261,13 @@ nonisolated enum HandsTools {
         return home + "/" + path
     }
 
+    /// Starts `args.command` as job `key`, in its working directory.
+    static func startJob(_ key: String, _ args: ExecArguments, on hands: HandsConnection) async throws -> HandsConnection.Reply {
+        var cwd: String?
+        if let path = args.cwd { cwd = try await absolute(path, hands) }
+        return try await hands.jobStart(key: key, command: args.command, cwd: cwd)
+    }
+
     /// Streams a job's output into the tool's live output until it ends or `timeout` passes.
     static func follow(_ key: String, on hands: HandsConnection, machine: Machine, timeout: Int, call: ToolCallContext) async throws -> ToolResult {
         let deadline = Date.now.addingTimeInterval(TimeInterval(max(1, timeout)))
@@ -261,7 +275,7 @@ nonisolated enum HandsTools {
         var tail = Data()
         while true {
             try Task.checkCancellation()
-            let chunk = try await hands.request("job.output", ["key": key, "offset": offset, "maxBytes": 256 * 1024])
+            let chunk = try await hands.jobOutput(key: key, offset: offset, maxBytes: 256 * 1024)
             if !chunk.payload.isEmpty {
                 call.output(String(decoding: chunk.payload, as: UTF8.self))
                 tail.append(chunk.payload)
@@ -273,9 +287,9 @@ nonisolated enum HandsTools {
                 return ToolResult(output: [.text("Still running on \(machine.name) as job \(key). Output so far:\n\(text(tail))\nIt keeps running: hands_job_wait to keep waiting, hands_job_cancel to stop it.")])
             }
             let remaining = Int(deadline.timeIntervalSinceNow * 1000)
-            _ = try await hands.request("job.wait", ["key": key, "timeoutMs": max(250, min(3000, remaining))])
+            try await hands.jobWait(key: key, timeoutMs: max(250, min(3000, remaining)))
         }
-        let status = try await hands.request("job.status", ["key": key])
+        let status = try await hands.jobStatus(key: key)
         let state = status.string("state") ?? "exited"
         let code = status.int("exitCode")
         let summary = "\(state)\(code.map { ", exit code \($0)" } ?? "") on \(machine.name)"
@@ -286,38 +300,34 @@ nonisolated enum HandsTools {
     /// the screen's quick reads (`machines.exec`). The agent's `hands_exec` runs a supervised job instead.
     static func run(_ command: String, cwd: String?, on machine: Machine, timeout: TimeInterval) async throws -> (exitCode: Int?, output: String) {
         try await HandsPool.shared.with(machine) { hands in
-            let fields: [String: Any] = [
-                "command": command, "cwd": try await absolute(cwd ?? "~", hands), "timeoutMs": Int(timeout * 1000),
-            ]
-            let reply = try await hands.request("exec", fields, collectOutput: true)
+            let reply = try await hands.exec(command, cwd: try await absolute(cwd ?? "~", hands), timeoutMs: Int(timeout * 1000))
             return (reply.int("exitCode"), String(decoding: reply.payload, as: UTF8.self))
         }
     }
 
-    static func readText(_ path: String, on hands: HandsConnection) async throws -> String {
-        let opened = try await hands.request("open", ["path": path, "mode": "read"])
-        guard let handle = opened.int("handle") else { throw ToolError("could not open \(path)") }
-        let read = await Result(catching: { try await hands.request("pread", ["handle": handle, "offset": 0, "length": 512 * 1024]) })
-        _ = try? await hands.request("close", ["handle": handle])
-        return String(decoding: try read.get().payload, as: UTF8.self)
+    /// The most of a text file `hands_read` and `hands_edit` take.
+    static let maxText = 512 * 1024
+
+    /// A text file's first `maxText` bytes; `text` is nil when they aren't UTF-8, `truncated` when the file is longer.
+    static func readText(_ path: String, on hands: HandsConnection) async throws -> (data: Data, text: String?, truncated: Bool) {
+        let data = try await hands.reading(path) { read in try await read(0, maxText + 1) }
+        let truncated = data.count > maxText
+        let kept = data.prefix(maxText)
+        return (kept, truncated ? nil : String(data: kept, encoding: .utf8), truncated)
     }
 
     /// A whole file's bytes, up to `limit`.
     static func readData(_ path: String, on hands: HandsConnection, limit: Int) async throws -> Data {
-        let opened = try await hands.request("open", ["path": path, "mode": "read"])
-        guard let handle = opened.int("handle") else { throw ToolError("could not open \(path)") }
-        let read = await Result(catching: { () async throws -> Data in
+        try await hands.reading(path) { read in
             var data = Data()
             let chunk = 1024 * 1024
             while true {
-                let piece = try await hands.request("pread", ["handle": handle, "offset": data.count, "length": chunk]).payload
+                let piece = try await read(data.count, chunk)
                 data.append(piece)
                 if piece.count < chunk { return data }
-                guard data.count <= limit else { throw ToolError("\(path) is over \(limit / 1024 / 1024) MB") }
+                guard data.count <= limit else { throw Failure("\(path) is over \(limit / 1024 / 1024) MB") }
             }
-        })
-        _ = try? await hands.request("close", ["handle": handle])
-        return try read.get()
+        }
     }
 
     static func listing(_ reply: HandsConnection.Reply, root: String) -> String {
@@ -335,12 +345,6 @@ nonisolated enum HandsTools {
         let string = String(decoding: data, as: UTF8.self)
         return string.count > maxOutput ? "…" + string.suffix(maxOutput) : string
     }
-}
-
-nonisolated struct ToolError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
 }
 
 extension Result where Failure == Error {

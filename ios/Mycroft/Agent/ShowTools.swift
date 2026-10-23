@@ -49,10 +49,10 @@ nonisolated enum ShowTools {
             ) { (args: Arguments, call) -> ToolResult in
                 let caption = args.caption.map { JSONValue.string($0) } ?? .null
                 if let html = args.html, !html.isEmpty {
-                    guard args.image == nil else { throw ToolError("Give either image or html, not both; call show twice.") }
+                    guard args.image == nil else { throw Failure("Give either image or html, not both; call show twice.") }
                     return ToolResult(output: [.text("Shown to the user.")], details: .object(["kind": .string("html"), "caption": caption]))
                 }
-                guard let source = args.image, !source.isEmpty else { throw ToolError("Give image or html.") }
+                guard let source = args.image, !source.isEmpty else { throw Failure("Give image or html.") }
                 let picture = try encode(try await load(source, machine: args.machine, call: call))
                 return ToolResult(
                     output: [.text("Shown to the user: an image, \(picture.width)×\(picture.height).")],
@@ -71,12 +71,20 @@ nonisolated enum ShowTools {
     static func load(_ source: String, machine: String?, call: ToolCallContext) async throws -> Data {
         if source == "latest" { return try await latestImage(call) }
         if let url = URL(string: source), url.scheme == "https" || url.scheme == "http" {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode ?? 200 < 400 else { throw ToolError("\(source) answered \((response as? HTTPURLResponse)?.statusCode ?? 0)") }
+            // Read as it arrives and stopped at the limit: a huge file must not have to fit in memory first.
+            let (bytes, response) = try await URLSession.shared.bytes(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode ?? 200 < 400 else { throw Failure("\(source) answered \((response as? HTTPURLResponse)?.statusCode ?? 0)") }
+            let tooBig = Failure("The image is over \(maxBytes / 1024 / 1024) MB.")
+            guard response.expectedContentLength <= Int64(maxBytes) else { throw tooBig }
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+                guard data.count <= maxBytes else { throw tooBig }
+            }
             return data
         }
         guard let name = machine else {
-            throw ToolError("An image file needs the machine it is on; or use \"latest\" or an https URL.")
+            throw Failure("An image file needs the machine it is on; or use \"latest\" or an https URL.")
         }
         let machine = try await HandsTools.resolve(name, call)
         return try await HandsPool.shared.with(machine) { hands in
@@ -86,7 +94,7 @@ nonisolated enum ShowTools {
 
     /// The newest image in this thread's tool results (or one shown before).
     static func latestImage(_ call: ToolCallContext) async throws -> Data {
-        guard let conversation = try await call.harness.conversation(call.conversationId) else { throw ToolError("No thread") }
+        guard let conversation = try await call.harness.conversation(call.conversationId) else { throw Failure("No thread") }
         for entry in try await conversation.entries(limit: 60).items {
             guard let result = entry.toolResult else { continue }
             for block in result.content.reversed() {
@@ -94,7 +102,7 @@ nonisolated enum ShowTools {
             }
             if let data = result.details?["image"]?["data"]?.stringValue, let image = Data(base64Encoded: data) { return image }
         }
-        throw ToolError("No tool has returned an image in this thread yet.")
+        throw Failure("No tool has returned an image in this thread yet.")
     }
 
     // MARK: Encoding
@@ -106,11 +114,11 @@ nonisolated enum ShowTools {
     }
 
     /// Any image ImageIO reads (PNG, JPEG, HEIC, GIF, WebP, TIFF…), as a JPEG at most `maxPixels` on its longest side
-    /// and small enough to reach the screen (it drops images over 600 KB of base64).
+    /// and small enough to reach the screen (`WebBridge.maxImageBase64`).
     static func encode(_ data: Data) throws -> Picture {
-        guard data.count <= maxBytes else { throw ToolError("The image is over \(maxBytes / 1024 / 1024) MB.") }
+        guard data.count <= maxBytes else { throw Failure("The image is over \(maxBytes / 1024 / 1024) MB.") }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0 else {
-            throw ToolError("That isn't an image Mycroft can read.")
+            throw Failure("That isn't an image Mycroft can read.")
         }
         for (pixels, quality) in [(maxPixels, 0.82), (maxPixels, 0.6), (1400, 0.6), (1000, 0.55)] {
             let options: [CFString: Any] = [
@@ -123,8 +131,8 @@ nonisolated enum ShowTools {
             guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { break }
             CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
             guard CGImageDestinationFinalize(destination) else { break }
-            if output.length <= 420_000 { return Picture(data: output as Data, width: image.width, height: image.height) }
+            if (output.length + 2) / 3 * 4 <= WebBridge.maxImageBase64 { return Picture(data: output as Data, width: image.width, height: image.height) }
         }
-        throw ToolError("The image couldn't be made small enough to show.")
+        throw Failure("The image couldn't be made small enough to show.")
     }
 }

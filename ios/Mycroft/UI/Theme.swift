@@ -57,6 +57,12 @@ final class Appearance {
         UserDefaults.standard.set(try? JSONEncoder().encode(merged), forKey: Self.key)
     }
 
+    /// Back to Mycroft's own colours, until the page reports its own.
+    func reset() {
+        values = Self.defaults
+        UserDefaults.standard.removeObject(forKey: Self.key)
+    }
+
     func color(_ key: KeyPath<Values, String?>) -> Color {
         values[keyPath: key].flatMap(Color.init(hex:)) ?? Self.defaults[keyPath: key].flatMap(Color.init(hex:)) ?? .white
     }
@@ -125,44 +131,11 @@ struct Tag: View {
     }
 }
 
-/// grep.ai's dotted background grid.
-struct DotGrid: View {
-    var pitch: CGFloat = 22
-    var opacity: Double = 0.07
-
-    var body: some View {
-        Canvas { context, size in
-            let dot = Path(ellipseIn: CGRect(x: 0, y: 0, width: 1.4, height: 1.4))
-            var y: CGFloat = pitch / 2
-            while y < size.height {
-                var x: CGFloat = pitch / 2
-                while x < size.width {
-                    context.fill(dot.offsetBy(dx: x, dy: y), with: .color(.white.opacity(opacity)))
-                    x += pitch
-                }
-                y += pitch
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
 extension View {
     /// A square content card: hairline border, no radius.
     func hairlineCard(padding: CGFloat = 14, fill: Color = .clear) -> some View {
         self.padding(padding)
             .background(fill)
             .overlay(Rectangle().stroke(Theme.hairline, lineWidth: 1))
-    }
-
-    /// The app canvas behind every screen.
-    func canvasBackground(grid: Bool = false) -> some View {
-        background {
-            ZStack {
-                Theme.canvas
-                if grid { DotGrid() }
-            }
-            .ignoresSafeArea()
-        }
     }
 }

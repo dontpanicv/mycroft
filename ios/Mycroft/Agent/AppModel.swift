@@ -23,8 +23,10 @@ final class AppModel {
     }
 
     private(set) var phase: Phase = .starting
+    /// Every thread, archived ones too, most recently updated first.
     private(set) var threads: [ThreadMeta] = []
-    private(set) var archivedThreads: [ThreadMeta] = []
+    /// Threads made here that the thread list's stream hasn't delivered yet: they are in `threads` at once.
+    @ObservationIgnored private var unlisted: [ConversationID: ThreadMeta] = [:]
     /// Threads with a run going, as RunMonitor last saw them.
     private(set) var busyThreads: Set<ConversationID> = []
     private(set) var signIn: SignIn = .unknown
@@ -57,7 +59,17 @@ final class AppModel {
     private func boot() async {
         protectDocuments()
         Listener.warm(self)
+        #if DEBUG
         notices += await DevImport.run(models: models)
+        if DevImport.wantsFreshStart {
+            do {
+                try await freshStart()
+                try DevImport.freshStartDone()
+            } catch {
+                notices.append("The fresh start failed: \(error.localizedDescription)")
+            }
+        }
+        #endif
         do {
             guard let bundled = Bundle.main.url(forResource: "generation-0", withExtension: nil) else {
                 throw StartError.missingGeneration0
@@ -90,22 +102,80 @@ final class AppModel {
         }
     }
 
+    /// A clean Mycroft, for a demo (DevImport): every thread and generation goes (back to the app's own generation 0),
+    /// with the screen's saved state, its colours and the journal. The sign-ins and the phone's key (keychain) and the
+    /// paired machines stay.
+    private func freshStart() async throws {
+        let generations = generations
+        if let notice = try await Self.freshDatabase(at: Self.databaseURL, beforeSwap: { try await generations.reset() }) {
+            notices.append(notice)
+        }
+        WebBridge.forgetSavedState()
+        Journal.clear()
+    }
+
+    /// Replaces the database at `database` with one that holds only its paired machines; `beforeSwap` runs once the new
+    /// one is ready. Returns a notice when the machines couldn't be kept.
+    ///
+    /// The new database is made next to the old one and swapped in last. Until then a failure changes nothing; after
+    /// it, the next try picks up where this one stopped.
+    nonisolated static func freshDatabase(at database: URL, beforeSwap: () async throws -> Void) async throws -> String? {
+        let fm = FileManager.default
+        let fresh = database.deletingLastPathComponent().appending(path: "mycroft-fresh.sqlite")
+        let files = { (database: URL) in ["", "-wal", "-shm"].map { URL(filePath: database.path + $0) } }
+        let oldExists = fm.fileExists(atPath: database.path)
+        var notice: String?
+
+        // Without the old database, a new one left by an earlier try already holds the machines.
+        if oldExists || !fm.fileExists(atPath: fresh.path) {
+            for file in files(fresh) where fm.fileExists(atPath: file.path) { try fm.removeItem(at: file) }
+            var machines = MachineList()
+            if oldExists {
+                do {
+                    machines = try await withSession(at: database) { try await $0.document(Machines.document) }
+                } catch {
+                    // A database that can't be read is a reason for a fresh start, not against one.
+                    notice = "The paired machines could not be read, so they go too: \(error.localizedDescription)"
+                }
+            }
+            if !machines.items.isEmpty {
+                _ = try await withSession(at: fresh) { session in
+                    try await session.update(Machines.document) { [machines] in $0 = machines }
+                }
+            }
+        }
+
+        try await beforeSwap()
+        // The old database's main file goes first: if it can't, its threads are still whole for the next try.
+        for file in files(database) where fm.fileExists(atPath: file.path) { try fm.removeItem(at: file) }
+        for (new, old) in zip(files(fresh), files(database)) where fm.fileExists(atPath: new.path) {
+            try fm.moveItem(at: new, to: old)
+        }
+        return notice
+    }
+
+    /// Runs `body` with a session on the database at `url`, closing it whatever happens: one storage takes one
+    /// session or harness at a time. A session reads documents without resuming the runs a harness would.
+    nonisolated private static func withSession<T: Sendable>(at url: URL, _ body: (Session) async throws -> T) async throws -> T {
+        let session = try await Session.open(.sqlite(at: url))
+        let result = await Result(catching: { try await body(session) })
+        try await session.close()
+        return try result.get()
+    }
+
     /// Opens the harness with the active generation; if that generation can't load, falls back once.
     private func openHarness() async throws -> Harness {
+        let open = { [self] in
+            try await Harness.open(.sqlite(at: Self.databaseURL), models: models, extensions: try await extensions(), settings: Self.settings)
+        }
         do {
-            return try await Harness.open(
-                .sqlite(at: Self.databaseURL), models: models,
-                extensions: try await extensions(),
-                settings: Self.settings)
+            return try await open()
         } catch {
             let state = await generations.state
             guard state.active != state.lastGood else { throw error }
             let failed = try await generations.fallBack()
             notices.append("Generation \(failed) failed to load (\(error.localizedDescription)); running the last good one.")
-            return try await Harness.open(
-                .sqlite(at: Self.databaseURL), models: models,
-                extensions: try await extensions(),
-                settings: Self.settings)
+            return try await open()
         }
     }
 
@@ -145,9 +215,7 @@ final class AppModel {
         watchers.append(Task { [weak self] in
             do {
                 for try await list in harness.values(of: Threads.document) {
-                    let sorted = list.items.sorted { $0.updatedAt > $1.updatedAt }
-                    self?.threads = sorted.filter { !$0.archived }
-                    self?.archivedThreads = sorted.filter(\.archived)
+                    self?.list(list.items)
                 }
             } catch {
                 self?.log.error("thread list stream ended: \(error)")
@@ -172,6 +240,32 @@ final class AppModel {
         })
     }
 
+    /// The user is leaving the app with the screen working: a normal exit, not a crash at start, so the generation is
+    /// healthy. (A short visit doesn't reach the 20 s in `watch`, and iOS may end the app in the background; four such
+    /// visits must not look like a generation that keeps failing to start.)
+    func leaving() async {
+        guard phase == .ready, WebUI.shared.status == .ready else { return }
+        try? await generations.markHealthy()
+        await refreshGeneration()
+    }
+
+    private func list(_ items: [ThreadMeta]) {
+        let listed = Set(items.map(\.id))
+        unlisted = unlisted.filter { !listed.contains($0.key) }
+        threads = (items + unlisted.values).sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// A thread made here goes into the list at once, before the list's stream has it.
+    private func listed(_ meta: ThreadMeta) -> ThreadMeta {
+        unlisted[meta.id] = meta
+        list(threads.filter { $0.id != meta.id })
+        return meta
+    }
+
+    func thread(_ id: ConversationID) -> ThreadMeta? {
+        threads.first { $0.id == id }
+    }
+
     func refreshGeneration() async {
         generation = await generations.state
     }
@@ -179,7 +273,7 @@ final class AppModel {
     /// Re-activates an earlier generation (the previous one by default), agent and all; the caller puts its screen up.
     func rollBack(to target: Int? = nil) async throws -> Int {
         let state = await generations.state
-        let target = target ?? state.history.map(\.generation).filter { $0 < state.active }.max() ?? 0
+        let target = target ?? state.previous
         if let harness { try await harness.install(try await generations.extensionFor(generation: target)) }
         try await generations.activate(target)
         await refreshGeneration()
@@ -208,12 +302,18 @@ final class AppModel {
         try await harness?.conversation(id)
     }
 
+    /// The thread's conversation; throws while Mycroft is starting.
+    private func conversation(of thread: ThreadMeta) async throws -> Conversation {
+        guard let conversation = try await conversation(thread.id) else { throw StartError.notReady }
+        return conversation
+    }
+
     func newThread() async throws -> ThreadMeta {
         guard let harness else { throw StartError.notReady }
         let conversation = try await harness.createConversation(agent: Self.agent)
         let meta = ThreadMeta(id: conversation.id, title: ThreadMeta.untitled, createdAt: .now, updatedAt: .now)
         try await harness.update(Threads.document) { $0.items.append(meta) }
-        return meta
+        return listed(meta)
     }
 
     /// Creates a thread with its first message: until then a new thread is only a draft on the screen. `voice`: it
@@ -228,7 +328,7 @@ final class AppModel {
             try? await edit(meta.id) { $0.archived = true }
             throw error
         }
-        return threads.first { $0.id == meta.id } ?? meta
+        return thread(meta.id) ?? meta
     }
 
     /// Sends `text`. While a run is going, `.followUp` queues it for after the run and `.steer` hands it to the run at
@@ -236,7 +336,7 @@ final class AppModel {
     func send(
         _ text: String, to thread: ThreadMeta, whenBusy: Conversation.WhenBusy = .followUp, requestId: String? = nil
     ) async throws {
-        guard let harness, let conversation = try await harness.conversation(thread.id) else { throw StartError.notReady }
+        let conversation = try await conversation(of: thread)
         _ = try await conversation.submit(text, whenBusy: whenBusy, requestId: requestId)
         let title = thread.title == ThreadMeta.untitled ? Threads.title(from: text) : nil
         try await edit(thread.id) { meta in
@@ -267,13 +367,12 @@ final class AppModel {
     /// A new thread with `thread`'s history up to and including `entry` (an answer), named "Fork · <title>" (a
     /// prefix, so it shows in a narrow row).
     func fork(_ thread: ThreadMeta, at entry: EntryID) async throws -> ThreadMeta {
-        guard let harness, let conversation = try await harness.conversation(thread.id) else { throw StartError.notReady }
-        let fork = try await conversation.fork(at: entry)
+        guard let harness else { throw StartError.notReady }
+        let fork = try await conversation(of: thread).fork(at: entry)
         var meta = ThreadMeta(id: fork.id, title: "Fork · \(thread.title)", createdAt: .now, updatedAt: .now)
-        meta.machine = thread.machine
         meta.parent = thread.id
         try await harness.update(Threads.document) { [meta] in $0.items.append(meta) }
-        return meta
+        return listed(meta)
     }
 
     /// Withdraws a queued message.
@@ -335,7 +434,7 @@ final class AppModel {
     func busySnapshots() async -> [RunSnapshot] {
         guard let harness else { return [] }
         var snapshots: [RunSnapshot] = []
-        for thread in threads.prefix(12) {
+        for thread in threads.filter({ !$0.archived }).prefix(12) {
             guard let conversation = try? await harness.conversation(thread.id) else { continue }
             let live: LiveState
             do {
@@ -365,14 +464,14 @@ final class AppModel {
 
     // MARK: Machines
 
-    /// Stores a machine that just paired; a machine with the same name is replaced.
-    func addMachine(_ machine: Machine) async throws {
+    /// Stores a machine that just paired (`MachineList.add`) and returns it as stored.
+    @discardableResult
+    func addMachine(_ machine: Machine) async throws -> Machine {
         guard let harness else { throw StartError.notReady }
-        try await harness.update(Machines.document) { list in
-            list.items.removeAll { $0.name.caseInsensitiveCompare(machine.name) == .orderedSame }
-            list.items.append(machine)
-        }
-        await HandsPool.shared.forget(machine)
+        let list = try await harness.update(Machines.document) { list in _ = list.add(machine) }
+        let stored = list.items.first { $0.certSha256 == machine.certSha256 } ?? machine
+        await HandsPool.shared.forget(stored)
+        return stored
     }
 
     func removeMachine(_ machine: Machine) async throws {

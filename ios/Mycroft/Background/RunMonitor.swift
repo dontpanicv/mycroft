@@ -146,9 +146,17 @@ final class RunMonitor {
     private func finish(_ id: ConversationID, _ track: Track, app: AppModel) async {
         tracks[id] = nil
         var final = track.state
-        let stopReason = await app.lastStopReason(id)
-        final.phase = stopReason == .error ? .failed : stopReason == .aborted ? .stopped : .done
-        await app.runFinished(id, stopReason == .error ? .failed : stopReason == .aborted ? .stopped : .done)
+        let outcome: ThreadMeta.Outcome = switch await app.lastStopReason(id) {
+        case .error: .failed
+        case .aborted: .stopped
+        default: .done
+        }
+        final.phase = switch outcome {
+        case .failed: .failed
+        case .stopped: .stopped
+        case .done: .done
+        }
+        await app.runFinished(id, outcome)
         final.headline = ActivitySummary.closing(track.steps)
         final.machine = nil
         final.endedAt = .now

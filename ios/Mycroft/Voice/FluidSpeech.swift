@@ -16,15 +16,13 @@ actor FluidSpeech {
     private var manager: AsrManager?
     private var loading: Task<AsrManager, Error>?
 
-    var isLoaded: Bool { manager != nil }
-
     /// Loads the model. The first load after an install takes longer, while Core ML prepares it for the Neural Engine.
     @discardableResult
     func load() async throws -> AsrManager {
         if let manager { return manager }
         if let loading { return try await loading.value }
         guard let directory = Self.directory else {
-            throw VoiceError("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
+            throw Failure("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
         }
         let task = Task {
             let models = try await AsrModels.loadLocal(from: directory, version: .v3)
@@ -35,10 +33,6 @@ actor FluidSpeech {
         let manager = try await task.value
         self.manager = manager
         return manager
-    }
-
-    func unload() {
-        manager = nil
     }
 
     /// The text of 16 kHz mono samples, with punctuation and capitals.

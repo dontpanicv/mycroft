@@ -73,8 +73,7 @@ nonisolated enum CuaTools {
             fetched.withLock({ $0.insert(version).inserted })
         else { return }
         do {
-            let reply = try await hands.request("cua.tools")
-            let data = try JSONSerialization.data(withJSONObject: reply.json)
+            let data = try await hands.cuaTools()
             _ = try Catalog.decode(data)
             try FileManager.default.createDirectory(at: cached.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: cached, options: .atomic)
@@ -94,7 +93,9 @@ nonisolated enum CuaTools {
             "mycroft.cua",
             tools: entries.map(tool),
             sections: catalog.map { [PromptSection("desktop", text: prompt($0))] } ?? [],
-            hooks: [Hook.beforeTool { call, _ in await confirm(call, catalog: byName) }])
+            hooks: [Hook.beforeTool { call, context in
+                await confirm(call, catalog: byName, machines: try? await context.document(Machines.document, of: .session))
+            }])
     }
 
     static func prompt(_ catalog: Catalog) -> String {
@@ -149,7 +150,7 @@ nonisolated enum CuaTools {
             defer { group.cancelAll() }
             guard let result = try await group.next() ?? nil else {
                 let action = entry.isReadOnly ? "" : " Part of it may have happened: read the window before trying again."
-                throw ToolError("\(entry.name) on \(machine.name) took longer than \(limit.components.seconds) s and was stopped.\(action)")
+                throw Failure("\(entry.name) on \(machine.name) took longer than \(limit.components.seconds) s and was stopped.\(action)")
             }
             return result
         }
@@ -158,10 +159,9 @@ nonisolated enum CuaTools {
     static func perform(_ entry: Catalog.Entry, _ arguments: JSONObject, on machine: Machine) async throws -> JSONValue {
         let send: @Sendable (HandsConnection) async throws -> JSONValue = { hands in
             guard machine.os == "macos", (await hands.info?["features"] as? [String])?.contains("cua.call") == true else {
-                throw ToolError("Desktop control works on paired Macs with an up-to-date hands; \(machine.name) has none. Update hands there (Settings → Machines) or use a Mac.")
+                throw Failure("Desktop control works on paired Macs with an up-to-date hands; \(machine.name) has none. Update hands there (Settings → Machines) or use a Mac.")
             }
-            let fields: [String: Any] = ["name": entry.name, "arguments": try foundation(.object(arguments))]
-            return try json(try await hands.request("cua.call", fields).json)
+            return try json(try await hands.cuaCall(entry.name, arguments: try foundation(.object(arguments))))
         }
         // A connection lost mid-call may have delivered the action already, so only reads retry on a fresh one.
         if entry.isReadOnly { return try await HandsPool.shared.with(machine, send) }
@@ -209,19 +209,40 @@ nonisolated enum CuaTools {
     }
 
     /// Stops an action that looks irreversible until the user approved it; strips `confirmed` before it reaches Cua.
-    static func confirm(_ call: ToolCall, catalog: [String: Catalog.Entry]) async -> ToolDecision {
+    ///
+    /// `machine` becomes the paired machine's own name first ("Bender" → bender-2), so the check reads the same
+    /// machine's snapshots the tool records. An element the snapshots don't know can't be judged: the model reads the
+    /// window again first. What it can't catch: an element with no title or description (an unlabeled icon), a
+    /// screen position instead of an element, and words in another language than English.
+    static func confirm(_ call: ToolCall, catalog: [String: Catalog.Entry], machines: MachineList? = nil) async -> ToolDecision {
         guard let entry = catalog[call.name], !entry.isReadOnly else { return .allow }
         var arguments = call.arguments
-        let confirmed = arguments.removeValue(forKey: "confirmed")
-        if confirmed?.boolValue == true { return .rewrite(arguments) }
+        var changed = arguments.removeValue(forKey: "confirmed") != nil
+        let asked = arguments["machine"]?.stringValue ?? ""
+        if let machine = machines?.named(asked), machine.name != asked {
+            arguments["machine"] = .string(machine.name)
+            changed = true
+        }
+        if call.arguments["confirmed"]?.boolValue == true { return .rewrite(arguments) }
         let index = await CuaSnapshots.shared.index(arguments["machine"]?.stringValue ?? "")
         if let risk = risk(entry, arguments: arguments, index: index, catalog: catalog) {
             return .block("Stopped before \(risk.action): it looks irreversible (\(risk.reason)). Ask the user; if they agree, call \(entry.name) again with the same arguments and confirmed: true.")
         }
-        return confirmed == nil ? .allow : .rewrite(arguments)
+        if let unknown = unknownTargets(arguments, index: index, catalog: catalog).first {
+            return .block("Stopped before \(entry.name): \(unknown) isn't from a recent read of this window, so Mycroft can't tell what it is. Read the window again (get_window_state) and use its element_tokens.")
+        }
+        return changed ? .rewrite(arguments) : .allow
     }
 
-    /// Why this call needs the user's confirmation, or nil. A target the index doesn't know is no reason.
+    /// The element tokens in a call that no recent read of the machine's windows knows.
+    static func unknownTargets(_ arguments: JSONObject, index: SnapshotIndex, catalog: [String: Catalog.Entry] = [:]) -> [String] {
+        var found = Walk()
+        found.visit(.object(arguments), tool: "", catalog: catalog)
+        return found.tokens.map(\.token).filter { index.target($0) == nil }
+    }
+
+    /// Why this call needs the user's confirmation, or nil. A target the index doesn't know is no reason here; `confirm`
+    /// sends the model back to read the window instead.
     static func risk(_ entry: Catalog.Entry, arguments: JSONObject, index: SnapshotIndex, catalog: [String: Catalog.Entry] = [:]) -> Risk? {
         var found = Walk()
         found.visit(.object(arguments), tool: entry.name, catalog: catalog)
@@ -350,6 +371,7 @@ nonisolated enum CuaTools {
         return "calling \(tool)"
     }
 
+    /// A text's first line, at most 40 characters: for a short description of an action.
     static func clip(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
         return line.count > 40 ? String(line.prefix(39)) + "…" : line

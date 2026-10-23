@@ -18,14 +18,21 @@ import os
 /// Listening runs here, not in the web page, so it carries on with the screen locked (the app has background audio).
 /// The page shows `snapshot()` and drives it with the methods below.
 ///
-/// In a conversation (``VoiceChat``) it plays Mycroft's voice through the same engine, with echo cancellation on the
-/// speaker (none with headphones, and it switches when they come or go), and hands over each turn with ``take()``
-/// while it goes on listening.
+/// In a conversation (``VoiceChat``) it plays Mycroft's voice through the same engine (``ConversationAudio``), and
+/// hands over each turn with ``take()`` while it goes on listening.
 @Observable
 final class Listener {
     enum State: Equatable {
         case off, preparing, on
         case failed(String)
+    }
+
+    /// What the microphone is set up for.
+    enum Mode {
+        /// A composer: the least processing iOS offers, for the recognizer.
+        case dictation
+        /// A conversation: Mycroft's voice plays through the same engine, with echo cancellation on the speaker.
+        case conversation(ConversationAudio)
     }
 
     private(set) var state: State = .off
@@ -40,21 +47,11 @@ final class Listener {
     /// When listening started, for the timer.
     private(set) var startedAt: Date?
     private(set) var lastError: String?
-    /// What Mycroft says is taken out of what the microphone hears (in a conversation; with headphones nothing comes
-    /// back to take out). Without it the conversation doesn't listen while Mycroft speaks.
-    private(set) var echoCancelled = false
+    private var mode = Mode.dictation
 
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var speech = SpeechActivity()
     @ObservationIgnored nonisolated(unsafe) private var classifier: SpeechClassifier?
-    /// In a conversation: the voice that plays through this engine.
-    @ObservationIgnored private var speaker: Speaker?
-    /// The route a conversation's audio is set up for: headphones (no echo cancellation) or the speaker.
-    @ObservationIgnored private var setUpForHeadphones = false
-    @ObservationIgnored private var routeChanges: NSObjectProtocol?
-    @ObservationIgnored private var rerouting: Task<Void, Never>?
-    /// When the conversation's audio last restarted for a new route.
-    @ObservationIgnored private var reroutes: [Date] = []
     /// Audio time where the words start: earlier results were cleared.
     @ObservationIgnored private var turnStart: Double = 0
     /// Counts clears, so a transcription that finishes after its words were cleared is dropped.
@@ -89,24 +86,16 @@ final class Listener {
     private var listening: Bool { state == .on }
     /// Seconds since the user last spoke (or since the words were cleared).
     var quiet: Double { now - speech.lastSpeech }
-    /// Headphones are connected (wired, AirPods, a car), so the microphone doesn't hear Mycroft. Told by the devices,
-    /// not by where the sound goes now: that depends on how the audio is set up (with echo cancellation, iOS names the
-    /// AirPods while it plays on the speaker; set up for the AirPods, it can name the speaker), and judging by it made a
-    /// conversation switch between the two every second.
-    var headphones: Bool {
-        let session = AVAudioSession.sharedInstance()
-        let outputs: Set<AVAudioSession.Port> = [.headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP, .carAudio]
-        let inputs: Set<AVAudioSession.Port> = [.headsetMic, .bluetoothHFP, .bluetoothLE, .carAudio]
-        return session.currentRoute.outputs.contains { outputs.contains($0.portType) }
-            || (session.availableInputs ?? []).contains { inputs.contains($0.portType) }
+    /// The conversation's audio, in a conversation.
+    private var conversation: ConversationAudio? {
+        if case .conversation(let audio) = mode { audio } else { nil }
     }
-
+    /// What Mycroft says is taken out of what the microphone hears (``ConversationAudio/echoCancelled``).
+    var echoCancelled: Bool { conversation?.echoCancelled ?? false }
+    /// Headphones are connected (``ConversationAudio/headphones``).
+    var headphones: Bool { ConversationAudio.headphones }
     /// The route's ports, for the journal.
-    static var route: String {
-        let route = AVAudioSession.sharedInstance().currentRoute
-        let names = { (ports: [AVAudioSessionPortDescription]) in ports.map(\.portType.rawValue).joined(separator: ",") }
-        return "in \(names(route.inputs)), out \(names(route.outputs))"
-    }
+    static var route: String { ConversationAudio.route }
 
     // MARK: Control
 
@@ -132,14 +121,18 @@ final class Listener {
     /// cancellation, and the speaker plays through the same engine.
     func start(_ owner: String, prefix: String = "", speaker: Speaker? = nil) async {
         if self.owner != owner {
-            if self.speaker != nil || speaker != nil { close() }
+            if conversation != nil || speaker != nil { close() }
             self.owner = owner
             clearWords()
         }
         self.prefix = prefix
         lastError = nil
         if state == .on { return }
-        self.speaker = speaker
+        if let speaker {
+            mode = .conversation(ConversationAudio(speaker: speaker, engine: engineIO) { [weak self] in self?.restartAudio() ?? false })
+        } else {
+            mode = .dictation
+        }
         startedAt = .now
         await open()
         if state == .on { tone() }
@@ -295,10 +288,10 @@ final class Listener {
         state = .preparing
         do {
             guard FluidSpeech.isBundled else {
-                throw VoiceError("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
+                throw Failure("This build of Mycroft doesn't include Fluid Speech Mini (run ios/scripts/fetch-fluid-speech.sh).")
             }
             guard await AVAudioApplication.requestRecordPermission() else {
-                throw VoiceError("Mycroft needs the microphone. Allow it in Settings → Mycroft.")
+                throw Failure("Mycroft needs the microphone. Allow it in Settings → Mycroft.")
             }
             framesFed = 0
             audio = []
@@ -348,39 +341,22 @@ final class Listener {
         classifier?.stop()
         classifier = nil
         audio = []
-        if let routeChanges { NotificationCenter.default.removeObserver(routeChanges) }
-        routeChanges = nil
-        rerouting?.cancel()
-        rerouting = nil
-        if speaker != nil {
-            speaker?.stop()
-            speaker = nil
-            if engineIO.inputNode.isVoiceProcessingEnabled { try? engineIO.inputNode.setVoiceProcessingEnabled(false) }
-            if AVAudioSession.sharedInstance().prefersEchoCancelledInput { try? AVAudioSession.sharedInstance().setPrefersEchoCancelledInput(false) }
-        }
-        echoCancelled = false
+        conversation?.stop()
+        mode = .dictation
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func startAudio() throws {
         let session = AVAudioSession.sharedInstance()
-        if speaker != nil {
-            try startConversationAudio(session)
-        } else {
-            // No voice processing: it is made for calls and smears speech for a recognizer. AirPods that can record at
-            // full bandwidth are used (never their narrow-band call microphone); otherwise the iPhone's own microphone,
-            // with the least processing iOS offers.
-            try session.setCategory(
-                .playAndRecord, mode: .default, options: [.bluetoothHighQualityRecording, .allowBluetoothA2DP, .defaultToSpeaker])
-            try session.setActive(true)
-            let fullBandwidth = session.currentRoute.inputs.contains { $0.bluetoothMicrophoneExtension?.highQualityRecording.isEnabled == true }
-            if !fullBandwidth { try session.setMode(.measurement) }
+        switch mode {
+        case .dictation: try setUpDictation(session)
+        case .conversation(let conversation): try conversation.setUp(session)
         }
         if player.engine == nil {
             engineIO.attach(player)
-            engineIO.connect(player, to: engineIO.mainMixerNode, format: Self.playFormat)
+            try engineIO.connectNode(player, to: engineIO.mainMixerNode, format: Self.playFormat)
         }
-        speaker?.connect(to: engineIO)
+        conversation?.connect()
         // The tap takes the microphone's own format, whatever it is by now: echo cancellation changes it after the
         // session is set up, and a tap in a stale format throws. The converter follows the buffers (`captured`).
         let node = engineIO.inputNode
@@ -390,98 +366,35 @@ final class Listener {
         })
         engineIO.prepare()
         try engineIO.start()
-        player.play()
-        speaker?.player.play()
-        if speaker != nil, routeChanges == nil {
-            routeChanges = NotificationCenter.default.addObserver(
-                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in self?.routeChanged() }
-            }
+        do {
+            try player.playAudio()
+        } catch {
+            log.error("listener: the tone can't play (\(error))")
         }
+        conversation?.started()
     }
 
-    /// Headphones came or went in a conversation: echo cancellation has to go on or off, and the engine restart with
-    /// it. Route changes come in bursts (and setting the session up makes its own), so it settles first.
-    private func routeChanged() {
-        rerouting?.cancel()
-        rerouting = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard let self, !Task.isCancelled else { return }
-            self.reroute()
-        }
+    /// No voice processing: it is made for calls and smears speech for a recognizer. AirPods that can record at full
+    /// bandwidth are used (never their narrow-band call microphone); otherwise the iPhone's own microphone, with the
+    /// least processing iOS offers.
+    private func setUpDictation(_ session: AVAudioSession) throws {
+        try session.setCategory(
+            .playAndRecord, mode: .default, options: [.bluetoothHighQualityRecording, .allowBluetoothA2DP, .defaultToSpeaker])
+        try session.setActive(true)
+        let fullBandwidth = session.currentRoute.inputs.contains { $0.bluetoothMicrophoneExtension?.highQualityRecording.isEnabled == true }
+        if !fullBandwidth { try session.setMode(.measurement) }
     }
 
-    private func reroute() {
-        guard let speaker, state == .on, headphones != setUpForHeadphones else { return }
-        // Restarting changes the route too: if that keeps asking for another restart, stay as it is.
-        reroutes = reroutes.filter { $0 > .now - 10 } + [.now]
-        guard reroutes.count <= 3 else {
-            if reroutes.count == 4 { Journal.note("talk_route_loop", ["headphones": "\(headphones)", "route": Self.route]) }
-            return
-        }
-        log.notice("conversation audio: route changed, headphones: \(self.headphones)")
-        Journal.note("talk_route", ["headphones": "\(headphones)", "route": Self.route])
-        // What Mycroft was saying starts again on the new route, from the sentence it was in.
-        let unsaid = speaker.halt()
+    /// Starts the audio again for a conversation's new route (``ConversationAudio``); false if it failed.
+    private func restartAudio() -> Bool {
         engineIO.inputNode.removeTap(onBus: 0)
         engineIO.stop()
         do {
             try startAudio()
+            return true
         } catch {
-            return fail(error)
-        }
-        for sentence in unsaid { speaker.say(sentence) }
-    }
-
-    /// A conversation's microphone stays on while Mycroft speaks, so the user can cut in: Mycroft's voice must be taken
-    /// out of what it hears. The system's echo-cancelled input where the route has it, otherwise voice processing (a
-    /// call's processing, which also cancels echo). With headphones nothing comes back to cancel.
-    private func startConversationAudio(_ session: AVAudioSession) throws {
-        #if targetEnvironment(simulator)
-        // The Simulator's audio server times out (and aborts the app) on echo cancellation and voice processing: the
-        // composer's setup, and no cutting in.
-        try session.setCategory(
-            .playAndRecord, mode: .default, options: [.bluetoothHighQualityRecording, .allowBluetoothA2DP, .defaultToSpeaker])
-        try session.setActive(true)
-        echoCancelled = false
-        setUpForHeadphones = headphones
-        log.notice("conversation audio: no echo cancellation in the Simulator")
-        return
-        #endif
-        if engineIO.inputNode.isVoiceProcessingEnabled { try engineIO.inputNode.setVoiceProcessingEnabled(false) }
-        if session.prefersEchoCancelledInput { try? session.setPrefersEchoCancelledInput(false) }
-        echoCancelled = false
-        try session.setCategory(
-            .playAndRecord, mode: .default, options: [.bluetoothHighQualityRecording, .allowBluetoothA2DP, .defaultToSpeaker])
-        try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
-        try session.setActive(true)
-        // Headphones: nothing comes back to cancel. Echo cancellation would also take the sound off them: it can't play
-        // to AirPods' music profile, so iOS moves Mycroft's voice to the iPhone's speaker (while still reporting the
-        // AirPods), where the microphone hears it. Nor does dictation's measurement mode suit: with the iPhone's own
-        // microphone, it too moves the sound to the speaker. So the default mode, which leaves it on the headphones.
-        setUpForHeadphones = headphones
-        if setUpForHeadphones {
-            log.notice("conversation audio: headphones, no echo cancellation")
-            return
-        }
-        if session.isEchoCancelledInputAvailable {
-            try? session.setPrefersEchoCancelledInput(true)
-            try session.setActive(true)
-            // A preference, not a guarantee: the route decides.
-            if session.isEchoCancelledInputEnabled {
-                echoCancelled = true
-                log.notice("conversation audio: echo-cancelled input")
-                return
-            }
-            try? session.setPrefersEchoCancelledInput(false)
-        }
-        do {
-            try engineIO.inputNode.setVoiceProcessingEnabled(true)
-            echoCancelled = true
-            log.notice("conversation audio: voice processing")
-        } catch {
-            log.error("conversation audio: no echo cancellation (\(error))")
+            fail(error)
+            return false
         }
     }
 

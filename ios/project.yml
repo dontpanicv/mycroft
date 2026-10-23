@@ -96,15 +96,15 @@ targets:
       - name: Bundle Fluid Speech Mini
         basedOnDependencyAnalysis: false
         script: |
-          # Copies the dictation model (ios/scripts/fetch-fluid-speech.sh, ~240 MB) into the app. Without it, dictation
-          # offers Apple's model only.
+          # Copies the dictation model (ios/scripts/fetch-fluid-speech.sh, ~240 MB) into the app. Without it, there is no
+          # dictation (ADR 0017).
           MODEL="${SRCROOT}/Models/fluid-speech-mini"
           if [ -f "$MODEL/REVISION" ]; then
             DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/FluidSpeech"
             mkdir -p "$DEST"
             rsync -a --delete "$MODEL/model/" "$DEST/"
           else
-            echo "warning: no Fluid Speech Mini in ios/Models (run ios/scripts/fetch-fluid-speech.sh); dictation will use Apple's model"
+            echo "warning: no Fluid Speech Mini in ios/Models (run ios/scripts/fetch-fluid-speech.sh); there will be no dictation"
           fi
       - name: Bundle Phonon
         basedOnDependencyAnalysis: false

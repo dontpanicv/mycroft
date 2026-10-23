@@ -28,15 +28,19 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     private var stateFeed: Task<Void, Never>?
     private var viewFeeds: [Int: Task<Void, Never>] = [:]
     private var feeds: [String: Task<Void, Never>] = [:]
-    private let listener = Listener()
-    private lazy var talk = VoiceChat(listener: listener)
     private var server: InstallServer?
     private var copiedCommand = ""
-    private var safari: SFSafariViewController?
-    /// Threads created by this page that the thread list may not show yet.
-    private var created: [Int: ThreadMeta] = [:]
+    var safari: SFSafariViewController?
+    /// The page takes a transcript's new entries alone (`keep`, `append`); an older generation's boot.js wants it whole.
+    private var appends = false
 
     static let uiStateKey = "mycroft.ui.state"
+
+    /// Forgets what the screen saved (where it was, its colours): the next page starts as a new one does.
+    static func forgetSavedState() {
+        UserDefaults.standard.removeObject(forKey: uiStateKey)
+        Appearance.shared.reset()
+    }
 
     init(preview: Bool) {
         self.preview = preview
@@ -53,216 +57,242 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
-    private func handle(_ op: String, _ args: Args) async throws -> Any? {
-        switch op {
-        // The page itself
-        case "ui.boot":
-            stopFeeds()
-            startStateFeed()
-            // A conversation lives in the app, not the page: a reloaded page (a new generation's boot.js) picks it up.
-            if talk.isOn { followTalk() }
-            let saved = preview ? nil : UserDefaults.standard.string(forKey: Self.uiStateKey)
-            return ["state": stateObject(), "uiState": saved ?? NSNull(), "preview": preview]
-        case "ui.ready":
-            onPageEvent?(.ready(generation: args.int("generation")))
-        case "ui.failed":
-            onPageEvent?(.failed(generation: args.int("generation"), message: args.string("error") ?? "unknown error"))
-        case "ui.hot":
-            onPageEvent?(.hot(generation: try args.require("generation"), error: args.string("error")))
-        case "ui.log":
-            onPageEvent?(.log(level: args.string("level") ?? "log", message: args.string("message") ?? ""))
-        case "ui.save":
-            if !preview { UserDefaults.standard.set(args.string("state"), forKey: Self.uiStateKey) }
-        case "ui.theme":
-            if !preview { applyTheme(args) }
-        case "haptic":
-            if !preview { haptic(args.string("style")) }
+    private func handle(_ name: String, _ args: Args) async throws -> Any? {
+        guard let op = Self.ops[name] else { throw Failure("Unknown op \(name)") }
+        if preview {
+            switch op.access {
+            case .read: break
+            case .write: throw Failure("Not available in a preview")
+            case .quiet: return nil
+            }
+        }
+        return try await op.run(self, args)
+    }
 
-        // Threads
-        case "state.get":
-            return stateObject()
-        case "thread.create":
-            try writable()
-            let thread = try await app.startThread(with: try args.require("text"))
-            created[thread.id.rawValue] = thread
-            return Self.object(thread)
-        case "thread.open":
+    /// One op of the page. A preview runs only the reads: it shows live data but must change nothing.
+    private struct Op {
+        enum Access {
+            case read
+            /// Refused in a preview.
+            case write
+            /// Does nothing in a preview, without an error: the page's own bookkeeping, and the voice (the app's
+            /// one microphone and speaker).
+            case quiet
+        }
+
+        let access: Access
+        let run: @MainActor (WebBridge, Args) async throws -> Any?
+
+        static func read(_ run: @escaping @MainActor (WebBridge, Args) async throws -> Any?) -> Op { Op(access: .read, run: run) }
+        static func write(_ run: @escaping @MainActor (WebBridge, Args) async throws -> Any?) -> Op { Op(access: .write, run: run) }
+        static func quiet(_ run: @escaping @MainActor (WebBridge, Args) async throws -> Any?) -> Op { Op(access: .quiet, run: run) }
+    }
+
+    private static let ops: [String: Op] = pageOps
+        .merging(threadOps) { a, _ in a }.merging(machineOps) { a, _ in a }
+        .merging(voiceOps) { a, _ in a }.merging(otherOps) { a, _ in a }
+
+    /// The page itself.
+    private static let pageOps: [String: Op] = [
+        "ui.boot": .read { bridge, args in
+            bridge.appends = args.bool("appends") ?? false
+            bridge.stopFeeds()
+            bridge.startStateFeed()
+            // A conversation lives in the app, not the page: a reloaded page (a new generation's boot.js) picks it up.
+            if !bridge.preview, bridge.voice.talk.isOn { bridge.followTalk() }
+            let saved = bridge.preview ? nil : UserDefaults.standard.string(forKey: uiStateKey)
+            return ["state": bridge.stateObject(), "uiState": saved.map { $0 as Any } ?? NSNull(), "preview": bridge.preview]
+        },
+        "ui.ready": .read { bridge, args in bridge.onPageEvent?(.ready(generation: args.int("generation"))); return nil },
+        "ui.failed": .read { bridge, args in
+            bridge.onPageEvent?(.failed(generation: args.int("generation"), message: args.string("error") ?? "unknown error"))
+            return nil
+        },
+        "ui.hot": .read { bridge, args in
+            bridge.onPageEvent?(.hot(generation: try args.require("generation"), error: args.string("error")))
+            return nil
+        },
+        "ui.log": .read { bridge, args in
+            bridge.onPageEvent?(.log(level: args.string("level") ?? "log", message: args.string("message") ?? ""))
+            return nil
+        },
+        "ui.save": .quiet { _, args in UserDefaults.standard.set(args.string("state"), forKey: uiStateKey); return nil },
+        "ui.theme": .quiet { bridge, args in bridge.applyTheme(args); return nil },
+        "haptic": .quiet { bridge, args in bridge.haptic(args.string("style")); return nil },
+        "state.get": .read { bridge, _ in bridge.stateObject() },
+    ]
+
+    private static let threadOps: [String: Op] = [
+        "thread.create": .write { bridge, args in object(try await bridge.app.startThread(with: try args.require("text"))) },
+        "thread.open": .read { bridge, args in
             let id: Int = try args.require("id")
-            openView(id)
-            try? await app.edit(ConversationID(id)) { $0.visitedAt = .now }
-            Listener.warm(app)
-        case "thread.close":
+            bridge.openView(id)
+            try? await bridge.app.edit(ConversationID(id)) { $0.visitedAt = .now }
+            Listener.warm(bridge.app)
+            return nil
+        },
+        "thread.close": .read { bridge, args in
             let id: Int = try args.require("id")
-            viewFeeds.removeValue(forKey: id)?.cancel()
-            try? await app.edit(ConversationID(id)) { $0.visitedAt = .now }
-        case "thread.send":
-            try writable()
+            bridge.viewFeeds.removeValue(forKey: id)?.cancel()
+            try? await bridge.app.edit(ConversationID(id)) { $0.visitedAt = .now }
+            return nil
+        },
+        "thread.send": .write { bridge, args in
             let how: Conversation.WhenBusy = args.string("how") == "steer" ? .steer : .followUp
-            try await app.send(try args.require("text"), to: try thread(args), whenBusy: how)
-        case "thread.stop":
-            try writable()
-            try await app.stop(try thread(args))
-        case "thread.resume":
-            try writable()
-            try await app.resumeQueue(try thread(args))
-        case "thread.unqueue":
-            try writable()
-            try await app.unqueue(try thread(args), SubmissionID(try args.require("submission") as Int))
-        case "thread.steerNow":
-            try writable()
-            try await app.steerNow(try thread(args), SubmissionID(try args.require("submission") as Int))
-        case "thread.fork":
-            try writable()
-            let fork = try await app.fork(try thread(args), at: EntryID(try args.require("entry") as Int))
-            created[fork.id.rawValue] = fork
-            return Self.object(fork)
-        case "thread.rename":
-            try writable()
+            try await bridge.app.send(try args.require("text"), to: try bridge.thread(args), whenBusy: how)
+            return nil
+        },
+        "thread.stop": .write { bridge, args in try await bridge.app.stop(try bridge.thread(args)); return nil },
+        "thread.resume": .write { bridge, args in try await bridge.app.resumeQueue(try bridge.thread(args)); return nil },
+        "thread.unqueue": .write { bridge, args in
+            try await bridge.app.unqueue(try bridge.thread(args), SubmissionID(try args.require("submission") as Int))
+            return nil
+        },
+        "thread.steerNow": .write { bridge, args in
+            try await bridge.app.steerNow(try bridge.thread(args), SubmissionID(try args.require("submission") as Int))
+            return nil
+        },
+        "thread.fork": .write { bridge, args in
+            object(try await bridge.app.fork(try bridge.thread(args), at: EntryID(try args.require("entry") as Int)))
+        },
+        "thread.rename": .write { bridge, args in
             let title = (args.string("title") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { throw BridgeError("A thread needs a title.") }
-            try await app.edit(try thread(args).id) { $0.title = title }
-        case "thread.pin":
-            try writable()
+            guard !title.isEmpty else { throw Failure("A thread needs a title.") }
+            try await bridge.app.edit(try bridge.thread(args).id) { $0.title = title }
+            return nil
+        },
+        "thread.pin": .write { bridge, args in
             let on = args.bool("on") ?? true
-            try await app.edit(try thread(args).id) { $0.pinned = on ? true : nil }
-        case "thread.settle":
-            try writable()
+            try await bridge.app.edit(try bridge.thread(args).id) { $0.pinned = on ? true : nil }
+            return nil
+        },
+        "thread.settle": .write { bridge, args in
             let on = args.bool("on") ?? true
-            try await app.edit(try thread(args).id) { meta in
+            try await bridge.app.edit(try bridge.thread(args).id) { meta in
                 meta.settledAt = on ? .now : nil
                 meta.unsettledAt = on ? nil : .now
                 if on { meta.pinned = nil }
             }
-        case "thread.archive":
-            try writable()
+            return nil
+        },
+        "thread.archive": .write { bridge, args in
             let on = args.bool("on") ?? true
-            try await app.edit(try thread(args).id) { $0.archived = on }
+            try await bridge.app.edit(try bridge.thread(args).id) { $0.archived = on }
+            return nil
+        },
+    ]
 
-        // Sign-in and keys
-        case "signin.start":
-            try writable()
-            Task { await app.signInWithChatGPT() }
-        case "signin.open":
-            try writable()
-            if let code = args.string("code") { UIPasteboard.general.string = code }
-            if let url = URL(string: try args.require("url")) { present(url) }
-        case "signin.signOut":
-            try writable()
-            await app.signOut()
-
-        // Machines
-        case "machines.exec":
-            try writable()
-            let name: String = try args.require("machine")
-            guard let machine = app.machines.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
-                throw BridgeError("No machine named \(name)")
-            }
+    /// Machines and pairing.
+    private static let machineOps: [String: Op] = [
+        "machines.exec": .write { bridge, args in
+            let machine = try bridge.machine(try args.require("machine"))
             let timeout = min(60, max(1, Double(args.int("timeoutMs") ?? 15_000) / 1000))
             let result = try await HandsTools.run(try args.require("command"), cwd: args.string("cwd"), on: machine, timeout: timeout)
             return ["exitCode": result.exitCode.map { $0 as Any } ?? NSNull(), "output": result.output]
-        case "machines.check":
-            return await checkMachines()
-        case "machines.forget":
-            try writable()
-            guard let machine = app.machines.first(where: { $0.name == args.string("name") }) else { throw BridgeError("No such machine") }
-            try await app.removeMachine(machine)
-        case "pairing.start":
-            try writable()
-            await startPairing(prefer: args.string("prefer"))
-        case "pairing.choose":
-            server?.chosen = args.string("ip")
-        case "pairing.stop":
-            stopPairing()
+        },
+        "machines.check": .read { bridge, _ in await bridge.checkMachines() },
+        "machines.forget": .write { bridge, args in
+            try await bridge.app.removeMachine(try bridge.machine(try args.require("name")))
+            return nil
+        },
+        "pairing.start": .write { bridge, args in await bridge.startPairing(prefer: args.string("prefer")); return nil },
+        "pairing.choose": .write { bridge, args in bridge.server?.chosen = args.string("ip"); return nil },
+        "pairing.stop": .read { bridge, _ in bridge.stopPairing(); return nil },
+    ]
 
-        // The agent's tools (Agent/ScreenTools.swift)
-        case "tools.list":
-            return try await ScreenTools.shared.list(try ready())
-        case "tools.call":
-            try writable()
-            let calls: [ScreenTools.Call]
-            if let many = args.values["calls"] as? [[String: Any]] {
-                calls = try many.map { ScreenTools.Call(name: try Args($0).require("name"), arguments: try Self.json($0["arguments"])) }
-            } else {
-                calls = [ScreenTools.Call(name: try args.require("name"), arguments: try Self.json(args.values["arguments"]))]
-            }
-            let results = try await ScreenTools.shared.call(calls, harness: try ready())
-            return args.values["calls"] == nil ? results.first : results
-
-        // Dictation into a composer (Voice/Listener.swift)
-        case "listen.start":
-            try writable()
-            endTalk()
-            await listener.start(try args.require("owner"), prefix: args.string("prefix") ?? "")
-            followListener()
-        case "listen.stop":
-            return ["text": await listener.stop()]
-        case "listen.cancel":
-            listener.cancel()
-        case "listen.clear":
-            listener.clear()
-        case "listen.close":
+    /// Dictation into a composer (Voice/Listener.swift) and conversation mode (Voice/VoiceChat.swift).
+    private static let voiceOps: [String: Op] = [
+        "listen.start": .write { bridge, args in
+            bridge.endTalk()
+            await bridge.voice.listener.start(try args.require("owner"), prefix: args.string("prefix") ?? "")
+            bridge.followListener()
+            return nil
+        },
+        "listen.stop": .quiet { bridge, _ in ["text": await bridge.voice.listener.stop()] },
+        "listen.cancel": .quiet { bridge, _ in bridge.voice.listener.cancel(); return nil },
+        "listen.clear": .quiet { bridge, _ in bridge.voice.listener.clear(); return nil },
+        "listen.close": .quiet { bridge, _ in
             // A conversation keeps the listener when a composer goes away.
-            if !talk.isOn { listener.shutDown() }
-
-        // Conversation mode (Voice/VoiceChat.swift)
-        case "talk.start":
-            try writable()
+            if !bridge.voice.talk.isOn { bridge.voice.listener.shutDown() }
+            return nil
+        },
+        "talk.start": .write { bridge, args in
+            let talk = bridge.voice.talk
             await talk.start(thread: args.int("id"))
-            followTalk()
-            if !talk.isOn, let error = talk.error { throw BridgeError(error) }
-        case "talk.end":
-            endTalk()
-        case "talk.tap":
-            talk.tap()
-        case "talk.mute":
-            talk.mute(args.bool("on") ?? true)
-        case "voice.choose":
-            try writable()
+            bridge.followTalk()
+            if !talk.isOn, let error = talk.error { throw Failure(error) }
+            return nil
+        },
+        "talk.end": .quiet { bridge, _ in bridge.endTalk(); return nil },
+        "talk.tap": .quiet { bridge, _ in bridge.voice.talk.tap(); return nil },
+        "talk.mute": .quiet { bridge, args in bridge.voice.talk.mute(args.bool("on") ?? true); return nil },
+        "voice.choose": .write { bridge, args in
             guard let voice = args.string("voice"), Speaker.voices.contains(where: { $0.id == voice }) else {
-                throw BridgeError("Unknown voice")
+                throw Failure("Unknown voice")
             }
-            if talk.isOn {
+            if bridge.voice.talk.isOn {
                 Speaker.shared.voice = voice
             } else {
                 try await Speaker.shared.sample(voice)
             }
+            return nil
+        },
+    ]
 
-        // Self
-        case "generation.rollback":
-            try writable()
-            let target = try await app.rollBack(to: args.int("generation"))
+    /// Sign-in, the agent's tools and generations, and the rest.
+    private static let otherOps: [String: Op] = [
+        "signin.start": .write { bridge, _ in
+            Task { await bridge.app.signInWithChatGPT() }
+            return nil
+        },
+        "signin.open": .write { bridge, args in
+            if let code = args.string("code") { UIPasteboard.general.string = code }
+            if let url = URL(string: try args.require("url")) { bridge.present(url) }
+            return nil
+        },
+        "signin.signOut": .write { bridge, _ in await bridge.app.signOut(); return nil },
+        // The agent's tools (Agent/ScreenTools.swift)
+        "tools.list": .read { bridge, _ in try await ScreenTools.shared.list(try bridge.ready()) },
+        "tools.call": .write { bridge, args in
+            let calls: [ScreenTools.Call]
+            if let many = args.values["calls"] as? [[String: Any]] {
+                calls = try many.map { ScreenTools.Call(name: try Args($0).require("name"), arguments: try json($0["arguments"])) }
+            } else {
+                calls = [ScreenTools.Call(name: try args.require("name"), arguments: try json(args.values["arguments"]))]
+            }
+            let results = try await ScreenTools.shared.call(calls, harness: try bridge.ready())
+            return args.values["calls"] == nil ? results.first : results
+        },
+        "generation.rollback": .write { bridge, args in
+            let target = try await bridge.app.rollBack(to: args.int("generation"))
             Task { _ = await WebUI.shared.show(generation: target) }
             return target
+        },
+        "clipboard.copy": .write { _, args in UIPasteboard.general.string = args.string("text") ?? ""; return nil },
+        "open.url": .quiet { bridge, args in
+            if let url = URL(string: try args.require("url")) { bridge.present(url) }
+            return nil
+        },
+        "notices.thirdParty": .read { _, _ in thirdPartyNotices },
+    ]
 
-        // Misc
-        case "clipboard.copy":
-            try writable()
-            UIPasteboard.general.string = args.string("text") ?? ""
-        case "open.url":
-            if !preview, let url = URL(string: try args.require("url")) { present(url) }
-        case "notices.thirdParty":
-            return Self.notices
-        default:
-            throw BridgeError("Unknown op \(op)")
-        }
-        return nil
-    }
+    /// The app's one voice session; never a preview's.
+    private var voice: VoiceSession { VoiceSession.shared }
 
-    private func writable() throws {
-        if preview { throw BridgeError("Not available in a preview") }
+    private func machine(_ name: String) throws -> Machine {
+        guard let machine = MachineList(items: app.machines).named(name) else { throw Failure("No machine named \(name)") }
+        return machine
     }
 
     private func ready() throws -> Harness {
-        guard let harness = app.harness else { throw BridgeError("Mycroft is still starting") }
+        guard let harness = app.harness else { throw Failure("Mycroft is still starting") }
         return harness
     }
 
     private func thread(_ args: Args) throws -> ThreadMeta {
         let id: Int = try args.require("id")
-        if let thread = (app.threads + app.archivedThreads).first(where: { $0.id.rawValue == id }) ?? created[id] {
-            return thread
-        }
-        throw BridgeError("No thread \(id)")
+        guard let thread = app.thread(ConversationID(id)) else { throw Failure("No thread \(id)") }
+        return thread
     }
 
     // MARK: Events to the page
@@ -300,8 +330,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         ]
         return phase.merging([
             "generation": Self.object(app.generation) ?? NSNull(),
-            "threads": Self.object(app.threads) ?? [],
-            "archived": Self.object(app.archivedThreads) ?? [],
+            "threads": Self.object(app.threads.filter { !$0.archived }) ?? [],
+            "archived": Self.object(app.threads.filter(\.archived)) ?? [],
             "busy": app.busyThreads.map(\.rawValue).sorted(),
             "signIn": signIn,
             "dictation": ["bundled": FluidSpeech.isBundled, "ready": app.dictationReady],
@@ -328,7 +358,9 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
-    /// Streams one conversation to the page: the transcript when it changes, the live state on every commit.
+    /// Streams one conversation to the page: the transcript when it changes, the live state on every commit. The
+    /// transcript goes whole once, then as the entries after those the page already has: a long desktop-control run
+    /// adds a screenshot at almost every step.
     private func openView(_ id: Int) {
         viewFeeds[id]?.cancel()
         viewFeeds[id] = Task { [weak self] in
@@ -345,7 +377,13 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
                         "live": view.documents["pi.live"].flatMap(Self.object) ?? NSNull(),
                     ]
                     if ids != shown {
-                        payload["entries"] = Self.slim(Self.object(view.entries) ?? [])
+                        let keep = self.appends ? zip(shown ?? [], ids).prefix { $0 == $1 }.count : 0
+                        if keep > 0 {
+                            payload["keep"] = keep
+                            payload["append"] = Self.slim(Self.object(Array(view.entries.dropFirst(keep))) ?? [])
+                        } else {
+                            payload["entries"] = Self.slim(Self.object(view.entries) ?? [])
+                        }
                         shown = ids
                     }
                     self.send("view", payload)
@@ -370,7 +408,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         return nil
     }
 
-    /// Polls a native object while the page needs it and sends what changed.
+    /// Polls a native object while the page needs it and sends what changed. For the voice: its clocks (`elapsed`) move
+    /// with time, not with anything observable.
     private func feed(_ type: String, every interval: Duration = .milliseconds(100), _ read: @escaping () -> [String: Any]) {
         feeds[type]?.cancel()
         feeds[type] = Task { [weak self] in
@@ -386,11 +425,22 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
+    /// Sends what `read` returns whenever the observable state it reads changes.
+    private func observe(_ type: String, _ read: @escaping () -> [String: Any]) {
+        feeds[type]?.cancel()
+        feeds[type] = Task { [weak self] in
+            for await json in Observations({ Self.json(read()) }) {
+                guard let self, !Task.isCancelled else { return }
+                self.send(type, json: json)
+            }
+        }
+    }
+
     private func stopFeeds() {
         viewFeeds.values.forEach { $0.cancel() }
         viewFeeds = [:]
         stopPairing()
-        if !talk.isOn { listener.shutDown() }
+        if !preview, !voice.talk.isOn { voice.listener.shutDown() }
     }
 
     /// The page went away for good.
@@ -404,13 +454,15 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     /// The `talk` events while a conversation is on.
     private func followTalk() {
+        let talk = voice.talk
         guard talk.isOn || talk.error != nil else { return }
-        feed("talk", every: .milliseconds(80)) { [talk] in talk.snapshot() }
+        feed("talk", every: .milliseconds(80)) { talk.snapshot() }
     }
 
     /// Ends the conversation, if one is on, and tells the page.
     private func endTalk() {
-        guard talk.isOn else { return }
+        guard !preview, voice.talk.isOn else { return }
+        let talk = voice.talk
         talk.end()
         feeds.removeValue(forKey: "talk")?.cancel()
         send("talk", talk.snapshot())
@@ -419,7 +471,8 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// The `listen` events while the listener is in use; they stop with the page.
     private func followListener() {
         guard feeds["listen"] == nil else { return }
-        feed("listen", every: .milliseconds(80)) { [listener] in listener.snapshot() }
+        let listener = voice.listener
+        feed("listen", every: .milliseconds(80)) { listener.snapshot() }
     }
 
     private func startPairing(prefer: String?) async {
@@ -429,7 +482,7 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
         let server = InstallServer()
         self.server = server
         server.start(prefer: prefer) { machine in try await AppModel.shared.addMachine(machine) }
-        feed("pairing", every: .milliseconds(250)) { [weak self] in
+        observe("pairing") { [weak self] in
             var state: [String: Any] = [
                 "command": server.command, "pinned": server.pinnedCommand, "localNetwork": network == .denied ? "denied" : "ok",
                 "addresses": server.addresses.map { ["network": $0.network, "ip": $0.ip] }, "chosen": server.address?.ip ?? NSNull(),
@@ -473,121 +526,5 @@ final class WebBridge: NSObject, WKScriptMessageHandlerWithReply {
             for await (name, result) in group { status[name] = result }
         }
         return status
-    }
-
-    // MARK: Native bits
-
-    /// The page's colours, for what is drawn natively: the Live Activity, the recovery screen, Safari.
-    private func applyTheme(_ args: Args) {
-        func hex(_ key: String) -> String? {
-            args.string(key).flatMap { Color.components(hex: $0) == nil ? nil : $0 }
-        }
-        Appearance.shared.apply(.init(accent: hex("accent"), accentSoft: hex("accentSoft"), canvas: hex("canvas"),
-                                      raised: hex("raised"), ink: hex("ink"), inkMuted: hex("inkMuted"),
-                                      success: hex("success"), danger: hex("danger")))
-        webView?.backgroundColor = UIColor(Theme.canvas)
-        webView?.scrollView.backgroundColor = UIColor(Theme.canvas)
-    }
-
-    private func haptic(_ style: String?) {
-        switch style {
-        case "success": UINotificationFeedbackGenerator().notificationOccurred(.success)
-        case "error": UINotificationFeedbackGenerator().notificationOccurred(.error)
-        case "selection": UISelectionFeedbackGenerator().selectionChanged()
-        default: UIImpactFeedbackGenerator(style: style == "medium" ? .medium : .light).impactOccurred()
-        }
-    }
-
-    /// A web page inside the app, so Mycroft stays active (iOS would suspend it in Safari).
-    func present(_ url: URL) {
-        guard url.scheme == "https" || url.scheme == "http", let top = Self.topController() else { return }
-        let controller = SFSafariViewController(url: url)
-        controller.preferredControlTintColor = UIColor(Theme.accentSoft)
-        controller.dismissButtonStyle = .done
-        safari = controller
-        top.present(controller, animated: true)
-    }
-
-    static func topController() -> UIViewController? {
-        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-        var top = window?.rootViewController
-        while let presented = top?.presentedViewController { top = presented }
-        return top
-    }
-
-    // MARK: JSON
-
-    /// A page value as a JSON object (tool arguments).
-    static func json(_ value: Any?) throws -> JSONObject {
-        guard let value, !(value is NSNull) else { return [:] }
-        guard JSONSerialization.isValidJSONObject(value),
-            case .object(let object) = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: value))
-        else { throw BridgeError("Tool arguments must be an object") }
-        return object
-    }
-
-    static func object(_ value: some Encodable) -> Any? {
-        guard let data = try? JSONEncoder.iso.encode(value) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-    }
-
-    /// Sorted keys: feeds compare this text to skip unchanged updates, and a dictionary's order isn't stable.
-    static func json(_ object: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .sortedKeys]) else { return "null" }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    /// Keeps transcripts light for the page: huge tool outputs are cut, huge images left out.
-    static func slim(_ value: Any) -> Any {
-        if var dictionary = value as? [String: Any] {
-            if dictionary["type"] as? String == "image", let data = dictionary["data"] as? String, data.count > 600_000 {
-                dictionary["data"] = nil
-                dictionary["omitted"] = true
-            }
-            if dictionary["type"] as? String == "text", let text = dictionary["text"] as? String, text.count > 40_000 {
-                dictionary["text"] = String(text.prefix(40_000)) + "\n… (\(text.count - 40_000) more characters)"
-            }
-            for (key, inner) in dictionary where inner is [Any] || inner is [String: Any] { dictionary[key] = slim(inner) }
-            return dictionary
-        }
-        if let array = value as? [Any] { return array.map(slim) }
-        return value
-    }
-
-    static let notices = """
-        Mycroft's screen is built with Preact (MIT, © Jason Miller) and htm (Apache-2.0, © Google LLC), \
-        bundled as htm's preact/standalone build.
-
-        Mycroft's voice in a conversation is Phonon 31m by Gradium (Apache-2.0), https://huggingface.co/gradium/phonon-31m-en, \
-        in FluidInference's Core ML conversion (https://huggingface.co/FluidInference/pocket-tts-coreml), run by FluidAudio.
-
-        Dictation uses Fluid Speech Mini by FluidVoice (CC-BY-4.0), \
-        https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-coreml, built on NVIDIA's Parakeet TDT 0.6B v3 \
-        (CC-BY-4.0, © NVIDIA Corporation) and Moondream's Parakeet Ultra (CC-BY-4.0, © Moondream), with FluidInference's \
-        Parakeet v3 Core ML preprocessor (CC-BY-4.0). Mycroft runs it unchanged (its joint network file renamed for \
-        FluidAudio) through FluidAudio (Apache-2.0, © FluidInference). License: https://creativecommons.org/licenses/by/4.0/
-
-        """ + PiDurable.thirdPartyNotices
-}
-
-nonisolated struct BridgeError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
-}
-
-/// The arguments of a call from the page.
-struct Args {
-    let values: [String: Any]
-    init(_ values: [String: Any]) { self.values = values }
-
-    func string(_ key: String) -> String? { values[key] as? String }
-    func bool(_ key: String) -> Bool? { (values[key] as? NSNumber)?.boolValue }
-    func int(_ key: String) -> Int? { (values[key] as? NSNumber)?.intValue ?? (values[key] as? String).flatMap(Int.init) }
-
-    func require<T>(_ key: String) throws -> T {
-        if T.self == Int.self, let value = int(key) as? T { return value }
-        guard let value = values[key] as? T else { throw BridgeError("Missing \(key)") }
-        return value
     }
 }

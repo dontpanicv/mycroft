@@ -110,7 +110,8 @@ struct CuaToolsTests {
 
     @Test func destructiveToolsNeedConfirmation() {
         #expect(Self.risk("kill_app", ["machine": "Mac", "pid": 42]) == .init(action: "calling kill_app", reason: "Cua marks kill_app destructive"))
-        // Cua marks every input tool destructive; a click is judged by its target, and an unknown one passes.
+        // Cua marks every input tool destructive; a click is judged by its target. An unknown one is no risk here, but
+        // `confirm` sends the model back to read the window (unknownTargetsAreReadFirst).
         #expect(Self.risk("click", ["machine": "Mac", "element_token": "s00000099:4"]) == nil)
         #expect(Self.risk("run_steps", ["steps": [["tool": "kill_app", "args": ["pid": 42]]]])?.reason == "Cua marks kill_app destructive")
     }
@@ -175,6 +176,39 @@ struct CuaToolsTests {
         #expect(Self.risk("run_steps", ["steps": [["tool": "hotkey", "args": ["keys": ["cmd", "q"]]]]]) != nil)
         #expect(Self.risk("hotkey", ["keys": ["cmd", "s"]]) == nil)
         #expect(Self.risk("press_key", ["key": "delete"]) == nil, "fixing a typo is fine")
+    }
+
+    /// The tool records snapshots under the machine's own name; the check must read them under the same one.
+    @Test func theCheckUsesThePairedMachinesName() async {
+        let machines = MachineList(items: [MachinesTests.machine("bender-2")])
+        await CuaSnapshots.shared.record(Self.mail, machine: "bender-2")
+        let call = ToolCall(id: "5", name: "click", arguments: ["machine": "Bender", "element_token": "s0000002a:11"])
+        guard case .block(let message) = await CuaTools.confirm(call, catalog: Self.entries, machines: machines) else {
+            Issue.record("a click on Send went through")
+            return
+        }
+        #expect(message.hasPrefix("Stopped before clicking “Send” in Mail"))
+
+        let save = ToolCall(id: "6", name: "click", arguments: ["machine": "bender 2", "element_token": "s0000002a:2"])
+        guard case .rewrite(let arguments) = await CuaTools.confirm(save, catalog: Self.entries, machines: machines) else {
+            Issue.record("the machine's name was not put in")
+            return
+        }
+        #expect(arguments["machine"] == "bender-2")
+    }
+
+    @Test func unknownTargetsAreReadFirst() async {
+        let call = ToolCall(id: "7", name: "run_steps", arguments: ["machine": "nobody", "steps": [["tool": "click", "args": ["element_token": "s000000ff:3"]]]])
+        guard case .block(let message) = await CuaTools.confirm(call, catalog: Self.entries) else {
+            Issue.record("a click on an unknown element went through")
+            return
+        }
+        #expect(message.contains("s000000ff:3 isn't from a recent read"))
+        let approved = ToolCall(id: "8", name: "click", arguments: ["machine": "nobody", "element_token": "s000000ff:3", "confirmed": true])
+        guard case .rewrite = await CuaTools.confirm(approved, catalog: Self.entries) else {
+            Issue.record("the user's approval was not enough")
+            return
+        }
     }
 
     @Test func confirmationIsStrippedBeforeCua() async {
