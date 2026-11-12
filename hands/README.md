@@ -11,7 +11,7 @@
 **From the phone.** In Mycroft, tap **Add machine** and pick the network the machine shares with the phone: Wi-Fi, Tailscale, NetBird, or the phone's hotspot. The app copies a command short enough to type:
 
 ```sh
-curl -fsS 100.92.235.118:8484/k7m2qx | sh
+curl -fsS 100.92.0.7:8484/k7m2qx | sh
 ```
 
 Paste or type it into a terminal on the Mac or Linux machine. The phone serves the install script ([scripts/phone-install.sh](scripts/phone-install.sh)), then the binary for this OS and architecture over HTTPS pinned to the phone's key. The script checks the binary's SHA-256. On a network you don't trust, use **Copy pinned command** instead (`curl -fsSLk --pinnedpubkey sha256//PIN https://IP:8485/S | sh`), which pins the script too. The script then runs `hands install --pair`, which:

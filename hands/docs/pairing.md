@@ -98,7 +98,7 @@ Request:
 Response `200`:
 
 ```json
-{ "phoneName": "Vojta's iPhone", "publicKey": "<base64 of the phone's raw 32-byte Ed25519 public key>" }
+{ "phoneName": "Ada's iPhone", "publicKey": "<base64 of the phone's raw 32-byte Ed25519 public key>" }
 ```
 
 `hands` then appends `{ name: phoneName, publicKey, pairedAt }` to `paired.json` in its state dir (mode 0600).

@@ -83,7 +83,7 @@ struct HandsProtocolTests {
 
     /// The Host header becomes the script's download address, inside single quotes: only plain hosts get through.
     @Test func takesOnlyPlainHostsFromTheHostHeader() {
-        #expect(HTTPRequest.hostname("100.92.235.118:8484") == "100.92.235.118")
+        #expect(HTTPRequest.hostname("100.92.0.7:8484") == "100.92.0.7")
         #expect(HTTPRequest.hostname("iphone-v.netbird.selfhosted:8484") == "iphone-v.netbird.selfhosted")
         #expect(HTTPRequest.hostname("[fd7a:115c:a1e0::1]:8484") == "fd7a:115c:a1e0::1")
         #expect(HTTPRequest.hostname("192.168.1.20") == "192.168.1.20")
@@ -96,17 +96,17 @@ struct HandsProtocolTests {
         let found = LocalNetwork.classify([
             ("pdp_ip0", "10.44.1.9", false), ("utun3", "100.101.7.4", false), ("utun3", "fd7a:115c:a1e0::1234", true),
             ("en0", "192.168.1.20", false), ("en0", "fe80::1", true), ("awdl0", "169.254.3.3", false),
-            ("utun5", "100.92.235.118", false), ("utun6", "10.8.0.2", false), ("bridge100", "172.20.10.1", false),
+            ("utun5", "100.92.0.7", false), ("utun6", "10.8.0.2", false), ("bridge100", "172.20.10.1", false),
             ("ipsec2", "10.1.1.1", false), ("en0", "192.168.1.20", false),
         ])
         #expect(found.map(\.network) == ["Wi-Fi", "Tailscale", "NetBird", "VPN", "Personal Hotspot"])
-        #expect(found.map(\.ip) == ["192.168.1.20", "100.101.7.4", "100.92.235.118", "10.8.0.2", "172.20.10.1"])
+        #expect(found.map(\.ip) == ["192.168.1.20", "100.101.7.4", "100.92.0.7", "10.8.0.2", "172.20.10.1"])
         #expect(LocalNetwork.isCarrierGrade("100.64.0.1") && LocalNetwork.isCarrierGrade("100.127.255.255"))
         #expect(!LocalNetwork.isCarrierGrade("100.128.0.1") && !LocalNetwork.isCarrierGrade("100.63.0.1"))
     }
 
     @Test func installCommandsAddressHostsAsURLsDo() {
-        #expect(InstallServer.urlHost("100.92.235.118") == "100.92.235.118")
+        #expect(InstallServer.urlHost("100.92.0.7") == "100.92.0.7")
         #expect(InstallServer.urlHost("fd6f::1") == "[fd6f::1]")
         #expect(InstallServer.host(of: .hostPort(host: "::ffff:192.168.1.5", port: 1)) == "192.168.1.5")
         #expect(InstallServer.host(of: .hostPort(host: "fe80::1%en0", port: 1)) == "fe80::1")
